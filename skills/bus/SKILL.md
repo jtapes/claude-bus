@@ -1,8 +1,28 @@
 ---
 name: bus
-description: Файловая шина между агентами Claude Code — проектами, субагентами и пользователем (веб-UI) — сообщения, задачи, подъём получателя. Используй на «спроси у X», «пусть X сделает», «передай / сообщи X», «шо во входящих», «переписка с X», «открой шину», «создай агента X», «подключи проект к шине», «запускай по расписанию / по крону».
+description: File-based message bus between Claude Code agents (projects, subagents and the user through a local web UI) with messages, tasks, background wake-ups and cron schedule. Use on "ask X", "have X do", "tell X", "what is in the inbox", "open the bus UI", "create agent X", "connect this project to the bus", "run on a schedule". Файловая шина между агентами Claude Code — проектами, субагентами и пользователем (веб-UI) — сообщения, задачи, подъём получателя. Используй на «спроси у X», «пусть X сделает», «передай / сообщи X», «шо во входящих», «переписка с X», «открой шину», «создай агента X», «подключи проект к шине», «запускай по расписанию / по крону».
 argument-hint: "send <кому> <ТИП> [--file <путь>] <текст> | broadcast <ТИП> [--file <путь>] <текст> | inbox [--quiet] | history [кто] [N] [--full] | agents | ui | init <имя> | add <имя> [--global] | remove [имя] | log [N] | schedule [list|add|on|off|rm|run|log]"
 ---
+
+## About
+
+A message bus for Claude Code agents. Projects, subagents and you leave each other messages through plain files, so the recipient does not have to be running: a message waits in its inbox, and a subagent is woken up in the background to answer. A local web UI on `127.0.0.1` shows every agent and the whole conversation. From it you can write to agents yourself, attach screenshots, compress long dialogs into a summary, create agents and edit their roles, and run tasks on a cron schedule. It needs only Node.js, with `pm2` for the schedule.
+
+![Bus UI: agents, the message feed and the compose form](https://raw.githubusercontent.com/jtapes/claude-bus/main/docs/img/feed.png)
+
+Install it globally, because the skill and its hook expect `~/.claude/skills/bus/`:
+
+```bash
+npx skills add jtapes/claude-bus -g -a claude-code -s bus -y --copy
+```
+
+Then tell Claude in your project: "set up the /bus skill in this project and open the UI", and after that "create an agent dima: backend developer", "ask dima how the orders endpoint works", "have dima check open TODOs every weekday at 9". Screenshots of every feature and the security notes are in the [README](https://github.com/jtapes/claude-bus#readme).
+
+## О скилле
+
+Шина сообщений для агентов Claude Code. Проекты, субагенты и вы сами пишете друг другу через обычные файлы, поэтому получатель не обязан быть запущен: сообщение ждёт в его ящике, а субагента шина поднимает в фоне, чтобы он ответил. Локальный веб-интерфейс показывает всех агентов и всю переписку. Из него можно писать агентам самому, прикладывать скрины, сжимать длинные диалоги в сводку, создавать агентов, править их роли и запускать задачи по cron. Скажите Claude: «разверни в данном проекте скилл /bus и разверни ui». Описание со скринами на русском лежит в [README.ru.md](https://github.com/jtapes/claude-bus/blob/main/README.ru.md).
+
+## Инструкция агенту
 
 Сообщение лежит в `inbox.md` получателя, пока его не прочтут, — агенты не обязаны быть запущены одновременно. Адресуешь всегда по **имени**. Проект — сессия Claude в каталоге, она же **оркестратор** (от его имени пишет и пользователь из UI); «кто я» скрипт берёт по cwd. Субагент (локальный из `<проект>/.claude/agents/` или глобальный из `~/.claude/agents/`) называется сам: `--as <имя>` первым аргументом или сразу после команды.
 
