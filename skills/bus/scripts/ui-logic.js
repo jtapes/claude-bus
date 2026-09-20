@@ -58,6 +58,8 @@
 
   /** Оценка, а не счёт: кириллица — около трёх символов на токен, плюс служебная часть строки history. */
   const tokensOf = (list) => Math.round(list.reduce((sum, m) => sum + m.text.length / 3 + 10 + (m.files || []).length * FILE_TOKENS, 0));
+  /** Сводку агент читает целиком строкой «# сводка с …» — она тоже весит; 15 — служебная часть этой строки. */
+  const summaryTokens = (summary) => (summary && typeof summary.text === 'string' ? Math.round(summary.text.length / 3) + 15 : 0);
   const sizeOf = (bytes) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} ${tr('МБ')}` : `${Math.max(1, Math.round(bytes / 1024))} ${tr('КБ')}`);
   const short = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, '')}${tr('к')}` : String(n));
   const clock = (ms) => new Date(ms).toTimeString().slice(0, 5);
@@ -180,6 +182,33 @@
     const tail = matched.filter((m) => !covered(m, summaries));
     const weight = tokensOf(tail);
     return { total: matched.length, tail: tail.length, weight, heavy: weight >= HEAVY_TOKENS, early: tail.length >= 2 && weight < SHOW_LOAD_FROM, canSqueeze: tail.length >= 2 };
+  }
+
+  /**
+   * Отчёт о весе переписки: строка на диалог, тяжёлые первыми. tokens — несжатый хвост (его агент затянет через history),
+   * summary — вес сводки. here — диалог каталога UI: такие идут в итог total, чужие проекты — справкой ниже.
+   * → { rows: [{ pair, keys, names, here, total, fresh, tokens, summary, heavy }], total: { dialogs, fresh, tokens, summary } }
+   */
+  function weightReport(messages, summaries, hereRoot) {
+    const pairs = new Map();
+    for (const m of messages) {
+      const pair = pairOf(m);
+      if (!pairs.has(pair)) {
+        const sides = [[m.fromKey, m.from], [m.toKey, m.to]].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+        pairs.set(pair, { pair, keys: sides.map((x) => x[0]), names: sides.map((x) => x[1]), here: false, list: [] });
+      }
+      const row = pairs.get(pair);
+      row.list.push(m);
+      if (!hereRoot || !m.roots.length || m.roots.includes(hereRoot)) row.here = true;
+    }
+    const rows = [...pairs.values()].map(({ list, ...row }) => {
+      const fresh = list.filter((m) => !covered(m, summaries));
+      const tokens = tokensOf(fresh);
+      return { ...row, total: list.length, fresh: fresh.length, tokens, summary: summaryTokens(summaries.get(row.pair)), heavy: tokens >= HEAVY_TOKENS };
+    }).sort((a, b) => Number(b.here) - Number(a.here) || b.tokens + b.summary - (a.tokens + a.summary) || a.pair.localeCompare(b.pair));
+    const mine = rows.filter((row) => row.here);
+    const sum = (key) => mine.reduce((n, row) => n + row[key], 0);
+    return { rows, total: { dialogs: mine.length, fresh: sum('fresh'), tokens: sum('tokens'), summary: sum('summary') } };
   }
 
   function groupAgents(agents) {
@@ -421,7 +450,7 @@
   const isFrequentError = (message) => /^Слишком часто:/.test(String(message || ''));
 
   return {
-    hue, assignHues, pairKey, pairOf, selectedPair, covered, tokensOf, sizeOf, short, passes, splitByQuery, unreadIds, readTarget, nextSelection, feedItems, pairInfo, groupAgents, agentStatus, blockedNote, writable, nameOf, dictated, spaceTap, voiceNote, raisedNote, sentNote, clearTarget, validAgentName,
+    hue, assignHues, pairKey, pairOf, selectedPair, covered, tokensOf, summaryTokens, HEAVY_TOKENS, weightReport, sizeOf, short, passes, splitByQuery, unreadIds, readTarget, nextSelection, feedItems, pairInfo, groupAgents, agentStatus, blockedNote, writable, nameOf, dictated, spaceTap, voiceNote, raisedNote, sentNote, clearTarget, validAgentName,
     SCHEDULE_MINUTE_STEPS, SCHEDULE_HOUR_STEPS, buildScheduleCron, scheduleCronPreset, scheduleTarget, scheduleNextLabel, scheduleLastNote, scheduleDaemonNote, scheduleBadge, scheduleGroups, validScheduleName, isFrequentError,
   };
 });

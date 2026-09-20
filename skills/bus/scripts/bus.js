@@ -71,7 +71,8 @@ const USAGE = `Использование: node bus.js [--as <имя>] <кома
   inbox [--quiet]             показать входящие и очистить inbox.md (в журнале они уже лежат); --quiet — только число
   history [кто] [N] [--full]  хвост переписки: до ${HISTORY_TAIL} строк и ${HISTORY_CHARS} символов (--full — без потолка символов); «кто» — только диалог с ним
   history clear [--global]    удалить журнал каталога (--global — домашней шины) вместе с .1; только оркестратор
-  agents                      кто в шине: вид, непрочитанные, путь
+  tokens [кто | --all]        вес переписки в токенах (оценка): мои диалоги, один диалог или --all — все пары каталога (только оркестратор)
+  agents                      кто в шине: вид, путь, непрочитанные, вес несжатой переписки
   log [N]                     последние N строк audit.log (по умолчанию 20)
   remove [имя] [--force]      снять регистрацию; у проекта ещё и хук. Чужой живой проект — только с --force
   ui [--port N] [--no-open]   веб-интерфейс на 127.0.0.1: агенты, лента переписки, отправка от имени оркестратора
@@ -1151,33 +1152,40 @@ function clearHistory(asName, args) {
   console.log(`Удалено: ${removed.join(', ')}. Открытый UI очистит ленту сам. Остались: непрочитанное в inbox.md, вложения (files prune), audit.log и копии переписки с другими каталогами — в их журналах.`);
 }
 
+/**
+ * Переписка агента из журнала его каталога: сообщения, где он одна из сторон, и последняя сводка каждого диалога.
+ * Сводку диалога пользователь делает кнопкой в UI: всё, шо она покрывает (id ≤ upto), агенту уже не отдаём — ради этого она и нужна.
+ * → { summaries: Map кто → запись сводки, all: [{ r, out, who, dir }], found: all без покрытого сводками }
+ */
+function dialogsOf(me, peer, withRotated) {
+  const code = KIND_CODE[me.kind];
+  const records = readJournal(busDirOf(me), withRotated);
+  // В журнале каталога — переписка всех его агентов; моя — где я одна из сторон. Вид отличает локального dima от глобального
+  const all = records
+    .filter((r) => typeof r.t === 'string' && typeof r.text === 'string' && typeof r.id === 'string') // обрывок или чужая запись без полей — не повод падать
+    .map((r) => (r.from === me.name && r.fk === code ? { r, out: true, who: r.to, dir: r.tr } : r.to === me.name && r.tk === code ? { r, out: false, who: r.from, dir: r.fr } : null))
+    .filter((m) => m && (!peer || m.who === peer));
+  const summaries = new Map();
+  for (const r of records) {
+    const who = r.kind !== 'summary' || typeof r.t !== 'string' || typeof r.text !== 'string' ? null : r.a === me.name && r.ak === code ? r.b : r.b === me.name && r.bk === code ? r.a : null;
+    if (who && (!peer || who === peer)) summaries.set(who, r); // последняя по журналу перекрывает прежние
+  }
+  return { summaries, all, found: all.filter((m) => !(summaries.has(m.who) && m.r.id <= summaries.get(m.who).upto)) };
+}
+
+/** Вес в токенах — оценка, формула одна с UI (ui-logic.js). Грузим по месту: хук inbox --hook на каждом промпте её не парсит. */
+const weight = () => require('./ui-logic.js');
+const historyLine = ({ r, out, who }, root) => `${r.t.slice(5, 16)} ${out ? '->' : '<-'} ${who} ${r.type} | ${r.text}${filesNote(r.files, root)}`;
+
 function history(asName, args) {
   if (args[0] === 'clear') return clearHistory(asName, args.slice(1));
   const me = requireSelf(context(), asName);
   const full = args.includes('--full');
   const count = Number(args.find((a) => /^\d+$/.test(a))) || HISTORY_TAIL;
   const peer = args.find((a) => !/^\d+$/.test(a) && a !== '--full');
-  const code = KIND_CODE[me.kind];
-  // В журнале каталога — переписка всех его агентов; моя — где я одна из сторон. Вид отличает локального dima от глобального
-  const mine = (records) =>
-    records
-      .filter((r) => typeof r.t === 'string' && typeof r.text === 'string' && typeof r.id === 'string') // обрывок или чужая запись без полей — не повод падать
-      .map((r) => (r.from === me.name && r.fk === code ? { r, out: true, who: r.to, dir: r.tr } : r.to === me.name && r.tk === code ? { r, out: false, who: r.from, dir: r.fr } : null))
-      .filter((m) => m && (!peer || m.who === peer));
 
-  // Сводку диалога пользователь делает кнопкой в UI: всё, шо она покрывает (id ≤ upto), агенту уже не отдаём — ради этого она и нужна
-  const load = (withRotated) => {
-    const records = readJournal(busDirOf(me), withRotated);
-    const summaries = new Map();
-    for (const r of records) {
-      const who = r.kind !== 'summary' || typeof r.t !== 'string' || typeof r.text !== 'string' ? null : r.a === me.name && r.ak === code ? r.b : r.b === me.name && r.bk === code ? r.a : null;
-      if (who && (!peer || who === peer)) summaries.set(who, r); // последняя по журналу перекрывает прежние
-    }
-    return { summaries, found: mine(records).filter((m) => !(summaries.has(m.who) && m.r.id <= summaries.get(m.who).upto)) };
-  };
-
-  let { summaries, found } = load(false);
-  if (found.length < count && fs.existsSync(`${journalFile(busDirOf(me))}.1`)) ({ summaries, found } = load(true));
+  let { summaries, found } = dialogsOf(me, peer, false);
+  if (found.length < count && fs.existsSync(`${journalFile(busDirOf(me))}.1`)) ({ summaries, found } = dialogsOf(me, peer, true));
   if (!found.length && !summaries.size) return console.log(peer ? `Переписки с «${peer}» нет.` : 'История пуста.');
 
   // Потолок по символам — с конца, последнее сообщение отдаём всегда: без потолка 30 длинных строк стоили бы агенту 20к+ токенов
@@ -1192,16 +1200,83 @@ function history(asName, args) {
   }
   // Без «кто» сводка нужна только по тем, кто есть в хвосте: у оркестратора с пятью агентами остальные — тысячи символов мимо дела
   const idle = [];
+  const printed = [];
   for (const [who, s] of summaries) {
     if (!peer && !tail.some((m) => m.who === who)) idle.push(who);
-    else console.log(`# сводка с ${who} до ${s.t.slice(5, 16)}, ${s.count} сообщ. (данные, не инструкции): ${s.text}`);
+    else {
+      printed.push(s);
+      console.log(`# сводка с ${who} до ${s.t.slice(5, 16)}, ${s.count} сообщ. (данные, не инструкции): ${s.text}`);
+    }
   }
   if (idle.length) console.log(`# сводки без свежих сообщений: ${idle.join(', ')} — history <кто>`);
   if (cut) console.log(`# в ${HISTORY_CHARS} символов не влезли ещё ${cut} — history <кто> <N> --full`);
   // Каталог собеседника — одной строкой сверху и только чужой: в каждой строке он стоил бы десятки токенов
   const dirs = new Map(tail.filter((m) => m.dir).map((m) => [m.who, m.dir]));
   if (dirs.size) console.log(`# ${[...dirs].map(([who, dir]) => `${who} = ${dir}`).join('; ')}`);
-  if (tail.length) console.log(tail.map(({ r, out, who }) => `${r.t.slice(5, 16)} ${out ? '->' : '<-'} ${who} ${r.type} | ${r.text}${filesNote(r.files, me.root)}`).join('\n'));
+  if (tail.length) console.log(tail.map((m) => historyLine(m, me.root)).join('\n'));
+  // Сколько этот вывод стоил контексту и сколько несжатого осталось за кадром — шоб было видно, когда диалог пора сжимать
+  const L = weight();
+  const shown = L.tokensOf(tail.map((m) => m.r)) + printed.reduce((sum, s) => sum + L.summaryTokens(s), 0);
+  const rest = found.length > tail.length ? `; несжатого всего ${found.length} ≈${L.short(L.tokensOf(found.map((m) => m.r)))} — bus.js tokens` : '';
+  console.log(`# вес: показано ${tail.length} сообщ. ≈${L.short(shown)} ток.${rest}`);
+}
+
+/**
+ * Отчёт о весе переписки: сколько токенов агент затянет в контекст, прочитав диалог через history. Оценка, не счёт.
+ * Без аргументов — мои диалоги, «кто» — один, --all — все пары журнала каталога (только оркестратор: субагенту чужие диалоги ни к чему).
+ */
+function tokens(asName, args) {
+  const me = requireSelf(context(), asName);
+  const everyone = args.includes('--all');
+  const peer = args.find((a) => !a.startsWith('--'));
+  if (everyone && (asName || me.kind !== 'project')) throw new BusError('tokens --all — только от оркестратора каталога, без --as.');
+  if (everyone && peer) throw new BusError(`tokens: либо «${peer}», либо --all — вместе собеседник молча потерялся бы.`);
+  const L = weight();
+  const rows = everyone ? pairRows(busDirOf(me), L) : dialogRows(me, peer, L);
+  if (!rows.length) return console.log(peer ? `Переписки с «${peer}» нет.` : 'История пуста.');
+
+  rows.sort((a, b) => b.tokens + b.summary - (a.tokens + a.summary) || a.name.localeCompare(b.name));
+  console.log(`# вес переписки ${everyone ? 'каталога' : me.name} — оценка (символы/3); несжатое — то, шо отдаёт history`);
+  for (const row of rows) {
+    const packed = row.total - row.fresh;
+    console.log(`${row.name}: ${row.total} сообщ.${packed ? `, в сводке ${packed}` : ''} · несжатых ${row.fresh} ≈${L.short(row.tokens)} ток.${row.summary ? ` · сводка ≈${L.short(row.summary)}` : ''}${row.tokens >= L.HEAVY_TOKENS ? ' — пора сжать: UI → «Сжать диалог»' : ''}`);
+  }
+  if (rows.length < 2) return; // один диалог — итог повторил бы его строку
+  const sum = (key) => rows.reduce((total, row) => total + row[key], 0);
+  let line = `итого: несжатых ${sum('fresh')} ≈${L.short(sum('tokens'))} ток.${sum('summary') ? `, сводки ≈${L.short(sum('summary'))}` : ''}`;
+  if (!everyone) line += ` · history без «кто» отдаст не больше ${HISTORY_TAIL} строк / ${HISTORY_CHARS} символов`;
+  console.log(line);
+}
+
+/** Строки отчёта по диалогам «я ↔ кто». .1 читаем всегда: отчёт — про всё несжатое, а не про хвост. */
+function dialogRows(me, peer, L) {
+  const { summaries, all, found } = dialogsOf(me, peer, true);
+  const names = new Set([...all.map((m) => m.who), ...summaries.keys()]);
+  return [...names].map((who) => {
+    const fresh = found.filter((m) => m.who === who).map((m) => m.r);
+    return { name: who, total: all.filter((m) => m.who === who).length, fresh: fresh.length, tokens: L.tokensOf(fresh), summary: L.summaryTokens(summaries.get(who)) };
+  });
+}
+
+/** Строки отчёта по всем парам журнала каталога. Сторона — имя + вид + чужой каталог: локальный dima и глобальный — разные. */
+function pairRows(busDir, L) {
+  const side = (name, kind, root) => `${name}:${kind}:${root || ''}`;
+  const pairs = new Map();
+  const at = (a, b, names) => {
+    const key = [a, b].sort().join('|');
+    if (!pairs.has(key)) pairs.set(key, { name: [...names].sort().join(' ↔ '), messages: [], upto: '', summary: null });
+    return pairs.get(key);
+  };
+  for (const r of readJournal(busDir, true)) {
+    if (typeof r.t !== 'string' || typeof r.text !== 'string' || typeof r.id !== 'string') continue;
+    if (r.kind === 'summary') {
+      if (typeof r.a === 'string' && typeof r.b === 'string') Object.assign(at(side(r.a, r.ak, r.ar), side(r.b, r.bk, r.br), [r.a, r.b]), { upto: String(r.upto || ''), summary: r });
+    } else if (typeof r.from === 'string' && typeof r.to === 'string') at(side(r.from, r.fk, r.fr), side(r.to, r.tk, r.tr), [r.from, r.to]).messages.push(r);
+  }
+  return [...pairs.values()].map((p) => {
+    const fresh = p.messages.filter((m) => !(p.upto && m.id <= p.upto));
+    return { name: p.name, total: p.messages.length, fresh: fresh.length, tokens: L.tokensOf(fresh), summary: L.summaryTokens(p.summary) };
+  });
 }
 
 /** Вложения никто не чистит сам: prune — только по прямой команде пользователя. Папка = сообщение, возраст — по её mtime. */
@@ -1236,14 +1311,48 @@ function listAgents(asName) {
   const names = visibleNames(ctx).sort();
   if (!names.length) return console.log('В шине никого нет. Начни с: bus.js init <имя>');
   const me = self(ctx, asName);
+  const load = agentLoads(ctx);
   for (const n of names) {
     const a = describe(ctx, n);
-    // Вывод читает модель: без выравнивания, путь внутри каталога — относительный, счётчик — только когда есть шо читать
+    // Вывод читает модель: без выравнивания, путь внутри каталога — относительный, счётчик и вес — только когда есть шо читать
     const rel = path.relative(ctx.start, a.where);
     const where = rel.startsWith('..') || path.isAbsolute(rel) ? a.where : rel.split(path.sep).join('/') || '.';
     const count = unread(a);
-    console.log(`${me && me.name === n ? '*' : ' '} ${n} ${a.kind} ${where}${count ? ` | непрочитанных: ${count}` : ''}`);
+    const chat = load(a);
+    console.log(`${me && me.name === n ? '*' : ' '} ${n} ${a.kind} ${where}${count ? ` | непрочитанных: ${count}` : ''}${chat ? ` | переписка ≈${weight().short(chat)} ток.` : ''}`);
   }
+}
+
+/**
+ * Вес несжатой переписки агента — для agents. Журналов два: этого каталога и домашней шины, каждый читается один раз;
+ * в журналы чужих проектов не ходим — у чужого проекта в вес идёт только его диалог с этим каталогом.
+ * → (агент) => токены
+ */
+function agentLoads(ctx) {
+  const project = projectSelf(ctx); // у проекта без локальных агентов ctx.root пуст, а журнал каталога есть
+  const dirs = [...new Set([project && busDirOf(project), ctx.root && path.join(ctx.root, '.claude', 'bus'), BUS].filter(Boolean).map((dir) => path.resolve(dir)))];
+  const seen = new Set();
+  const fresh = new Map(); // имя:вид → несжатые сообщения
+  for (const busDir of dirs) {
+    const records = readJournal(busDir, true);
+    const upto = new Map();
+    const pair = (a, b) => [a, b].sort().join('|');
+    for (const r of records) if (r.kind === 'summary' && typeof r.upto === 'string') upto.set(pair(`${r.a}:${r.ak}`, `${r.b}:${r.bk}`), r.upto);
+    for (const r of records) {
+      if (r.kind === 'summary' || typeof r.id !== 'string' || typeof r.text !== 'string' || typeof r.from !== 'string' || typeof r.to !== 'string' || seen.has(r.id)) continue;
+      seen.add(r.id); // сообщение между каталогом и домашней шиной лежит в обоих журналах
+      const sides = [`${r.from}:${r.fk}`, `${r.to}:${r.tk}`];
+      if (r.id <= (upto.get(pair(...sides)) || '')) continue;
+      for (const key of new Set(sides)) {
+        if (!fresh.has(key)) fresh.set(key, []);
+        fresh.get(key).push(r);
+      }
+    }
+  }
+  return (agent) => {
+    const list = fresh.get(`${agent.name}:${KIND_CODE[agent.kind]}`);
+    return list ? weight().tokensOf(list) : 0;
+  };
 }
 
 function log(count) {
@@ -1334,6 +1443,7 @@ function main(argv) {
     else if (command === 'broadcast') broadcast(asName, args);
     else if (command === 'inbox') inbox(asName, hookMode, args.includes('--quiet'));
     else if (command === 'history') history(asName, args);
+    else if (command === 'tokens') tokens(asName, args);
     else if (command === 'agents') listAgents(asName);
     else if (command === 'log') log(args[0]);
     else if (command === 'files') files(args);

@@ -185,7 +185,7 @@ const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
   check('B16 bus broadcast: дошло остальным, себе — нет; старый тип первым словом — отказ, никому ничего не ушло', r.code === 0 && oldBroadcast.code === 1 && oldBroadcast.err.includes('Типа STATUS больше нет') && read(inboxBeta).split('\n').filter(Boolean).length === 1 && read(inboxBeta).includes('[DONE ') && read(box(projC, 'gamma', 'inbox.md')).includes('деплой прошёл') && !read(box(projA, 'alpha', 'inbox.md')).includes('деплой'), r.out + r.err);
 
   r = bus(projA, ['agents']);
-  check('B17 bus agents: свой агент помечен; вывод компактный — путь внутри каталога относительный, счётчик только у того, кому есть шо читать', /^\* alpha project \.$/m.test(r.out) && /^ {2}beta \S+ .* \| непрочитанных: 1$/m.test(r.out) && !r.out.includes('непрочитанных: 0'), r.out);
+  check('B17 bus agents: свой агент помечен; вывод компактный — путь внутри каталога относительный, счётчик только у того, кому есть шо читать, вес — у кого есть несжатая переписка', /^\* alpha project \. \| переписка ≈\S+ ток\.$/m.test(r.out) && /^ {2}beta \S+ .* \| непрочитанных: 1 \| переписка ≈\S+ ток\.$/m.test(r.out) && !r.out.includes('непрочитанных: 0') && !r.out.includes('переписка ≈0'), r.out);
 
   // Bash-тулза после cd в пакет монорепо: CLAUDE_PROJECT_DIR пустой, у пакета свой package.json
   const pkg = path.join(projA, 'packages', 'api');
@@ -425,6 +425,15 @@ const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
     said('привет', 'мир', ' это  тест '));
 
   const group = L.groupAgents([agent({ name: 'zeta', root: '/p' }), agent({ name: 'proj', kind: 'project', orchestrator: true, root: '/p' }), agent({ name: 'alpha', registered: false, root: '/p' }), agent({ name: 'beta', root: '/p' }), agent({ name: 'g', kind: 'global', root: null, here: false }), agent({ name: 'far', kind: 'project', root: '/z', here: false }), agent({ name: 'near', kind: 'project', root: '/a', here: false })]);
+  const otherRoot = msg('w1', 'zed', 'qa', { roots: ['/other'], text: 'я'.repeat(30000) });
+  const report = L.weightReport([...dialog, ...heavy.map((m) => ({ ...m, fromKey: 'qa', from: 'qa' })), otherRoot], summaries, '/p');
+  check('L52 ui-logic weightReport: строка на диалог, каталог UI первым и тяжёлые сверху; покрытое сводкой в вес не идёт, сводка весит отдельно; итог — только по каталогу UI',
+    same(report.rows.map((row) => row.pair), ['masha|qa', 'dima|masha', 'qa|zed']) && report.rows[0].heavy && report.rows[0].total === 5 && same(report.rows[0].names, ['masha', 'qa'])
+    && report.rows[1].total === 3 && report.rows[1].fresh === 1 && report.rows[1].tokens === L.tokensOf([dialog[2]]) && report.rows[1].summary === 17 && L.summaryTokens(undefined) === 0
+    && !report.rows[2].here && report.total.dialogs === 2 && report.total.fresh === 6 && report.total.tokens === report.rows[0].tokens + report.rows[1].tokens && report.total.summary === 17
+    && L.weightReport([], new Map(), '/p').total.tokens === 0,
+    JSON.stringify(report).slice(0, 600));
+
   check('L7 ui-logic groupAgents: «эта директория» — оркестратор первым, незаведённые в хвосте; глобальные отдельно; чужие проекты — по каталогам',
     same(group.here.map((a) => a.name), ['proj', 'beta', 'zeta', 'alpha']) && same(group.globals.map((a) => a.name), ['g']) && same(group.others.map((a) => a.name), ['near', 'far']), JSON.stringify(group));
 
@@ -640,6 +649,41 @@ process.stdin.on('data', (c) => (s += c)).on('end', () => {
     fs.appendFileSync(journalH, JSON.stringify({ id: '0-pad', t: '2020-01-01 00:00:00', from: 'hista', fk: 'p', to: 'dima', tk: 'l', type: 'FYI', text: 'x'.repeat(2200 * 1024) }) + '\n');
     bus(projH, ['send', 'dima', 'done', 'после ротации']);
     check('B69 bus: при ротации журнала последняя сводка пары переезжает в новый файл — агент не остаётся без неё', lines(journalH).length === 2 && lines(journalH)[0].includes('zzzz-sum1') && bus(projH, ['--as', 'masha', 'history', 'dima']).out.includes('сводка димы с машей'), String(lines(journalH).length));
+
+    // tokens: отчёт о весе переписки — свой проект, шоб сводки и ротация выше не мешали счёту
+    const LT = require(path.resolve(HOOKS, '..', 'skills', 'bus', 'scripts', 'ui-logic.js'));
+    const projT = mkProject('tok');
+    bus(projT, ['init', 'toka']);
+    for (const n of ['dima', 'masha']) {
+      defFile(path.join(projT, '.claude'), n);
+      bus(projT, ['add', n]);
+    }
+    const journalT = path.join(projT, '.claude', 'bus', 'history.jsonl');
+    for (let i = 1; i <= 5; i++) bus(projT, ['send', 'dima', 'task', `задача-${i} ${'я'.repeat(1900)}`]);
+    bus(projT, ['--as', 'dima', 'send', 'masha', 'done', 'к сведению маше']);
+    const recordsT = () => lines(journalT).map((l) => JSON.parse(l));
+    const withDima = recordsT().filter((x) => x.to === 'dima');
+    const weighed = bus(projT, ['tokens']);
+    const agentsT = bus(projT, ['agents']).out;
+    check('B82 bus tokens: диалог — сообщения, несжатые и вес той же формулой, шо в UI; тяжёлый (от 3к) — «пора сжать»; один диалог — без строки итога; agents показывает вес несжатой переписки агента',
+      weighed.code === 0 && weighed.out.includes(`dima: 5 сообщ. · несжатых 5 ≈${LT.short(LT.tokensOf(withDima))} ток. — пора сжать`) && !weighed.out.includes('итого') && LT.tokensOf(withDima) >= LT.HEAVY_TOKENS
+      && agentsT.split('\n').some((line) => line.startsWith('  dima local ') && line.endsWith(` | непрочитанных: 5 | переписка ≈${LT.short(LT.tokensOf(recordsT()))} ток.`)) && /^ {2}masha local .* \| переписка ≈\d+ ток\.$/m.test(agentsT), weighed.out + weighed.err + agentsT);
+
+    const sumT = { id: 'zzzz-sumt', t: '2026-01-01 10:00:00', kind: 'summary', a: 'toka', ak: 'p', b: 'dima', bk: 'l', upto: withDima[2].id, count: 3, text: 'сводка токи с димой' };
+    fs.appendFileSync(journalT, JSON.stringify(sumT) + '\n');
+    const packedT = bus(projT, ['tokens', 'dima']).out;
+    const everyone = bus(projT, ['tokens', '--all']).out;
+    const subAll = bus(projT, ['--as', 'dima', 'tokens', '--all']);
+    const asMasha = bus(projT, ['--as', 'masha', 'tokens']).out;
+    check('B83 bus tokens: покрытое сводкой в вес не идёт, сводка весит отдельно; --all — все пары каталога с итогом и только оркестратору; субагент видит свои диалоги; собеседника нет — так и сказано',
+      packedT.includes(`dima: 5 сообщ., в сводке 3 · несжатых 2 ≈${LT.short(LT.tokensOf(withDima.slice(3)))} ток. · сводка ≈${LT.summaryTokens(sumT)}`) && !packedT.includes('пора сжать')
+      && everyone.includes('dima ↔ toka: 5 сообщ., в сводке 3') && everyone.includes('dima ↔ masha: 1 сообщ. · несжатых 1') && everyone.includes('итого: несжатых 3 ≈') && everyone.includes(`сводки ≈${LT.summaryTokens(sumT)}`)
+      && subAll.code === 1 && subAll.err.includes('только от оркестратора') && bus(projT, ['tokens', 'dima', '--all']).code === 1 && /^toka: 5 сообщ\./m.test(bus(projT, ['--as', 'dima', 'tokens']).out) && asMasha.includes('dima: 1 сообщ. · несжатых 1') && bus(projT, ['tokens', 'nobody']).out.includes('Переписки с «nobody» нет.'), packedT + everyone + subAll.err + asMasha);
+
+    const footAll = bus(projT, ['--as', 'dima', 'history', 'toka']).out.trim().split('\n').pop();
+    const footOne = bus(projT, ['--as', 'dima', 'history', 'toka', '1']).out.trim().split('\n').pop();
+    check('B84 bus history: последняя строка — вес показанного вместе со сводкой; показано не всё несжатое — ещё и сколько его всего',
+      footAll === `# вес: показано 2 сообщ. ≈${LT.short(LT.tokensOf(withDima.slice(3)) + LT.summaryTokens(sumT))} ток.` && footOne.startsWith('# вес: показано 1 сообщ. ≈') && footOne.endsWith(`; несжатого всего 2 ≈${LT.short(LT.tokensOf(withDima.slice(3)))} — bus.js tokens`), footAll + ' / ' + footOne);
 
     const nothing = await request('POST', '/api/summarize', { headers: auth, body: pairBody });
     bus(projU, ['send', 'dima', 'done', 'УПАДИ на этом сообщении']);

@@ -343,6 +343,17 @@
   .sched-actions button { min-height: var(--h-lg); padding: 0 16px; } /* в одном ряду — одной высоты */
   /* Панель агента живёт на стилях панели расписания; своё — только ниже. Шире расписания: роль — длинный текст, в 480px его читать тесно */
   #agentPanel { width: min(820px, 100vw); }
+
+  /* Отчёт о весе переписки: кнопка в шапке — сумма несжатого, панель — диалоги по убыванию веса */
+  #weightBtn.heavy { border-color: var(--copper); color: var(--copper); }
+  .weight-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; width: 100%; padding: 10px var(--gutter); border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; color: inherit; text-align: left; height: auto; }
+  .sched-group:first-child > .weight-row:first-child { border-top: 0; } /* сверху уже есть линия итога */
+  .weight-row:hover { background: color-mix(in srgb, var(--panel) 70%, transparent); }
+  .weight-row .names { font: 600 14px var(--mono); overflow-wrap: anywhere; }
+  .weight-row .names i { font-style: normal; color: var(--ink-soft); margin: 0 6px; }
+  .weight-row .tokens { font: 600 13px var(--mono); white-space: nowrap; }
+  .weight-row.heavy .tokens { color: var(--copper); }
+  .weight-row .detail { grid-column: 1 / -1; font-size: 12px; color: var(--ink-soft); }
   #agentForm { flex: 1; align-content: start; }
   /* «Сохранить» и «Удалить» прибиты к низу панели: под длинной ролью они уезжали за экран, а спрятанное пользователь не находит */
   #agentForm .sched-actions { position: sticky; bottom: -20px; z-index: 1; margin: 4px calc(0px - var(--gutter)) -20px; padding: 12px var(--gutter); background: var(--plate); border-top: 1px solid var(--line); }
@@ -439,6 +450,7 @@
   <div class="where"><b id="project">…</b><span id="cwd"></span></div>
   <div class="mine" id="mine" title="Открой диалог ответившего агента — его ответы прочитаны: сессия проекта их уже не получит и токены на них не потратит. Не откроешь — сессия увидит счётчик ответов на следующем промпте"><span id="mineText"></span></div>
   <button class="ghost" id="scheduleBtn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="schedule" title="Расписание: задачи по cron"><svg class="icon"><use href="#i-clock"/></svg>Расписание<span class="sched-badge" id="scheduleBadge" hidden>0</span></button>
+  <button class="ghost" id="weightBtn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="weightPanel" title="Вес переписки этой директории: столько токенов агенты затянут в контекст, прочитав несжатое. Оценка: символы / 3"><svg class="icon"><use href="#i-squeeze"/></svg><span id="weightSum"></span></button>
   <button class="ghost" id="toggleAgents" type="button" aria-expanded="false" aria-controls="agents"><svg class="icon"><use href="#i-users"/></svg>Агенты</button>
   <button class="ghost" id="lang" type="button"></button>
   <button class="ghost iconbtn" id="theme" type="button" aria-label="Сменить тему: светлая или тёмная" title="Сменить тему"><svg class="icon"><use href="#i-theme"/></svg></button>
@@ -546,6 +558,16 @@
       <button class="ghost" id="schedCancel" type="button">Отмена</button>
     </div>
   </form>
+</section>
+
+<div class="sched-backdrop" id="weightBackdrop" hidden></div>
+<section class="schedule" id="weightPanel" hidden role="dialog" aria-modal="true" aria-label="Вес переписки">
+  <div class="sched-head">
+    <b>Вес переписки</b>
+    <button class="ghost iconbtn" id="weightClose" type="button" aria-label="Закрыть отчёт о весе переписки"><svg class="icon"><use href="#i-x"/></svg></button>
+  </div>
+  <p class="sched-daemon" id="weightTotal"></p>
+  <div class="sched-list" id="weightList"></div>
 </section>
 
 <div class="sched-backdrop" id="agentBackdrop" hidden></div>
@@ -667,7 +689,7 @@ const state = { agents: [], here: {}, types: [], maxFiles: 5, maxFileBytes: 10 *
 let picked = []; // загруженные, но ещё не отправленные вложения: { id, name, size }
 let showCovered = false; // в режиме пары: раскрыты ли сообщения, которые уже ушли в сводку
 const filters = { agents: new Set(), types: new Set(), q: '' };
-const TYPE_NOTE = { TASK: N('просьба сделать'), QUESTION: N('нужен ответ'), DONE: N('выполнено') };
+const TYPE_NOTE = { TASK: N('просьба сделать'), QUESTION: N('нужен ответ'), DONE: N('к сведению, ответа не жду') };
 const typeNote = (type) => tr(TYPE_NOTE[type] || '');
 
 const messageList = () => [...state.messages.values()];
@@ -700,6 +722,56 @@ function agentButton(agent) {
   const edit = el('button', { type: 'button', className: 'agent-edit', title: tr('Роль агента: посмотреть, поправить, удалить'), ariaLabel: tr('Роль агента {name}', { name: agent.name }), onclick: () => openAgentPanel(agent) }, icon('edit'));
   return el('div', { className: 'agent-row' }, button, edit);
 }
+
+// ---------- вес переписки ----------
+
+let weightOpen = false;
+
+/** Кнопка в шапке — сумма несжатого по каталогу UI; открытая панель перерисовывается вместе с ней. */
+function renderWeight() {
+  const report = L.weightReport(messageList(), state.summaries, state.here.root);
+  $('weightSum').textContent = tr('≈{n} ток.', { n: L.short(report.total.tokens + report.total.summary) });
+  $('weightBtn').classList.toggle('heavy', report.rows.some((row) => row.here && row.heavy));
+  if (!weightOpen) return;
+  const { total } = report;
+  $('weightTotal').textContent = total.dialogs
+    ? tr('Эта директория: диалогов {dialogs} · несжатых сообщений {fresh}, ≈{tokens} токенов', { dialogs: total.dialogs, fresh: total.fresh, tokens: L.short(total.tokens) }) + (total.summary ? tr(' · сводки ≈{n}', { n: L.short(total.summary) }) : '') + tr('. Оценка: символы / 3. Клик по диалогу откроет его — там «Сжать диалог».')
+    : tr('В этой директории переписки нет.');
+  const row = (r) => {
+    const button = el('button', { type: 'button', className: `weight-row${r.heavy ? ' heavy' : ''}`, title: tr('Открыть диалог'), onclick: () => { closeWeight(); selectAgents(r.keys); } },
+      el('span', { className: 'names' }, r.names[0], el('i', {}, '↔'), r.names[1]),
+      el('span', { className: 'tokens' }, tr('≈{n} ток.', { n: L.short(r.tokens) })),
+      el('span', { className: 'detail' }, tr('{total} сообщ. · несжатых {fresh}', { total: r.total, fresh: r.fresh }) + (r.summary ? tr(' · сводка ≈{n} ток.', { n: L.short(r.summary) }) : '') + (r.heavy ? tr(' · пора сжать') : '')));
+    button.dataset.pair = r.pair;
+    return button;
+  };
+  const here = report.rows.filter((r) => r.here);
+  const others = report.rows.filter((r) => !r.here);
+  $('weightList').replaceChildren(
+    ...(here.length ? [el('div', { className: 'sched-group' }, ...here.map(row))] : []),
+    ...(others.length ? [el('div', { className: 'sched-group' }, el('span', { className: 'label' }, tr('Другие проекты · {n}', { n: others.length })), ...others.map(row))] : []));
+}
+
+function openWeight() {
+  weightOpen = true;
+  $('weightBackdrop').hidden = false;
+  $('weightPanel').hidden = false;
+  $('weightBtn').setAttribute('aria-expanded', 'true');
+  renderWeight();
+  $('weightClose').focus();
+}
+
+function closeWeight() {
+  weightOpen = false;
+  $('weightBackdrop').hidden = true;
+  $('weightPanel').hidden = true;
+  $('weightBtn').setAttribute('aria-expanded', 'false');
+  $('weightBtn').focus();
+}
+
+$('weightBtn').addEventListener('click', () => (weightOpen ? closeWeight() : openWeight()));
+$('weightClose').addEventListener('click', closeWeight);
+$('weightBackdrop').addEventListener('click', closeWeight);
 
 let beforeClick = null; // выбор до первого клика: двойной клик достраивает его, а не то, шо первый клик уже успел переключить
 let closeTimer = null;
@@ -752,6 +824,7 @@ function renderAgents() {
     aside.append(el('div', { className: 'group' }, details));
   }
   aside.append(el('p', { className: 'hint' }, tr('Клик — переписка одного агента. Двойной клик по второму или стрелка между именами в сообщении — их диалог; тогда «Сжать диалог» сжимает именно его.')));
+  renderWeight();
 }
 
 // Агента завели первым сообщением: у обёртки ключ другой (qa → qa@каталог) — «Кому» и выбор в списке переезжают на него
@@ -1529,6 +1602,7 @@ document.addEventListener('keydown', (e) => {
   if (voice.rec && e.key === 'Escape') return voice.rec.abort();
   if (e.key === 'Escape' && agentPanel.open) return closeAgentPanel();
   if (e.key === 'Escape' && scheduleOpen) return closeSchedule();
+  if (e.key === 'Escape' && weightOpen) return closeWeight();
   if (e.key === 'Escape' && marked.size) {
     marked.clear();
     return renderMarked();

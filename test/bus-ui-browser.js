@@ -687,6 +687,29 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       return [globalWarn.includes('все проекты') && !globalDelete && globalWhy && !fs.existsSync(roleFile('tester')) && !fs.existsSync(path.join(shop, '.claude', 'bus', 'tester')) && fs.existsSync(path.join(configDir, 'agents', 'qa.md')), JSON.stringify({ globalWarn, globalDelete, globalWhy, projectEdit })];
     });
 
+    await scenario('E37 вес переписки: кнопка в шапке показывает сумму несжатого; панель — диалоги с весом и итог по директории; Esc закрывает; клик по диалогу открывает его пару; на 390px без горизонтального скролла', async () => {
+      const sum = await page.locator('#weightSum').textContent();
+      await page.click('#weightBtn');
+      await page.locator('#weightPanel').waitFor();
+      const total = await page.locator('#weightTotal').textContent();
+      const rows = await page.locator('.weight-row').count();
+      const rowText = await page.locator('.weight-row').first().textContent();
+      await page.keyboard.press('Escape');
+      await page.locator('#weightPanel').waitFor({ state: 'hidden' });
+      const size = page.viewportSize();
+      await page.setViewportSize({ width: 390, height: 800 });
+      await page.click('#weightBtn');
+      await page.locator('#weightPanel').waitFor();
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+      await page.setViewportSize(size);
+      await page.locator('.weight-row').first().click();
+      await page.locator('#weightPanel').waitFor({ state: 'hidden' });
+      const pairShown = await page.locator('#pair').isVisible();
+      const picked = await page.locator('.agent[aria-pressed="true"]').count();
+      if (await page.locator('#unpick').count()) await page.click('#unpick');
+      return [/^≈\S+ ток\.$/.test(sum) && total.includes('Эта директория: диалогов') && rows >= 1 && /сообщ\. · несжатых \d+/.test(rowText) && rowText.includes('↔') && !overflow && pairShown && picked === 2, JSON.stringify({ sum, total, rows, rowText, overflow, pairShown, picked })];
+    });
+
     // ---------- расписание: свой сервер с заглушками pm2 и автозагрузки, шобы не тронуть настоящую систему ----------
     const schedStartup = path.join(sandbox, 'sched-startup');
     fs.mkdirSync(schedStartup, { recursive: true });

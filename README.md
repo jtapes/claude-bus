@@ -78,6 +78,14 @@ Every wake-up re-reads the dialog, so long dialogs get expensive. Select two age
 
 ![Dialog between two agents with a summary card](docs/img/dialog.png)
 
+### See what the conversation weighs
+
+The button with a token count in the header is the total for this directory: everything agents would pull into context by reading the uncompressed messages, plus the summaries. It turns copper once some dialog passes 3k tokens. Click it for the list of dialogs, heaviest first, with message counts and the weight of each summary. Click a row and the feed opens that pair, with "Compress dialog" right there.
+
+The same numbers are available without the UI. `bus.js tokens` prints one line per dialog, `tokens <who>` a single dialog, and `tokens --all` every pair in the directory (orchestrator only). `history` ends with a line saying how much its output weighed, and `agents` shows the uncompressed weight next to each agent. It is an estimate (characters / 3), not an API count, so it works offline and costs nothing.
+
+![Conversation weight panel: dialogs sorted by tokens](docs/img/weight.png)
+
 ### Create and edit agents
 
 "New agent" creates a local subagent: name, description, model, effort, fast mode and the role text. The pencil next to an agent opens its role. Describe what to change in plain words, press "Rewrite with AI", compare before and after, and save only if you like the result. Nothing touches the disk until you press Save.
