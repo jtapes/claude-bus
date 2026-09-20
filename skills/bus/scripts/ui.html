@@ -1,0 +1,1919 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Шина</title>
+<style>
+  /*
+   * Образ — медная токовая шина в сером щите: рейка идёт через ленту, каждое сообщение — отвод от неё.
+   * Ветка монотонная: рейка и отводы одного нейтрального цвета — разноцветные провода на каждом сообщении читались гирляндой.
+   * Отвод — колено в две дуги, как ветка в графе коммитов; серия подряд от одного к одному — малые узлы на прямых отводах, без гирлянды колен.
+   * Цвет агента несёт только узел на ветке (кольцо; залит — адресовано пользователю, в медном ободке — новое), приглушённый оттенок его имени и точка в списке; медь — то, шо ждёт пользователя.
+   * Шрифты системные: страница локальная и должна открываться без сети.
+   *
+   * Набор: кегли 11 (бирки) · 12 (подписи, мета) · 13 (кнопки, второй план) · 14 (имена, поля) · 15 (текст); отступы кратны 2, в ходу 4/8/12/16/20;
+   * высоты контролов --h-sm / --h / --h-lg, радиусы --r-sm / --r / --r-lg. Поверхности: --panel (щит) → --plate (планки, карточки, панели) → --raised (выпадающее);
+   * поле ввода на планке — --field. Кнопки: .send — главное действие, .squeeze — действие над перепиской, .ghost — нейтральное.
+   */
+  :root {
+    --panel: #e6e9e7;
+    --plate: #fafbfa;
+    --raised: #ffffff;
+    --ink: #18212a;
+    --ink-soft: #55636f;
+    --line: #cfd5d2;
+    --field: #ffffff;
+    --copper: #964a17; /* темнее не от вкуса: мелкий медный текст на сером щите обязан давать 4.5:1 */
+    --copper-soft: color-mix(in srgb, var(--copper) 11%, transparent);
+    --on-copper: #ffffff;
+    --on-danger: #ffffff;
+    --wire-l: 36%;
+    --wire-s: 38%;
+    --tap: #aab3b0; /* рейка и отводы: нейтральный металл */
+    --dot-s: 55%; --dot-l: 42%; /* точка на ветке — цвет отправителя, сочнее имени: она маленькая */
+    --task: var(--copper);
+    --question: #6546b0;
+    --done: #26734a;
+    --fyi: #55636f;
+    --danger: #a8322d;
+    --shadow: 0 1px 2px #18212a14, 0 4px 14px -6px #18212a1f;
+    --shadow-pop: 0 18px 40px -14px #000a, 0 2px 8px #0002;
+    --scrim: #10151ab3;
+    --r-xs: 4px; --r-sm: 6px; --r: 8px; --r-lg: 10px; /* строчная мелочь · галочки, пункты списка · контролы · карточки */
+    --h-sm: 28px; --h: 32px; --h-lg: 38px; /* мелкая кнопка в строке · кнопка планки · поле и главное действие */
+    --gutter: 20px;
+    --label: Bahnschrift, "DIN Alternate", "Roboto Condensed", "Arial Narrow", sans-serif;
+    --body: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, "SF Mono", monospace;
+    --rail-x: 25px; /* левый край рейки в ленте */
+    --rail-w: 2px;
+    --feed-left: 66px;
+    --cx: calc(var(--rail-x) + var(--rail-w) / 2 - var(--feed-left)); /* ось рейки от левого края элемента ленты */
+    /* колено отвода: от узла (y=2) к шапке карточки (y=17), ширина — от оси рейки до карточки */
+    --tap-curve: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='20'%3E%3Cpath d='M0 2C24 2 14 17 40 17' fill='none' stroke='%23000' stroke-width='2'/%3E%3C/svg%3E");
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --panel: #0f1419; --plate: #171e26; --raised: #1e2731; --field: #10161c; --ink: #e4ebf1; --ink-soft: #91a0ae; --line: #2a3643;
+      --copper: #e6955c; --on-copper: #1a120b; --on-danger: #2a0b09;
+      --wire-l: 76%; --wire-s: 40%; --tap: #3a4856; --dot-s: 62%; --dot-l: 66%;
+      --question: #ac95f0; --done: #6bc98f; --fyi: #9aa8b6; --danger: #f0827b;
+      --shadow: 0 1px 0 #ffffff08 inset, 0 6px 18px -10px #000000b0;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --panel: #0f1419; --plate: #171e26; --raised: #1e2731; --field: #10161c; --ink: #e4ebf1; --ink-soft: #91a0ae; --line: #2a3643;
+    --copper: #e6955c; --on-copper: #1a120b; --on-danger: #2a0b09;
+    --wire-l: 76%; --wire-s: 40%; --tap: #3a4856; --dot-s: 62%; --dot-l: 66%;
+    --question: #ac95f0; --done: #6bc98f; --fyi: #9aa8b6; --danger: #f0827b;
+    --shadow: 0 1px 0 #ffffff08 inset, 0 6px 18px -10px #000000b0;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; } /* иначе display у .ghost и .squeeze перебивает атрибут */
+  html, body { height: 100%; margin: 0; }
+  /* Колонка, а не grid: полоса «нет связи» то есть, то нет, и раскладка под ней не должна менять ряд */
+  body { background: var(--panel); color: var(--ink); font: 15px/1.5 var(--body); display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  input[type="checkbox"] { accent-color: var(--copper); width: 16px; height: 16px; margin: 0; flex: none; }
+  button { cursor: pointer; }
+  button:disabled { cursor: default; }
+  :focus-visible { outline: 2px solid var(--copper); outline-offset: 2px; }
+  svg.icon { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .label { font-family: var(--label); text-transform: uppercase; letter-spacing: .1em; font-size: 12px; color: var(--ink-soft); }
+  * { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+
+  /* ---- шапка ---- */
+  .top { display: flex; align-items: center; gap: 8px 12px; padding: 10px var(--gutter); border-bottom: 1px solid var(--line); background: var(--plate); flex-wrap: wrap; }
+  .where { min-width: 0; flex: 1 1 200px; }
+  .where b { display: block; font: 600 15px/1.3 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .where b small { font: 12px var(--label); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); margin-left: 8px; }
+  .where span { display: block; font: 12px/1.4 var(--mono); color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; } /* rtl: у длинного пути режется начало, а не имя каталога */
+  .mine { display: none; align-items: center; gap: 8px; font-size: 13px; min-height: var(--h); padding: 0 12px; border-radius: 999px; background: var(--copper-soft); color: var(--copper); font-weight: 600; }
+  .mine.on { display: flex; }
+  .ghost { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: var(--h); background: none; border: 1px solid var(--line); border-radius: var(--r); padding: 0 12px; font-size: 13px; line-height: 1.2; transition: border-color .15s, color .15s, background-color .15s; }
+  .ghost:hover:not(:disabled) { border-color: var(--copper); color: var(--copper); }
+  .iconbtn { width: var(--h); padding: 0; }
+  #toggleAgents { display: none; }
+  /* Пока связь есть, молчим: индикатор «всё хорошо» — шум. Полоса появляется, только когда лента перестала быть живой */
+  .link { display: none; align-items: center; gap: 8px; padding: 8px var(--gutter); font-size: 13px; background: var(--danger); color: var(--on-danger); }
+  .link.down { display: flex; }
+  .link i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
+
+  /* ---- раскладка ---- */
+  .layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); flex: 1; min-height: 0; position: relative; }
+  aside { border-right: 1px solid var(--line); overflow-y: auto; padding: 16px 8px 24px; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; min-width: 0; position: relative; }
+
+  /* ---- агенты ---- */
+  .group { margin-bottom: 20px; }
+  .group > .label { display: block; padding: 0 12px 8px; }
+  .group details > summary { cursor: pointer; padding: 0 12px 8px; list-style-position: inside; }
+  .agent { --h: 0; --wire: hsl(var(--h) var(--wire-s) var(--wire-l)); display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: start; gap: 10px; width: 100%; text-align: left; background: none; border: 0; border-radius: var(--r); padding: 8px 12px; position: relative; transition: background-color .15s; user-select: none; } /* двойной клик выбирает агента, а не выделяет его имя */
+  .agent:hover { background: color-mix(in srgb, var(--plate) 70%, transparent); }
+  .agent[aria-pressed="true"] { background: var(--plate); box-shadow: var(--shadow); }
+  .agent[aria-pressed="true"]::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: var(--wire); }
+  .agent .wire { width: 10px; height: 10px; margin-top: 6px; border-radius: 50%; background: hsl(var(--h) var(--dot-s) var(--dot-l)); } /* тот же цвет, шо у точки агента на ветке */
+  .agent .name { display: block; font: 600 14px/1.4 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent .kind { display: block; font-size: 12px; line-height: 1.45; color: var(--ink-soft); }
+  .agent .note { display: block; } /* строкой, а не через «·»: точка повисала в конце строки при переносе */
+  .agent .note.wait, .agent .note.load { color: var(--copper); }
+  .agent .note.run { color: var(--done); font-weight: 600; }
+  .agent .note.bad { color: var(--danger); }
+  .agent .badge { margin-top: 1px; font: 700 12px/20px var(--label); min-width: 20px; height: 20px; text-align: center; background: var(--copper); color: var(--on-copper); border-radius: 999px; padding: 0 6px; }
+  /* Непрочитанное у агента — не тревога: оно ждёт подъёма или следующего промпта. Медью залито только то, шо ждёт самого пользователя */
+  .agent .badge.wait { background: none; color: var(--ink-soft); box-shadow: inset 0 0 0 1px var(--line); }
+  .agent.running .wire { animation: live 1.4s ease-in-out infinite; }
+  @keyframes live { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--done) 55%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
+  .agent.off .name { color: var(--ink-soft); }
+  .agent.off .wire { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-soft); }
+  .agent.gone .name { text-decoration: line-through; }
+  /* Карандаш — сосед строки, а не её часть: кнопка в кнопке невалидна. Место под него занято всегда — строка под курсором не прыгает */
+  .agent-row { display: flex; align-items: flex-start; gap: 2px; }
+  .agent-row .agent { flex: 1; min-width: 0; }
+  /* На виду всегда: появлявшийся по наведению карандаш пользователь не нашёл — как и спрятанную до выбора пары «Сжать диалог» */
+  .agent-edit { flex: none; display: inline-grid; place-items: center; margin-top: 4px; width: var(--h-sm); height: var(--h-sm); padding: 0; border: 1px solid var(--line); background: var(--plate); border-radius: var(--r); color: var(--ink); transition: border-color .15s, color .15s; }
+  .agent-edit .icon { width: 14px; height: 14px; }
+  .agent-edit:hover, .agent-edit:focus-visible { color: var(--copper); border-color: var(--copper); }
+  .group > .agent-new { margin: 0 12px 8px; } /* вид — от .squeeze, как у «Сжать диалог»; здесь только место в колонке */
+  /* Снять выбор агентов: липнет к верху списка, шоб не искать её под длинной колонкой */
+  .unpick { position: sticky; top: 0; z-index: 1; width: 100%; justify-content: center; margin-bottom: 12px; background: var(--panel); }
+  .hint { font-size: 12px; line-height: 1.5; color: var(--ink-soft); padding: 4px 12px 0; margin: 0; }
+  .hint code { font: 12px var(--mono); background: var(--plate); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 0 4px; word-break: break-all; }
+
+  /* ---- фильтры ---- */
+  .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px var(--gutter); border-bottom: 1px solid var(--line); }
+  .search { flex: 1 1 200px; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: var(--h); background: var(--plate); border: 1px solid var(--line); border-radius: var(--r); padding: 0 10px; color: var(--ink-soft); transition: border-color .15s; }
+  .search:focus-within { border-color: var(--copper); }
+  .search input { flex: 1; min-width: 0; background: none; border: 0; padding: 0; font-size: 14px; color: var(--ink); outline: none; }
+  #types { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; min-height: var(--h); font: 700 11px/1 var(--label); letter-spacing: .08em; background: none; border: 1px solid var(--line); border-radius: 999px; padding: 0 12px 0 10px; color: var(--ink-soft); transition: background-color .15s, border-color .15s, color .15s; }
+  /* Точка чётная: 7px в 32px кнопке вставала на полпикселя мимо центра. Подпись обрезана по прописным — её центр на центре точки */
+  .chip::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+  .chip span { text-box: trim-both cap alphabetic; margin-right: -.08em; }
+  .chip:hover { border-color: var(--c); color: var(--ink); }
+  /* Включённый фильтр залит: полупрозрачная заливка на сером щите не давала тексту 4.5:1 */
+  .chip[aria-pressed="true"] { background: var(--c); border-color: var(--c); color: var(--on-copper); }
+  .chip[aria-pressed="true"]::before { background: currentColor; }
+  .TASK { --c: var(--task); } .QUESTION { --c: var(--question); } .DONE { --c: var(--done); }
+  .STATUS, .ACK, .FYI { --c: var(--fyi); } /* типы до сокращения — в старой переписке */
+  .squeeze { --sq: var(--copper); display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: var(--h); background: color-mix(in srgb, var(--sq) 7%, transparent); border: 1px solid color-mix(in srgb, var(--sq) 55%, var(--line)); color: var(--sq); border-radius: var(--r); padding: 0 12px; font: 700 12px/1.2 var(--label); letter-spacing: .08em; text-transform: uppercase; transition: background-color .15s, color .15s; }
+  /* Иконка под жирные прописные: 16px тонким штрихом рядом с ними смотрелась крупнее и легче текста. Меньше, толще — и отступ слева короче правого: у иконки внутри своё поле */
+  .squeeze .icon { width: 14px; height: 14px; stroke-width: 2.5; }
+  .squeeze:has(> .icon) { padding-left: 10px; }
+  /* Строка подписи обрезана по прописным — центр букв встаёт на центр иконки, а не на полпикселя выше; хвост разрядки за последней буквой снят */
+  .squeeze span { text-box: trim-both cap alphabetic; margin-right: -.08em; }
+  .squeeze:hover:not(:disabled) { background: var(--sq); border-color: var(--sq); color: var(--on-copper); }
+  .squeeze:disabled, .squeeze.danger:disabled { background: none; color: var(--ink-soft); border-color: var(--line); cursor: not-allowed; }
+  #squeeze { margin-left: auto; }
+  .squeeze.danger { --sq: var(--danger); }
+  .squeeze.danger:hover:not(:disabled) { color: var(--on-danger); }
+  .picked-bar { align-items: center; }
+
+  /* ---- панель пары: сколько весит диалог и итог сжатия ---- */
+  .pair { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; padding: 8px var(--gutter); border-bottom: 1px solid var(--line); background: var(--plate); font-size: 13px; }
+  .pair b { font: 600 14px var(--mono); }
+  .pair b i { font: 400 14px var(--body); color: var(--ink-soft); margin: 0 8px; }
+  .pair .weight { color: var(--ink-soft); }
+  .pair .weight.heavy { color: var(--copper); font-weight: 600; }
+  .pair .note { color: var(--ink-soft); flex-basis: 100%; }
+  .pair .note.bad { color: var(--danger); }
+  .pair .note:empty { display: none; }
+
+  /* ---- лента: рейка и отводы ---- */
+  .feed-wrap { overflow-y: auto; min-height: 0; scroll-behavior: smooth; }
+  .feed { list-style: none; margin: 0; padding: 8px var(--gutter) 28px var(--feed-left); position: relative; min-height: 100%; }
+  /* Рейка растворяется на концах: лента — кусок шины, а не вся шина */
+  .feed::before { content: ""; position: absolute; left: var(--rail-x); top: 0; bottom: 0; width: var(--rail-w); background: var(--tap); -webkit-mask-image: linear-gradient(to bottom, transparent, #000 32px, #000 calc(100% - 40px), transparent); mask-image: linear-gradient(to bottom, transparent, #000 32px, #000 calc(100% - 40px), transparent); }
+  /* День — бирка на рейке: ромб-засечка и короткая перемычка к ней */
+  .day { position: relative; width: fit-content; margin: 16px 0 12px; padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--plate); font: 12px/1.2 var(--label); text-transform: uppercase; letter-spacing: .1em; color: var(--ink-soft); }
+  .day::before { content: ""; position: absolute; left: calc(var(--cx) - 1px); top: 50%; margin-top: -1px; width: calc(0px - var(--cx)); height: 2px; background: var(--tap); }
+  .day::after { content: ""; position: absolute; left: calc(var(--cx) - 5px); top: 50%; margin-top: -4px; width: 8px; height: 8px; transform: rotate(45deg); background: var(--tap); box-shadow: 0 0 0 2px var(--panel); }
+  .msg { --h: 0; --dot: hsl(var(--h) var(--dot-s) var(--dot-l)); --px: calc(var(--cx) - 1px); /* ось рейки от края padding-box: рамка съедает 1px */ position: relative; margin: 0 0 10px; padding: 10px 14px 12px; background: var(--plate); border: 1px solid var(--line); border-radius: var(--r-lg); max-width: 860px; box-shadow: var(--shadow); }
+  /* Отвод — плавное колено от узла вниз к шапке карточки, как ветка в графе коммитов. Кривая — маска: цвет остаётся за --tap */
+  .msg::before { content: ""; position: absolute; left: var(--px); top: 3px; width: calc(0px - var(--cx)); height: 20px; background: var(--tap); -webkit-mask: var(--tap-curve) no-repeat; mask: var(--tap-curve) no-repeat; }
+  /* Узел на рейке: кольцо цвета отправителя; залит — сообщение пользователю, в медном ободке — ещё не прочитано */
+  .node { position: absolute; left: calc(var(--px) - 6px); top: -1px; width: 12px; height: 12px; border-radius: 50%; border: 2.5px solid var(--dot); background: var(--panel); }
+  .msg.to-me .node, .msg.unread .node { background: var(--dot); }
+  .msg.unread .node { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--copper); }
+  /* Серия: то же «от кого → кому» подряд — карточки плотнее, вместо колена прямой отвод с малым узлом */
+  .msg.cont { margin-top: -5px; }
+  .msg.cont::before { top: 19px; height: 2px; -webkit-mask: none; mask: none; }
+  .msg.cont .node { left: calc(var(--px) - 4px); top: 16px; width: 8px; height: 8px; border: 0; background: var(--dot); box-shadow: 0 0 0 2px var(--panel); }
+  .msg.cont.unread .node { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--copper); }
+  .msg.to-me { background: color-mix(in srgb, var(--copper) 7%, var(--plate)); border-color: color-mix(in srgb, var(--copper) 35%, var(--line)); }
+  .msg.unread { border-color: var(--copper); box-shadow: 0 0 0 3px var(--copper-soft), var(--shadow); }
+  /* Бледнеет содержимое, а не вся карточка: сквозь полупрозрачный узел просвечивала бы рейка */
+  .msg.covered { box-shadow: none; background: color-mix(in srgb, var(--plate) 55%, var(--panel)); border-color: color-mix(in srgb, var(--line) 55%, var(--panel)); --dot: color-mix(in srgb, hsl(var(--h) var(--dot-s) var(--dot-l)) 55%, var(--panel)); }
+  .msg.covered.to-me { background: color-mix(in srgb, color-mix(in srgb, var(--copper) 7%, var(--plate)) 55%, var(--panel)); border-color: color-mix(in srgb, color-mix(in srgb, var(--copper) 35%, var(--line)) 55%, var(--panel)); }
+  .msg.covered .text, .msg.covered time, .msg.covered .type, .msg.covered::before { opacity: .65; } /* кнопки имён, пары и выделения не бледнеют */
+  /* Клик по карточке выделяет её под удаление; галочка — то же самое с клавиатуры */
+  .msg { cursor: pointer; }
+  .msg.picked { border-color: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 22%, transparent), var(--shadow); }
+  /* Галочка видна всегда: появляющуюся по наведению не находят */
+  .pick { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; margin-left: 4px; background: none; border: 1px solid var(--line); border-radius: var(--r-sm); color: transparent; transition: border-color .15s; }
+  .pick .icon { width: 14px; height: 14px; }
+  .msg:hover .pick, .pick:focus-visible { border-color: var(--ink-soft); }
+  .msg.picked .pick { background: var(--danger); border-color: var(--danger); color: var(--on-danger); }
+  /* Новое: узел щёлкает на рейку, колено дорисовывается от него к карточке */
+  .msg.fresh { animation: land .5s cubic-bezier(.2, .7, .2, 1); }
+  .msg.fresh .node { animation: pop .45s cubic-bezier(.3, 1.6, .5, 1); }
+  .msg.fresh::before { animation: draw .45s ease-out; }
+  @keyframes land { from { transform: translateX(-8px); opacity: 0; } }
+  @keyframes pop { from { transform: scale(0); } }
+  @keyframes draw { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0); } }
+  .meta { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; }
+  .meta time { margin-left: auto; font: 12px var(--mono); color: var(--ink-soft); }
+  .who { --wh: 0; font: 600 13px var(--mono); background: none; border: 0; padding: 0; color: hsl(var(--wh) var(--wire-s) var(--wire-l)); }
+  .who:hover { text-decoration: underline; }
+  .arrow { display: inline-flex; color: var(--ink-soft); background: none; border: 0; border-radius: var(--r-xs); padding: 2px; transition: color .15s, background-color .15s; }
+  .arrow:hover, .arrow[aria-pressed="true"] { color: var(--copper); background: var(--copper-soft); }
+  .arrow .icon { width: 14px; height: 14px; }
+  /* Бирка: тип сообщения, «новое», пометка расписания — одна форма, разный цвет */
+  .type, .new, .sched-tag { font: 700 11px/1 var(--label); letter-spacing: .08em; text-transform: uppercase; text-box: trim-both cap alphabetic; border-radius: 999px; padding: 5px 8px; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
+  .new { color: var(--on-copper); background: var(--copper); }
+  .sched-tag { --c: var(--fyi); }
+  .text { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* Найденное поиском: в тексте, именах и вложениях */
+  mark { background: color-mix(in srgb, var(--copper) 30%, transparent); color: inherit; border-radius: var(--r-xs); box-shadow: 0 0 0 1px color-mix(in srgb, var(--copper) 50%, transparent); }
+  .files { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; align-items: flex-end; }
+  .thumb { display: block; max-width: 240px; max-height: 180px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); transition: border-color .15s; }
+  a:hover > .thumb { border-color: var(--copper); }
+  .filechip { display: inline-flex; align-items: center; gap: 6px; min-height: var(--h-sm); font: 12px var(--mono); color: inherit; text-decoration: none; border: 1px solid var(--line); border-radius: var(--r); padding: 4px 10px; background: var(--panel); max-width: 100%; overflow-wrap: anywhere; transition: border-color .15s; }
+  .filechip .icon { width: 14px; height: 14px; color: var(--ink-soft); }
+  a.filechip:hover { border-color: var(--copper); }
+  .filechip small { font: 12px var(--body); color: var(--ink-soft); white-space: nowrap; }
+  .filechip.gone { text-decoration: line-through; color: var(--ink-soft); }
+  .filechip button { display: inline-flex; background: none; border: 0; padding: 2px; color: var(--ink-soft); border-radius: var(--r-xs); }
+  .filechip button:hover { color: var(--danger); }
+  /* Сводка — не отвод, а перемычка: пунктир вместо колена, полый медный ромб вместо узла */
+  .summary { position: relative; margin: 0 0 10px; padding: 10px 14px 12px; max-width: 860px; border: 1px dashed color-mix(in srgb, var(--copper) 60%, var(--line)); border-radius: var(--r-lg); background: color-mix(in srgb, var(--copper) 6%, var(--panel)); }
+  .summary::before { content: ""; position: absolute; left: calc(var(--cx) - 1px); top: 18px; width: calc(0px - var(--cx)); height: 0; border-top: 2px dashed var(--copper); }
+  .summary::after { content: ""; position: absolute; left: calc(var(--cx) - 6px); top: 14px; width: 10px; height: 10px; transform: rotate(45deg); border: 2px solid var(--copper); background: var(--panel); }
+  .summary .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .summary .head .label { color: var(--copper); }
+  .summary .head time { margin-left: auto; font: 12px var(--mono); color: var(--ink-soft); }
+  .summary p { margin: 6px 0 0; overflow-wrap: anywhere; }
+  .summary .ghost { margin-top: 8px; min-height: var(--h-sm); padding: 0 10px; font-size: 12px; background: var(--plate); }
+  .empty { color: var(--ink-soft); padding: 40px 0; max-width: 460px; }
+  .empty b { display: block; color: var(--ink); font: 600 16px var(--body); margin-bottom: 4px; }
+  .empty button { margin-top: 12px; }
+  .to-bottom { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(100% + 10px); z-index: 2; min-height: var(--h); background: var(--copper); color: var(--on-copper); border: 0; border-radius: 999px; padding: 0 16px; font: 700 12px var(--label); letter-spacing: .08em; text-transform: uppercase; box-shadow: var(--shadow); }
+
+  /* ---- отправка ---- */
+  #composer { position: relative; border-top: 1px solid var(--line); background: var(--plate); padding: 12px var(--gutter); display: grid; grid-template-columns: minmax(140px, 200px) 220px minmax(0, 1fr) auto; gap: 8px 12px; align-items: end; }
+  form label { display: grid; gap: 4px; min-width: 0; }
+  /* Подпись поля — всегда одна строка: перенос пояснения сдвигал поле вниз, и соседние в ряду переставали стоять вровень */
+  form label > .label { display: flex; align-items: baseline; gap: 6px; min-width: 0; white-space: nowrap; }
+  form label .label small { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font: inherit; letter-spacing: .04em; text-transform: none; opacity: .8; }
+  /* Поле ввода одно на все формы: отправка, расписание, агент */
+  form select, form textarea, form input:not([type="checkbox"]):not([type="file"]) { background: var(--field); border: 1px solid var(--line); border-radius: var(--r); min-height: var(--h-lg); padding: 8px 10px; font-size: 14px; line-height: 20px; width: 100%; min-width: 0; transition: border-color .15s, box-shadow .15s; }
+  form select:focus, form textarea:focus, form input:not([type="checkbox"]):not([type="file"]):focus { border-color: var(--copper); box-shadow: 0 0 0 3px var(--copper-soft); outline: none; }
+  form textarea { display: block; resize: vertical; }
+  /* Идёт диктовка: поле, куда ложится текст. Без анимации — рамки хватает, а запись бывает долгой */
+  textarea.listening, input.listening { border-color: var(--copper) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--copper) 35%, transparent); }
+  #composer textarea { height: var(--h-lg); max-height: 220px; }
+  #composer textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* длинная подсказка в одну строку, а не обрезанная вторая */
+  .send { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: var(--h-lg); background: var(--copper); color: var(--on-copper); border: 0; border-radius: var(--r); padding: 0 16px; font: 700 13px var(--label); letter-spacing: .1em; text-transform: uppercase; transition: filter .15s, transform .1s; }
+  .send:hover:not(:disabled) { filter: brightness(1.08); }
+  .send:active:not(:disabled) { transform: translateY(1px); }
+  .send:disabled { background: var(--raised); color: var(--ink-soft); box-shadow: inset 0 0 0 1px var(--line); cursor: not-allowed; }
+  .attach { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-soft); min-width: 0; }
+  #picked { display: contents; }
+  main.drop .feed-wrap { outline: 2px dashed var(--copper); outline-offset: -8px; }
+  .result { grid-column: 1 / 3; font-size: 13px; line-height: 20px; color: var(--ink-soft); min-height: 20px; margin: 0; }
+  .keys { grid-column: 3 / -1; margin: 0; text-align: right; font-size: 12px; line-height: 20px; color: var(--ink-soft); }
+  .result.bad { color: var(--danger); }
+
+  /* ---- расписание ---- */
+  .sched-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; margin-left: 2px; border-radius: 999px; background: var(--line); color: var(--ink); font: 700 11px/16px var(--label); }
+  .sched-badge.alert { background: var(--copper); color: var(--on-copper); }
+  #scheduleBtn.alert { border-color: var(--copper); color: var(--copper); }
+
+  .sched-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 20; }
+  /* Поверх ленты, не всей страницы: список агентов и шапка остаются на месте */
+  .schedule { position: fixed; top: 0; right: 0; bottom: 0; --gutter: 16px; width: min(480px, 100vw); background: var(--plate); border-left: 1px solid var(--line); box-shadow: var(--shadow-pop); z-index: 21; display: flex; flex-direction: column; min-height: 0; }
+  .sched-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px var(--gutter); border-bottom: 1px solid var(--line); flex: none; }
+  .sched-head b { font: 600 15px var(--body); }
+  .sched-daemon { margin: 0; padding: 8px var(--gutter); font-size: 12px; color: var(--ink-soft); border-bottom: 1px solid var(--line); flex: none; }
+  .sched-daemon.bad { color: var(--copper); font-weight: 600; }
+  .sched-warn { margin: 0; padding: 8px var(--gutter); font-size: 12px; color: var(--copper); background: var(--copper-soft); flex: none; }
+  .sched-list { flex: 1; overflow-y: auto; padding: 4px 0; min-height: 0; }
+  .sched-group > .label { display: block; padding: 12px var(--gutter) 4px; }
+  .sched-empty { color: var(--ink-soft); padding: 12px var(--gutter); font-size: 13px; }
+  /* Главное действие панели — той же меди и того же набора, шо «Отправить» */
+  #scheduleNew { margin: 12px var(--gutter) 4px; align-self: flex-start; flex: none; background: var(--copper); color: var(--on-copper); border-color: var(--copper); font: 700 12px/1.2 var(--label); letter-spacing: .08em; text-transform: uppercase; }
+  #scheduleNew:hover { color: var(--on-copper); filter: brightness(1.08); }
+
+  .job { display: grid; grid-template-columns: auto 1fr; column-gap: 12px; row-gap: 2px; padding: 12px var(--gutter); border-top: 1px solid var(--line); align-items: start; }
+  .sched-group:first-child .job:first-child { border-top: 0; }
+  .job-toggle { grid-row: 1 / span 5; width: 34px; height: 20px; border-radius: 999px; background: var(--line); position: relative; border: 0; flex: none; margin-top: 2px; padding: 0; }
+  .job-toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--plate); box-shadow: 0 1px 2px #0005; transition: transform .15s; }
+  .job-toggle[aria-checked="true"] { background: var(--copper); }
+  .job-toggle[aria-checked="true"]::after { transform: translateX(14px); }
+  .job-name { font: 600 14px var(--mono); }
+  .job-error { color: var(--danger); font-size: 12px; }
+  .job-about { font-size: 12px; color: var(--ink-soft); }
+  .job-about code { font: 11px var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 0 4px; margin-left: 6px; }
+  .job-line { font-size: 12px; color: var(--ink-soft); }
+  .job-line.bad { color: var(--copper); font-weight: 600; }
+  .job-line.run { color: var(--done); font-weight: 600; }
+  .job-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .job-actions .ghost { padding: 0 10px; font-size: 12px; min-height: var(--h-sm); }
+
+  .schedule form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 16px var(--gutter) 20px; overflow-y: auto; min-height: 0; }
+  .schedule form h3 { grid-column: 1 / -1; margin: 0; font: 600 14px var(--body); }
+  .schedule form label { display: grid; gap: 4px; min-width: 0; align-content: start; }
+  .schedule form label.wide, .schedule form fieldset, .schedule form .sched-actions, .schedule form .hint, .schedule form .sched-error { grid-column: 1 / -1; }
+  .schedule form .hint { padding: 0; margin-top: -6px; } /* подсказка к полю над ней: стоит по левому краю формы и ближе к полю, чем к следующему */
+  .schedule form textarea { min-height: 90px; }
+  /* margin: 0 — у fieldset браузерные 2px по бокам, рамка выпадала из колонки полей */
+  .sched-cron, .role-ai { margin: 0; border: 1px solid var(--line); border-radius: var(--r); padding: 8px 12px 12px; display: grid; gap: 8px; min-width: 0; }
+  .sched-cron legend, .role-ai legend { padding: 0 4px; margin-left: -4px; }
+  .sched-preset { display: flex; gap: 12px; flex-wrap: wrap; }
+  .sched-describe { margin: 0; font-size: 13px; }
+  .sched-describe.bad { color: var(--danger); }
+  .sched-upcoming { margin: 0; padding: 0; list-style: none; font: 12px var(--mono); color: var(--ink-soft); }
+  .sched-error { color: var(--danger); font-size: 13px; margin: 0; }
+  .sched-actions { display: flex; gap: 8px; }
+  .sched-actions button { min-height: var(--h-lg); padding: 0 16px; } /* в одном ряду — одной высоты */
+  /* Панель агента живёт на стилях панели расписания; своё — только ниже. Шире расписания: роль — длинный текст, в 480px его читать тесно */
+  #agentPanel { width: min(820px, 100vw); }
+  #agentForm { flex: 1; align-content: start; }
+  /* «Сохранить» и «Удалить» прибиты к низу панели: под длинной ролью они уезжали за экран, а спрятанное пользователь не находит */
+  #agentForm .sched-actions { position: sticky; bottom: -20px; z-index: 1; margin: 4px calc(0px - var(--gutter)) -20px; padding: 12px var(--gutter); background: var(--plate); border-top: 1px solid var(--line); }
+  .schedule form details, .schedule form .role-ai, .schedule form .role-where { grid-column: 1 / -1; min-width: 0; }
+  .schedule form #agentBody { min-height: max(260px, 42vh); font: 13px/1.5 var(--mono); }
+  .schedule form #agentAsk { min-height: 56px; }
+  .role-ai-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .role-ai-note { margin: 0; font-size: 12px; color: var(--ink-soft); flex: 1; min-width: 140px; }
+  .role-ai-note.bad { color: var(--danger); }
+  .role-bus { margin: 6px 0 0; padding: 8px 10px; max-height: 180px; overflow: auto; white-space: pre-wrap; font: 12px/1.5 var(--mono); color: var(--ink-soft); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
+  .role-where { margin: 0; font: 11px var(--mono); color: var(--ink-soft); word-break: break-all; padding: 0; }
+  .sched-actions .push { margin-left: auto; }
+  /* Галочка в ряду с полем стоит по его высоте, а не висит посреди ячейки */
+  .schedule form label.check { display: flex; align-items: center; gap: 8px; align-self: end; min-height: var(--h-lg); font-size: 14px; line-height: 20px; }
+  .schedule form #agentFastLabel { flex-wrap: wrap; align-content: center; gap: 0 8px; }
+  .schedule form #agentFastLabel small { flex-basis: 100%; font-size: 12px; line-height: 16px; color: var(--ink-soft); }
+
+  /* ---- выпадающие списки ---- */
+  /* Нативный select: клавиатура и доступность остаются браузерные. Свой вид самого списка — там, где есть base-select (Chrome 135+);
+     в остальных браузерах оформлено только закрытое поле, список системный */
+  form select { cursor: pointer; }
+  form select:hover { border-color: color-mix(in srgb, var(--copper) 55%, var(--line)); }
+  @supports not (appearance: base-select) {
+    form select { appearance: none; padding-right: 30px !important; background-repeat: no-repeat; background-position: right 10px center; background-size: 12px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a97a3' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); }
+  }
+  @supports (appearance: base-select) {
+    form select, form select::picker(select) { appearance: base-select; }
+    form select { display: flex; align-items: center; gap: 8px; }
+    /* Подпись закрытого поля: button и selectedcontent подкладывает setOptions */
+    form select > button { display: flex; flex: 1; min-width: 0; }
+    form select selectedcontent { display: block; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    form select:open { border-color: var(--copper); }
+    form select::picker-icon { content: ""; flex: none; margin-left: auto; width: 14px; height: 14px; background: var(--ink-soft); mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat; transition: rotate .2s, background-color .15s; }
+    form select:open::picker-icon { rotate: 180deg; background: var(--copper); }
+    form select::picker(select) { background: var(--raised); color: var(--ink); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 4px; margin-block: 6px; box-shadow: var(--shadow-pop); max-height: min(340px, 60vh); overflow-y: auto; scrollbar-width: thin; opacity: 0; transition: opacity .14s, overlay .14s allow-discrete, display .14s allow-discrete; }
+    form select::picker(select):popover-open { opacity: 1; }
+    @starting-style { form select::picker(select):popover-open { opacity: 0; } }
+    form select option { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: var(--r-sm); font: 400 14px/20px var(--body); letter-spacing: 0; text-transform: none; color: var(--ink); white-space: nowrap; cursor: pointer; transition: background-color .1s; }
+    form select option:hover, form select option:focus-visible { background: var(--copper-soft); outline: none; }
+    form select option:checked { color: var(--copper); font-weight: 600; }
+    form select option::checkmark { order: 1; margin-left: auto; content: "✓"; color: var(--copper); }
+    form select optgroup { font: 700 11px/1 var(--label); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); padding-top: 8px; }
+    form select optgroup:not(:first-child) { margin-top: 5px; border-top: 1px solid var(--line); }
+    form select optgroup option { margin-top: 4px; }
+    form select optgroup option + option { margin-top: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+    .feed-wrap { scroll-behavior: auto; }
+  }
+
+  @media (max-width: 820px) {
+    :root { --h-sm: 32px; --h: 36px; --h-lg: 40px; /* пальцем в 28px не попасть */ --gutter: 12px; --rail-x: 13px; --feed-left: 44px; --tap-curve: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Cpath d='M0 2C18 2 10 17 30 17' fill='none' stroke='%23000' stroke-width='2'/%3E%3C/svg%3E"); }
+    /* Список агентов — поверх ленты, а не над ней: иначе он выдавливает ленту в ноль и форма уезжает за экран */
+    .layout { grid-template-columns: minmax(0, 1fr); }
+    aside { display: none; position: absolute; inset: 0 0 auto 0; z-index: 5; max-height: 75%; background: var(--panel); border-right: 0; border-bottom: 1px solid var(--line); box-shadow: 0 16px 28px -12px #0008; }
+    aside.open { display: block; }
+    #toggleAgents { display: inline-flex; }
+    .where { order: 5; flex-basis: 100%; }
+    #scheduleBtn { margin-left: auto; }
+    .search { flex-basis: 100%; }
+    /* Типы — одной прокручиваемой строкой: шесть фишек в два ряда съедали бы ленту */
+    #types { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+    #composer { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    #composer .wide, #composer .send, .result { grid-column: 1 / -1; }
+    #attachHint, .keys { display: none; } /* перетаскивать и жать Enter на телефоне нечем, а лента и так зажата формой */
+    .thumb { max-width: 100%; }
+    .schedule form { grid-template-columns: 1fr; }
+    .job-toggle, .job-actions .ghost { min-height: 32px; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.5-4.5"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.4 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></symbol>
+  <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></symbol>
+  <symbol id="i-squeeze" viewBox="0 0 24 24"><path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="m14 10 7-7"/><path d="m3 21 7-7"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></symbol>
+</svg>
+
+<header class="top">
+  <div class="where"><b id="project">…</b><span id="cwd"></span></div>
+  <div class="mine" id="mine" title="Открой диалог ответившего агента — его ответы прочитаны: сессия проекта их уже не получит и токены на них не потратит. Не откроешь — сессия увидит счётчик ответов на следующем промпте"><span id="mineText"></span></div>
+  <button class="ghost" id="scheduleBtn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="schedule" title="Расписание: задачи по cron"><svg class="icon"><use href="#i-clock"/></svg>Расписание<span class="sched-badge" id="scheduleBadge" hidden>0</span></button>
+  <button class="ghost" id="toggleAgents" type="button" aria-expanded="false" aria-controls="agents"><svg class="icon"><use href="#i-users"/></svg>Агенты</button>
+  <button class="ghost" id="lang" type="button"></button>
+  <button class="ghost iconbtn" id="theme" type="button" aria-label="Сменить тему: светлая или тёмная" title="Сменить тему"><svg class="icon"><use href="#i-theme"/></svg></button>
+</header>
+<div class="link" id="link" role="alert"><i></i><span></span></div>
+
+<div class="layout">
+  <aside id="agents" aria-label="Агенты"></aside>
+  <main>
+    <div>
+    <div class="filters">
+      <label class="search"><svg class="icon"><use href="#i-search"/></svg><input type="search" id="q" placeholder="Поиск по тексту и именам" aria-label="Поиск по ленте"></label>
+      <span id="types" role="group" aria-label="Типы сообщений"></span>
+      <!-- На виду всегда: спрятанную до выбора пары кнопку пользователь не нашёл. Без пары клик по ней объясняет, как пару выбрать -->
+      <button class="squeeze" id="squeeze" type="button"><svg class="icon"><use href="#i-squeeze"/></svg><span>Сжать диалог</span></button>
+      <!-- Выбрана пара — чистит её диалог, без пары — весь журнал каталога; подпись меняется в renderPair -->
+      <button class="squeeze danger" id="clear" type="button"><svg class="icon"><use href="#i-trash"/></svg><span>Очистить всё</span></button>
+    </div>
+    <!-- Клик по сообщению выделяет его; панель видна, пока шо-то выделено -->
+    <div class="pair picked-bar" id="marked" hidden>
+      <b id="markedCount"></b>
+      <button class="squeeze danger" id="markedDelete" type="button"><svg class="icon"><use href="#i-trash"/></svg><span>Удалить</span></button>
+      <button class="ghost" id="markedNone" type="button"><svg class="icon"><use href="#i-x"/></svg>Снять выделение</button>
+    </div>
+    <div class="pair" id="pair" hidden>
+      <b id="pairNames"></b><span class="weight" id="pairWeight"></span>
+      <span class="note" id="pairNote" role="status"></span>
+    </div>
+    </div>
+    <div class="feed-wrap" id="wrap"><ol class="feed" id="feed" aria-live="polite"></ol></div>
+    <form id="composer">
+      <button class="to-bottom" id="toBottom" type="button" hidden>Новые сообщения ↓</button>
+      <label><span class="label">Кому<small id="fromHint"></small></span><select id="to" required></select></label>
+      <label><span class="label">Тип</span><select id="type"></select></label>
+      <label class="wide"><span class="label">Сообщение</span><textarea id="text" placeholder="Шо сделать, где (файл:строка), зачем — агент читает без твоего контекста"></textarea></label>
+      <button class="send" id="sendBtn" type="submit"><svg class="icon"><use href="#i-send"/></svg>Отправить</button>
+      <div class="attach">
+        <button class="ghost" id="pickBtn" type="button"><svg class="icon"><use href="#i-clip"/></svg>Приложить файл</button>
+        <input type="file" id="pick" multiple hidden>
+        <span id="picked"></span>
+        <span id="attachHint">или перетащи сюда · скрин — Ctrl+V. Агент получит путь и откроет файл, только если он нужен</span>
+      </div>
+      <p class="result" id="result" role="status"></p>
+      <p class="keys">Enter — отправить · Shift+Enter — новая строка<span id="voiceHint" hidden> · удержи пробел — диктовка</span></p>
+    </form>
+  </main>
+</div>
+
+<div class="sched-backdrop" id="scheduleBackdrop" hidden></div>
+<section class="schedule" id="schedule" hidden role="dialog" aria-modal="true" aria-label="Расписание">
+  <div class="sched-head">
+    <b>Расписание</b>
+    <button class="ghost iconbtn" id="scheduleClose" type="button" aria-label="Закрыть панель расписания"><svg class="icon"><use href="#i-x"/></svg></button>
+  </div>
+  <p class="sched-daemon" id="scheduleDaemon" role="status"></p>
+  <p class="sched-warn" id="scheduleWarn" hidden></p>
+  <button class="ghost" id="scheduleNew" type="button"><svg class="icon"><use href="#i-plus"/></svg>Новая задача</button>
+  <div class="sched-list" id="scheduleList"></div>
+
+  <form id="scheduleForm" hidden>
+    <h3 id="schedFormTitle">Новая задача</h3>
+    <label><span class="label">Каталог</span><select id="schedRoot"></select></label>
+    <label><span class="label">Имя<small>латиница, цифры, дефис</small></span><input id="schedName" type="text" maxlength="31" pattern="[a-z0-9][a-z0-9\-]{0,30}" required autocomplete="off"></label>
+
+    <fieldset class="sched-cron">
+      <legend class="label">Расписание</legend>
+      <select id="schedPreset">
+        <option value="daily">каждый день в …</option>
+        <option value="weekdays">по будням в …</option>
+        <option value="weekly">раз в неделю</option>
+        <option value="minutes">каждые N минут</option>
+        <option value="hours">каждые N часов</option>
+        <option value="custom">свой cron</option>
+      </select>
+      <div class="sched-preset" id="schedDaily"><label><span class="label">Время</span><input id="schedDailyTime" type="time" value="09:00"></label></div>
+      <div class="sched-preset" id="schedWeekdays" hidden><label><span class="label">Время</span><input id="schedWeekdaysTime" type="time" value="09:00"></label></div>
+      <div class="sched-preset" id="schedWeekly" hidden>
+        <label><span class="label">День</span><select id="schedWeeklyDay"></select></label>
+        <label><span class="label">Время</span><input id="schedWeeklyTime" type="time" value="09:00"></label>
+      </div>
+      <div class="sched-preset" id="schedMinutes" hidden><label><span class="label">Каждые</span><select id="schedMinutesN"></select></label></div>
+      <div class="sched-preset" id="schedHours" hidden>
+        <label><span class="label">Каждые</span><select id="schedHoursN"></select></label>
+        <label><span class="label">Минута запуска</span><input id="schedHoursMinute" type="number" min="0" max="59" value="0"></label>
+      </div>
+      <div class="sched-preset" id="schedCustom" hidden><label><span class="label">cron</span><input id="schedCustomExpr" type="text" placeholder="0 9 * * 1-5" spellcheck="false"></label></div>
+      <p class="sched-describe" id="schedDescribe"></p>
+      <ul class="sched-upcoming" id="schedUpcoming"></ul>
+    </fieldset>
+
+    <label><span class="label">Кому</span><select id="schedTo"></select></label>
+    <label id="schedModelLabel"><span class="label">Модель<small>по умолчанию — <span id="schedModelDefault"></span></small></span><input id="schedModel" type="text" placeholder="sonnet" autocomplete="off"></label>
+    <label><span class="label">Таймаут, мин</span><input id="schedTimeout" type="number" min="1" max="120" value="10"></label>
+    <label class="check"><input type="checkbox" id="schedCatchup"> догонять пропущенное (комп спал)</label>
+    <label class="check"><input type="checkbox" id="schedEnabled" checked> включена</label>
+
+    <label class="wide"><span class="label">Промпт</span><textarea id="schedPrompt" required></textarea></label>
+    <p class="hint">длиннее ~1700 символов уйдёт агенту вложением</p>
+
+    <p class="sched-error" id="schedError" role="alert" hidden></p>
+    <button class="squeeze danger" id="schedForceSave" type="button" hidden>Всё равно сохранить</button>
+
+    <div class="sched-actions">
+      <button class="send" id="schedSave" type="submit">Сохранить</button>
+      <button class="ghost" id="schedCancel" type="button">Отмена</button>
+    </div>
+  </form>
+</section>
+
+<div class="sched-backdrop" id="agentBackdrop" hidden></div>
+<section class="schedule" id="agentPanel" hidden role="dialog" aria-modal="true" aria-labelledby="agentTitle">
+  <div class="sched-head">
+    <b id="agentTitle">Новый агент</b>
+    <button class="ghost iconbtn" id="agentClose" type="button" aria-label="Закрыть панель агента"><svg class="icon"><use href="#i-x"/></svg></button>
+  </div>
+  <p class="sched-warn" id="agentWarn" hidden></p>
+  <form id="agentForm">
+    <label><span class="label">Имя<small>латиница, цифры, дефис</small></span><input id="agentName" type="text" maxlength="31" pattern="[a-z0-9][a-z0-9\-]{0,30}" required autocomplete="off" spellcheck="false"></label>
+    <label><span class="label">Модель</span><select id="agentModel"></select></label>
+    <label class="wide"><span class="label">Описание<small>когда этого агента поднимать</small></span><input id="agentAbout" type="text" maxlength="1000" required autocomplete="off"></label>
+    <label><span class="label">Effort<small>сколько модель думает</small></span><select id="agentEffort"></select></label>
+    <label class="check" id="agentFastLabel"><input type="checkbox" id="agentFast"> fast mode<small>только Opus; при фоновом подъёме шиной</small></label>
+
+    <fieldset class="role-ai">
+      <legend class="label">Переписать с ИИ</legend>
+      <textarea id="agentAsk" maxlength="2000" aria-label="Шо поменять в роли" placeholder="Шо поменять: «добавь правило — перед правкой схемы спрашивать пользователя»"></textarea>
+      <div class="role-ai-row">
+        <button class="squeeze" id="agentRewrite" type="button"><svg class="icon"><use href="#i-squeeze"/></svg><span>Переписать с ИИ</span></button>
+        <button class="ghost" id="agentAiSwap" type="button" hidden>Показать, как было</button>
+        <button class="ghost" id="agentAiUndo" type="button" hidden>Вернуть как было</button>
+      </div>
+      <p class="role-ai-note" id="agentAiNote" role="status">ИИ правит описание и роль прямо в форме. На диск ничего не уходит, пока не нажмёшь «Сохранить».</p>
+    </fieldset>
+
+    <label class="wide"><span class="label">Роль<small>зона ответственности, правила работы</small></span><textarea id="agentBody" required spellcheck="false"></textarea></label>
+    <details id="agentBusWrap" hidden><summary class="label">Блок «Шина» — его ведёт скрипт</summary><pre class="role-bus" id="agentBus"></pre></details>
+    <p class="role-where" id="agentWhere"></p>
+
+    <p class="hint" id="agentNoDelete" hidden>Глобального агента удалить нельзя: роль общая на все проекты.</p>
+    <p class="sched-error" id="agentError" role="alert" hidden></p>
+    <div class="sched-actions">
+      <button class="send" id="agentSave" type="submit">Сохранить</button>
+      <button class="ghost" id="agentCancel" type="button">Отмена</button>
+      <button class="squeeze danger push" id="agentDelete" type="button" hidden><svg class="icon"><use href="#i-trash"/></svg><span>Удалить агента</span></button>
+    </div>
+  </form>
+</section>
+
+<script src="/i18n.js"></script>
+<script src="/logic.js"></script>
+<script src="/cron.js"></script>
+<script>
+const TOKEN = '__BUS_TOKEN__';
+const PAGE = '__BUS_PAGE__';
+const I = window.BusI18n; // язык: tr(русская строка) → перевод из словаря ui-i18n.js
+const { tr, N } = I;
+const L = window.BusLogic; // чистая логика — ui-logic.js, её же гоняют тесты в node
+const C = window.BusCron; // разбор cron для формы расписания — тот же файл, шо у демона
+const $ = (id) => document.getElementById(id);
+const el = (tag, props = {}, ...kids) => {
+  const node = Object.assign(document.createElement(tag), props);
+  node.append(...kids);
+  return node;
+};
+/**
+ * Опции select. Там, где список рисуем сами (base-select), подпись закрытого поля живёт в <button><selectedcontent>: сам select
+ * Chrome держит с overflow: visible, и длинная подпись на узком экране вылезала за рамку и растягивала страницу.
+ */
+const BASE_SELECT = CSS.supports('appearance', 'base-select');
+function setOptions(select, nodes) {
+  let face = select.querySelector(':scope > button');
+  if (BASE_SELECT && !face) select.prepend((face = el('button', {}, document.createElement('selectedcontent'))));
+  if (!nodes) return;
+  for (const child of [...select.children]) if (child !== face) child.remove();
+  select.append(...nodes);
+}
+// ---------- язык ----------
+
+// По умолчанию английский; выбор живёт в localStorage, как тема. Демон, CLI и тесты в node остаются на русском — это язык только страницы
+try { I.setLang(I.LANGS.includes(localStorage.getItem('bus-lang')) ? localStorage.getItem('bus-lang') : 'en'); } catch { I.setLang('en'); }
+const langHeader = () => ({ 'X-Bus-Lang': I.lang() }); // сервер отвечает ошибками на языке вкладки
+
+/**
+ * Статичная разметка переводится без пометок в HTML: на старте собираем русские текстовые узлы и атрибуты, ключ перевода — сам русский текст.
+ * Узел, который потом перерисовал JS, из документа выпал — его подпись ставит код через tr().
+ */
+const STATIC_ATTRS = ['title', 'placeholder', 'aria-label'];
+const CYRILLIC = /[А-Яа-яЁё]/;
+const staticTexts = [];
+const staticAttrs = [];
+{
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.parentElement.closest('script, style') || !CYRILLIC.test(node.data)) continue;
+    const [, lead, key, tail] = /^(\s*)([\s\S]*?)(\s*)$/.exec(node.data);
+    staticTexts.push({ node, lead, key, tail });
+  }
+  for (const node of document.body.querySelectorAll(STATIC_ATTRS.map((attr) => `[${attr}]`).join(','))) {
+    for (const attr of STATIC_ATTRS) if (CYRILLIC.test(node.getAttribute(attr) || '')) staticAttrs.push({ node, attr, key: node.getAttribute(attr) });
+  }
+}
+function applyStatic() {
+  document.documentElement.lang = I.lang();
+  for (const { node, lead, key, tail } of staticTexts) node.data = lead + tr(key) + tail;
+  for (const { node, attr, key } of staticAttrs) node.setAttribute(attr, tr(key));
+  // На кнопке — язык, на который она переключит
+  const other = I.lang() === 'en' ? 'ru' : 'en';
+  $('lang').textContent = other.toUpperCase();
+  $('lang').title = other === 'en' ? 'Switch to English' : 'Переключить на русский';
+  $('lang').setAttribute('aria-label', $('lang').title);
+}
+applyStatic(); // до первого setOptions: <selectedcontent> копирует подпись опции один раз
+
+const SVG = 'http://www.w3.org/2000/svg';
+function icon(name) {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('class', 'icon');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS(SVG, 'use');
+  use.setAttribute('href', `#i-${name}`);
+  svg.append(use);
+  return svg;
+}
+
+const state = { agents: [], here: {}, types: [], maxFiles: 5, maxFileBytes: 10 * 1024 * 1024, messages: new Map(), summaries: new Map(), hues: new Map(), schedule: null };
+let picked = []; // загруженные, но ещё не отправленные вложения: { id, name, size }
+let showCovered = false; // в режиме пары: раскрыты ли сообщения, которые уже ушли в сводку
+const filters = { agents: new Set(), types: new Set(), q: '' };
+const TYPE_NOTE = { TASK: N('просьба сделать'), QUESTION: N('нужен ответ'), DONE: N('выполнено') };
+const typeNote = (type) => tr(TYPE_NOTE[type] || '');
+
+const messageList = () => [...state.messages.values()];
+const hueOf = (name) => (state.hues.has(name) ? state.hues.get(name) : L.hue(name));
+function selectAgents(keys) {
+  filters.agents = new Set(keys);
+  renderAgents();
+  renderFeed();
+}
+
+// ---------- агенты ----------
+
+function agentButton(agent) {
+  // Столько агент потянет в контекст, если прочтёт всю свою переписку: сигнал, в какой диалог зайти и сжать
+  const load = L.tokensOf(messageList().filter((m) => (m.fromKey === agent.key || m.toKey === agent.key) && !L.covered(m, state.summaries)));
+  const status = L.agentStatus(agent, load);
+  const me = hereBoss();
+  const replies = (me && me.repliesBy && me.repliesBy[agent.key]) || 0;
+  const button = el('button', { type: 'button', className: `agent${agent.registered ? '' : ' off'}${agent.alive ? '' : ' gone'}${status.busy ? ' running' : ''}`, title: agent.description ? `${agent.description}\n${agent.where}` : agent.where },
+    el('span', { className: 'wire' }),
+    el('span', {}, el('span', { className: 'name' }, agent.name), el('span', { className: 'kind' }, status.label, ...status.notes.map((n) => el('span', { className: `note ${n.tone}`, title: n.title || '' }, n.text)))),
+    // Медный — ответы пользователю: открой диалог, и они прочитаны. У своего оркестратора бейджа нет: в его ящике эти же ответы
+    replies ? el('span', { className: 'badge', title: tr('тебе ответил — открой диалог, и прочитано') }, String(replies)) : '',
+    agent.unread && !status.mine ? el('span', { className: 'badge wait', title: tr('лежит в его inbox') }, String(agent.unread)) : '');
+  button.dataset.key = agent.key;
+  button.style.setProperty('--h', hueOf(agent.name));
+  button.setAttribute('aria-pressed', String(filters.agents.has(agent.key)));
+  button.addEventListener('click', (e) => pickAgent(agent, e));
+  if (!agent.editable) return button;
+  const edit = el('button', { type: 'button', className: 'agent-edit', title: tr('Роль агента: посмотреть, поправить, удалить'), ariaLabel: tr('Роль агента {name}', { name: agent.name }), onclick: () => openAgentPanel(agent) }, icon('edit'));
+  return el('div', { className: 'agent-row' }, button, edit);
+}
+
+let beforeClick = null; // выбор до первого клика: двойной клик достраивает его, а не то, шо первый клик уже успел переключить
+let closeTimer = null;
+
+/** Правила выбора — L.nextSelection. По event.detail, а не по dblclick: одиночный клик срабатывает сразу, без паузы на ожидание второго. */
+function pickAgent(agent, e) {
+  // Писать ему нельзя и переписки у него нет: выбирать нечего, а подсвеченная строка обещала бы, шо сообщение уйдёт ему
+  const blocked = L.blockedNote(agent);
+  if (blocked && !agent.registered) return say(blocked, true);
+  // Свой оркестратор — молча: переписку его смотреть можно, а шо пишешь от его имени, сказано в подписи под именем
+  if (blocked && !(agent.orchestrator && agent.here)) say(blocked, !agent.alive);
+  const next = L.nextSelection(filters.agents, agent.key, { add: e.ctrlKey || e.metaKey || e.shiftKey, repeat: e.detail >= 2, before: beforeClick });
+  filters.agents = next.selected;
+  beforeClick = next.before;
+  clearTimeout(closeTimer);
+  // На узком экране список лежит поверх ленты: выбрал одного — видишь результат. С задержкой, шоб не съесть второй клик двойного;
+  // набирает нескольких — список не прячем
+  if (!next.multi) closeTimer = setTimeout(() => toggleAside(false), 350);
+  if (L.writable(agent) && filters.agents.has(agent.key)) $('to').value = agent.key;
+  renderFrom();
+  renderAgents();
+  renderFeed();
+}
+
+function toggleAside(open) {
+  $('agents').classList.toggle('open', open);
+  $('toggleAgents').setAttribute('aria-expanded', String($('agents').classList.contains('open')));
+}
+
+function renderAgents() {
+  const { here, globals, others } = L.groupAgents(state.agents);
+  const aside = $('agents');
+  const othersOpen = Boolean(aside.querySelector('details[open]')); // перерисовка не должна схлопывать раскрытую группу под курсором
+  aside.replaceChildren();
+  // Одного агента снимает повторный клик по нему; пару и группу — эта кнопка
+  if (filters.agents.size >= 2) aside.append(el('button', { type: 'button', id: 'unpick', className: 'ghost unpick', onclick: () => selectAgents([]) }, icon('x'), tr('Снять выбор · {n}', { n: filters.agents.size })));
+
+  const hereGroup = el('div', { className: 'group' }, el('span', { className: 'label' }, tr('Эта директория')));
+  if (!state.here.project) {
+    hereGroup.append(el('p', { className: 'hint' }, tr('Каталог не подключён к шине, оркестратора тут нет. Подключи из него: '), el('code', {}, tr('bus.js init <имя>'))));
+  }
+  // Не disabled: причина, почему агента не завести, понятнее из клика, чем из полупрозрачной кнопки
+  hereGroup.append(el('button', { type: 'button', id: 'agentNew', className: 'squeeze agent-new', onclick: () => openAgentPanel(null) }, icon('plus'), el('span', {}, tr('Новый агент'))));
+  hereGroup.append(...here.map(agentButton));
+  aside.append(hereGroup);
+  if (globals.length) aside.append(el('div', { className: 'group' }, el('span', { className: 'label' }, tr('Глобальные')), ...globals.map(agentButton)));
+  if (others.length) {
+    const details = el('details', {}, el('summary', { className: 'label' }, tr('Другие проекты · {n}', { n: others.length })), ...others.map(agentButton));
+    details.open = othersOpen || others.some((a) => filters.agents.has(a.key));
+    aside.append(el('div', { className: 'group' }, details));
+  }
+  aside.append(el('p', { className: 'hint' }, tr('Клик — переписка одного агента. Двойной клик по второму или стрелка между именами в сообщении — их диалог; тогда «Сжать диалог» сжимает именно его.')));
+}
+
+// Агента завели первым сообщением: у обёртки ключ другой (qa → qa@каталог) — «Кому» и выбор в списке переезжают на него
+let pendingTo = '';
+
+function renderRecipients() {
+  const select = $('to');
+  const can = state.agents.filter(L.writable);
+  const moved = pendingTo && can.some((a) => a.key === pendingTo && a.registered);
+  const keep = moved ? pendingTo : select.value;
+  if (moved) pendingTo = '';
+  const group = (label, list) => (list.length ? [el('optgroup', { label }, ...list.map((a) => el('option', { value: a.key }, a.orchestrator && a.here ? tr('{name} — оркестратор', { name: a.name }) : a.registered ? a.name : tr('{name} — заведётся в шину', { name: a.name }))))] : []);
+  setOptions(select, [
+    ...group(tr('Эта директория'), can.filter((a) => a.here)),
+    ...group(tr('Глобальные'), can.filter((a) => !a.root)),
+    ...group(tr('Другие проекты'), can.filter((a) => a.root && !a.here))]);
+  if (can.some((a) => a.key === keep)) select.value = keep;
+  renderFrom();
+  $('sendBtn').disabled = !can.length;
+  if (!can.length) say(tr('Писать пока некому: в шине нет агентов. Подключи проект — bus.js init <имя>.'), true);
+}
+
+/** Оркестратор каталога UI: от его имени пользователь пишет, ему агенты и отвечают. */
+const hereBoss = () => state.agents.find((a) => a.orchestrator && a.here);
+
+/** Чьим именем уйдёт сообщение: агент ответит ему, а не «пользователю» — такого адресата в шине нет. */
+function renderFrom() {
+  const to = state.agents.find((a) => a.key === $('to').value);
+  $('fromHint').textContent = to && to.from ? tr('от имени {from}', { from: to.from }) : '';
+}
+
+function renderMine() {
+  const me = hereBoss();
+  const count = me ? me.replies : 0;
+  $('mine').classList.toggle('on', count > 0);
+  $('mineText').textContent = tr('Ответили {name}: {n}', { name: me ? me.name : '', n: count });
+  document.title = count ? `(${count}) ${tr('Шина')}` : tr('Шина');
+}
+
+// Открыл диалог агента — его ответы прочитаны: сервер забирает их из ящика оркестратора, сессия проекта их уже не получит.
+// С задержкой: «новое» успевает показаться, а проходной клик по агенту ничего не снимает
+const READ_DELAY = 2000;
+let readTimer = null;
+let readKey = null;
+
+function scheduleRead() {
+  const key = L.readTarget(filters.agents, hereBoss(), document.visibilityState === 'visible');
+  if (key === readKey) return;
+  clearTimeout(readTimer);
+  readKey = key;
+  if (!key) return;
+  readTimer = setTimeout(() => {
+    readKey = null;
+    post('/api/read', { agent: key }).catch((err) => say(tr('Не отмечено прочитанным: {why}', { why: err.message }), true));
+  }, READ_DELAY);
+}
+
+// ---------- лента ----------
+
+/** Текст с подсветкой того, шо набрано в поиске. */
+const hl = (text) => L.splitByQuery(text, filters.q).map((part) => (part.hit ? el('mark', {}, part.text) : part.text));
+
+function whoButton(name, key) {
+  const button = el('button', { type: 'button', className: 'who', title: tr('Показать только его переписку') }, ...hl(name));
+  button.style.setProperty('--wh', hueOf(name));
+  button.addEventListener('click', () => selectAgents([key]));
+  return button;
+}
+
+/** Стрелка между именами — вход в диалог этой пары одним кликом: там вес переписки и «Сжать диалог». Повторный клик снимает выбор. */
+function pairButton(m) {
+  const open = L.selectedPair(filters) === L.pairOf(m);
+  const label = open ? tr('Выйти из диалога пары') : tr('Открыть диалог {from} ↔ {to}: его вес и сжатие', { from: m.from, to: m.to });
+  const button = el('button', { type: 'button', className: 'arrow', title: label, ariaLabel: label }, icon('arrow'));
+  button.setAttribute('aria-pressed', String(open));
+  button.addEventListener('click', () => selectAgents(open ? [] : [m.fromKey, m.toKey]));
+  return button;
+}
+
+/** inPair — карточка в диалоге пары: исходные свёрнуты под неё. В общей ленте она стоит после побледневших исходных и ведёт в диалог. */
+function summaryNode({ summary, hidden, inPair }) {
+  const title = inPair ? tr('Сводка · {n} сообщ.', { n: summary.count }) : tr('Сводка {a} ↔ {b} · {n} сообщ.', { a: summary.a, b: summary.b, n: summary.count });
+  const node = el('li', { className: 'summary' },
+    el('div', { className: 'head' }, el('span', { className: 'label' }, title), el('time', { title: summary.t }, tr('сделана {at}', { at: summary.t.slice(5, 16) }))),
+    el('p', {}, summary.text));
+  if (!inPair) node.append(el('button', { type: 'button', className: 'ghost', onclick: () => selectAgents(summary.pair.split('|')) }, tr('Открыть диалог')));
+  else if (hidden || showCovered) node.append(el('button', { type: 'button', className: 'ghost', onclick: () => { showCovered = !showCovered; renderFeed(new Set(), false); } }, showCovered ? tr('Свернуть исходные') : tr('Показать исходные · {n}', { n: hidden })));
+  return node;
+}
+
+// ---------- выделение и удаление ----------
+
+const marked = new Set(); // id выделенных сообщений
+
+function renderMarked() {
+  $('marked').hidden = !marked.size;
+  $('markedCount').textContent = tr('Выделено: {n}', { n: marked.size });
+  for (const node of $('feed').querySelectorAll('.msg')) {
+    const on = marked.has(node.dataset.id);
+    node.classList.toggle('picked', on);
+    node.querySelector('.pick').setAttribute('aria-pressed', String(on));
+  }
+}
+
+function togglePick(id) {
+  if (!marked.delete(id)) marked.add(id);
+  renderMarked();
+}
+
+function messageNode(m, { fresh, unread, covered, cont }) {
+  const toMe = Boolean(hereBoss() && m.toKey === hereBoss().key);
+  const pick = el('button', { type: 'button', className: 'pick', title: tr('Выделить, шобы удалить'), ariaLabel: tr('Выделить сообщение') }, icon('check'));
+  const node = el('li', { className: `msg${fresh ? ' fresh' : ''}${toMe ? ' to-me' : ''}${unread ? ' unread' : ''}${covered ? ' covered' : ''}${cont ? ' cont' : ''}` },
+    el('span', { className: 'node' }),
+    el('div', { className: 'meta' },
+      whoButton(m.from, m.fromKey), pairButton(m), whoButton(m.to, m.toKey),
+      el('span', { className: `type ${m.type}`, title: typeNote(m.type) }, m.type),
+      m.from === 'schedule' ? el('span', { className: 'sched-tag', title: tr('Отчёт запуска по расписанию') }, tr('по расписанию')) : '',
+      unread ? el('span', { className: 'new' }, tr('новое')) : '',
+      el('time', { title: m.t }, m.t.slice(11, 16)), pick),
+    el('p', { className: 'text' }, ...hl(m.text)));
+  if (m.files.length) node.append(el('div', { className: 'files' }, ...m.files.map((f, n) => fileNode(m, f, n))));
+  // Клик по карточке выделяет её; кнопки и ссылки внутри живут своей жизнью, выделение текста мышью — не клик
+  node.addEventListener('click', (e) => {
+    if (e.target.closest('button, a') && !e.target.closest('.pick')) return;
+    if (String(getSelection()).trim()) return;
+    togglePick(m.id);
+  });
+  node.dataset.id = m.id;
+  node.style.setProperty('--h', hueOf(m.from));
+  return node;
+}
+
+function fileNode(m, f, n) {
+  if (f.gone) return el('span', { className: 'filechip gone', title: tr('Вложение вычищено командой files prune') }, f.name, el('small', {}, tr('файл удалён')));
+  const href = `/api/file?m=${encodeURIComponent(m.id)}&n=${n}&k=${TOKEN}`;
+  if (f.image) {
+    const img = el('img', { className: 'thumb', src: href, alt: f.name, loading: 'lazy' });
+    img.addEventListener('load', () => pinned && scrollToEnd()); // превью догрузилось уже после прокрутки и сдвинуло низ ленты
+    return el('a', { href, target: '_blank', rel: 'noopener', title: `${f.name} · ${L.sizeOf(f.size)}` }, img);
+  }
+  return el('a', { className: 'filechip', href, download: f.name }, icon('file'), ...hl(f.name), el('small', {}, L.sizeOf(f.size)));
+}
+
+const dayLabel = (day) => new Date(`${day}T00:00`).toLocaleDateString(I.locale(), { day: 'numeric', month: 'long', year: 'numeric' });
+const atBottom = () => $('wrap').scrollHeight - $('wrap').scrollTop - $('wrap').clientHeight < 80;
+let pinned = true; // лента стоит у нижнего края: новое и догрузившиеся превью держат её там
+/** Мгновенно, а не плавно: плавная прокрутка при каждой перерисовке дёргала бы ленту. */
+function scrollToEnd(top = $('wrap').scrollHeight) {
+  const wrap = $('wrap');
+  wrap.style.scrollBehavior = 'auto';
+  wrap.scrollTop = top;
+  wrap.style.scrollBehavior = '';
+}
+
+/** jump — прыгнуть в конец (первая загрузка, смена фильтра); иначе остаёмся, где читали, если только уже не стояли внизу. */
+function renderFeed(freshIds = new Set(), jump = true) {
+  const wrap = $('wrap');
+  const prevTop = wrap.scrollTop;
+  const stick = atBottom();
+  const me = hereBoss();
+  const unread = L.unreadIds(messageList(), me && me.repliesBy, me && me.key);
+  scheduleRead(); // лента перерисовывается и на смену выбора, и на новое состояние агентов — оба повода перепроверить
+  const { items, matched, shown, summary } = L.feedItems({ messages: messageList(), summaries: state.summaries, filters, hereRoot: state.here.root, showCovered });
+  const feed = $('feed');
+  feed.replaceChildren(...items.map((item) =>
+    item.kind === 'day' ? el('li', { className: 'day' }, dayLabel(item.day))
+    : item.kind === 'summary' ? summaryNode(item)
+    : messageNode(item.m, { fresh: freshIds.has(item.m.id), unread: unread.has(item.m.id), covered: item.covered, cont: item.cont })));
+  // Выделенное, которого в ленте больше не видно (сменили фильтр, удалили), под удаление вслепую не идёт
+  const visible = new Set(items.filter((item) => item.m).map((item) => item.m.id));
+  for (const id of [...marked]) if (!visible.has(id)) marked.delete(id);
+  renderMarked();
+  renderPair(matched);
+  const filtered = filters.agents.size || filters.types.size || filters.q;
+  if (!shown.length && !summary) {
+    const empty = state.messages.size
+      ? el('li', { className: 'empty' }, el('b', {}, filtered ? tr('Под фильтры ничего не попало') : tr('В этой директории переписки нет')), filtered ? tr('Сними фильтр по агенту, типу или поиск — переписка в шине есть.') : tr('Переписку другого проекта открывает клик по его агенту слева.'))
+      : el('li', { className: 'empty' }, el('b', {}, tr('Переписки пока нет')), tr('Напиши агенту в форме снизу — сообщение появится здесь.'));
+    if (state.messages.size && filtered) empty.append(el('br'), resetButton());
+    feed.append(empty);
+  }
+  pinned = jump || stick;
+  scrollToEnd(pinned ? wrap.scrollHeight : prevTop);
+  // Читает старое, а внизу появилось новое — не дёргаем ленту, а даём кнопку
+  if (jump || stick) $('toBottom').hidden = true;
+  else if ([...freshIds].some((id) => shown.some((m) => m.id === id))) $('toBottom').hidden = false;
+}
+
+const NO_PAIR_HINT = N('Сжимается диалог двоих. Выбери пару: клик по стрелке между именами в любом их сообщении — или клик по первому агенту слева и двойной клик по второму.');
+
+/** Панель над лентой, когда выбраны двое: вес несжатого хвоста и кнопка сводки. */
+function renderPair(matched) {
+  const pair = L.selectedPair(filters);
+  $('pair').hidden = !pair;
+  if (pair !== renderPair.last) $('pairNote').textContent = ''; // итог прошлого сжатия относится к другой паре
+  renderPair.last = pair;
+  const wipe = L.clearTarget(filters, state.agents);
+  $('clear').lastElementChild.textContent = wipe.mode === 'all' ? tr('Очистить всё') : tr('Очистить диалог');
+  $('clear').title = wipe.mode === 'all' ? tr('Удалить весь журнал этой директории. Вернуть нельзя. Выбери агента — очистится только твой диалог с ним')
+    : wipe.mode === 'none' ? wipe.hint : tr('Удалить из журналов все сообщения {names} и сводки этой пары. Вернуть нельзя', { names: wipe.names });
+  if (!pair) {
+    // Не disabled: полупрозрачную кнопку пользователь не разглядел. Она видна всегда, а клик без пары объясняет, шо сделать
+    if (!$('squeeze').dataset.busy) $('squeeze').disabled = false;
+    $('squeeze').title = tr(NO_PAIR_HINT);
+    return;
+  }
+  const names = [...filters.agents].map((key) => (state.agents.find((a) => a.key === key) || { name: key.split('@')[0] }).name);
+  const info = L.pairInfo(matched, state.summaries);
+  $('pairNames').replaceChildren(names[0], el('i', {}, '↔'), names[1]);
+  // Вызов модели сам стоит ≈3–4к токенов haiku (замер): на коротком диалоге сводка дороже, чем десяток его чтений
+  $('pairWeight').textContent = tr('{total} сообщ. · агент прочтёт {tail}, ≈{weight} токенов', { total: info.total, tail: info.tail, weight: L.short(info.weight) }) + (info.early ? tr(' · сжимать рано: сама сводка стоит ≈3–4к токенов haiku') : '');
+  $('pairWeight').className = `weight${info.heavy ? ' heavy' : ''}`;
+  if (!$('squeeze').dataset.busy) {
+    $('squeeze').disabled = !info.canSqueeze;
+    $('squeeze').title = info.canSqueeze ? tr('claude -p на haiku сожмёт эти сообщения в сводку; исходные останутся в журнале') : tr('Сжимать нечего: несжатых сообщений меньше двух');
+  }
+}
+
+function resetFilters() {
+  filters.agents.clear();
+  filters.types.clear();
+  filters.q = '';
+  $('q').value = '';
+  renderTypes();
+  renderAgents();
+  renderFeed();
+}
+const resetButton = () => el('button', { type: 'button', className: 'ghost', onclick: resetFilters }, tr('Сбросить фильтры'));
+
+/** relabel — сменился язык: подписи в списке «Тип» пересобираем, выбранное значение остаётся. */
+function renderTypes(relabel = false) {
+  $('types').replaceChildren(...state.types.map((type) => {
+    const chip = el('button', { type: 'button', className: `chip ${type}`, title: typeNote(type) }, el('span', {}, type)); // span — под обрезку строки по прописным
+    chip.setAttribute('aria-pressed', String(filters.types.has(type)));
+    chip.addEventListener('click', () => {
+      filters.types.has(type) ? filters.types.delete(type) : filters.types.add(type);
+      renderTypes();
+      renderFeed();
+    });
+    return chip;
+  }));
+  const select = $('type');
+  if (select.options.length && !relabel) return;
+  const keep = select.value;
+  setOptions(select, state.types.map((type) => el('option', { value: type }, `${type} — ${typeNote(type)}`)));
+  if (keep) select.value = keep;
+}
+
+// ---------- данные ----------
+
+function applyAgents(snapshot) {
+  state.agents = snapshot.agents;
+  state.here = snapshot.here;
+  state.hues = L.assignHues(state.agents);
+  $('project').replaceChildren(snapshot.here.project || tr('каталог не в шине'), ...(snapshot.here.project ? [el('small', {}, tr('оркестратор'))] : []));
+  $('cwd').textContent = `‎${snapshot.here.cwd}`; // LRM: в rtl-обрезке путь остаётся слева направо
+  $('cwd').title = snapshot.here.cwd;
+  renderAgents();
+  renderRecipients();
+  renderMine();
+}
+
+function applyMessages(list, fresh, jump = false) {
+  for (const m of list) state.messages.set(m.id, { ...m, files: m.files || [] });
+  state.messages = new Map([...state.messages].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  renderFeed(fresh ? new Set(list.map((m) => m.id)) : new Set(), jump);
+}
+
+let arrived = null; // сообщения, пришедшие по SSE за время запроса /api/state
+
+async function load() {
+  const late = (arrived = []);
+  let data;
+  try {
+    data = await (await fetch('/api/state', { headers: langHeader() })).json();
+  } finally {
+    if (arrived === late) arrived = null;
+  }
+  // Сервер перезапустили или страницу поправили: у этой вкладки старый код и мёртвый токен. Недописанное сообщение не теряем
+  if (data.page && data.page !== PAGE) {
+    if (!$('text').value.trim() && !picked.length) return location.reload();
+    say(tr('Шина обновилась, а эта вкладка — старая: отправка из неё не пройдёт. Скопируй текст и обнови страницу (F5).'), true);
+  }
+  Object.assign(state, { types: data.types, maxFiles: data.maxFiles || state.maxFiles, maxFileBytes: data.maxFileBytes || state.maxFileBytes });
+  $('text').maxLength = data.maxLength;
+  renderTypes();
+  applyAgents(data);
+  // Ленту заменяем, а не доливаем: удалённое из журнала иначе жило бы во вкладке до F5. Пришедшее по SSE, пока шёл запрос, кладём поверх
+  replaceFeed(data, late);
+  renderAgents(); // вес переписки у агентов в списке
+  if (data.error) say(data.error, true);
+}
+
+let feedLoaded = false; // в конец ленту ставит только первая загрузка: реконнект SSE и reset после удаления место чтения не трогают
+
+function replaceFeed(data, late = []) {
+  state.summaries = new Map((data.summaries || []).map((x) => [x.pair, x]));
+  state.messages = new Map();
+  applyMessages([...(data.messages || []), ...late], false, !feedLoaded);
+  feedLoaded = true;
+}
+
+function connect() {
+  const link = $('link');
+  const source = new EventSource('/api/events');
+  // Состояние грузим после того, как подписка открылась, и заново — после каждого обрыва. Наоборот (сначала состояние, потом подписка)
+  // оставалось окно: сообщение, которое сервер в этот миг разослал другой вкладке, сюда не попадало до перезагрузки.
+  // Пришедшее по SSE раньше ответа /api/state не двоится: лента — Map по id
+  source.onopen = () => {
+    link.className = 'link';
+    load().catch((err) => say(tr('Не загрузилось: {why}', { why: err.message }), true));
+  };
+  source.onerror = () => {
+    link.className = 'link down';
+    link.lastElementChild.textContent = tr('Сервер не отвечает, лента не обновляется. Подними заново: bus.js ui');
+  };
+  source.addEventListener('agents', (e) => {
+    applyAgents(JSON.parse(e.data));
+    renderFeed(new Set(), false);
+  });
+  source.addEventListener('messages', (e) => {
+    const list = JSON.parse(e.data);
+    if (arrived) arrived.push(...list);
+    applyMessages(list, true);
+    renderAgents(); // вес переписки у агентов в списке
+  });
+  // Журнал удалили или почистили: сервер пересобрал ленту с диска — берём её целиком вместо своей
+  source.addEventListener('reset', (e) => {
+    if (arrived) arrived.length = 0;
+    replaceFeed(JSON.parse(e.data));
+    showCovered = false;
+    renderAgents();
+  });
+  source.addEventListener('summaries', (e) => {
+    state.summaries = new Map(JSON.parse(e.data).map((x) => [x.pair, x]));
+    showCovered = false;
+    renderAgents();
+    renderFeed(new Set(), false);
+  });
+  // Задачи или итог запуска поменялись на диске — панель, если открыта, перерисовывается; форму, которую сейчас правят, не трогаем
+  source.addEventListener('schedule', (e) => applySchedule(JSON.parse(e.data)));
+}
+
+// ---------- панель агента: создать, править, удалить ----------
+
+const AGENT_MODELS = [['', N('главная модель — дорого')], ['sonnet', N('sonnet — рутинный код')], ['haiku', N('haiku — механика')], ['opus', 'opus']];
+const AGENT_EFFORTS = [['', N('по умолчанию у модели')], ['low', N('low — быстро и дёшево')], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', N('max — дольше и дороже')]];
+// agent: null — форма нового; before — описание и роль до правки ИИ, shown — шо сейчас в полях: 'new' или 'old'
+const agentPanel = { open: false, agent: null, busy: false, before: null, after: null, shown: 'new', opener: null };
+
+function agentError(text) {
+  $('agentError').textContent = text || '';
+  $('agentError').hidden = !text;
+}
+
+function fillAgentForm(role) {
+  const fresh = !role;
+  $('agentTitle').textContent = fresh ? tr('Новый агент') : tr('Агент {name}', { name: role.name });
+  $('agentName').value = fresh ? '' : role.name;
+  $('agentName').disabled = !fresh; // имя — это ящик, реестр и история: не переименовывается
+  const model = fresh ? 'sonnet' : role.model;
+  const models = AGENT_MODELS.some(([value]) => value === model) ? AGENT_MODELS : [...AGENT_MODELS, [model, model]];
+  setOptions($('agentModel'), models.map(([value, label]) => el('option', { value }, tr(label))));
+  $('agentModel').value = model;
+  $('agentAbout').value = fresh ? '' : role.description;
+  const effort = fresh ? '' : role.effort;
+  const efforts = AGENT_EFFORTS.some(([value]) => value === effort) ? AGENT_EFFORTS : [...AGENT_EFFORTS, [effort, effort]];
+  setOptions($('agentEffort'), efforts.map(([value, label]) => el('option', { value }, tr(label))));
+  $('agentEffort').value = effort;
+  $('agentFast').checked = !fresh && Boolean(role.fast);
+  $('agentBody').value = fresh ? '' : role.body;
+  $('agentAsk').value = '';
+  $('agentAsk').placeholder = fresh ? tr('Опиши агента: «фронтенд на Vue, следит за типами API, про бэкенд спрашивает диму» — ИИ напишет роль') : tr('Шо поменять: «добавь правило — перед правкой схемы спрашивать пользователя»');
+  $('agentBusWrap').hidden = fresh || !role.busBlock;
+  $('agentBusWrap').open = false;
+  $('agentBus').textContent = fresh ? '' : role.busBlock;
+  $('agentWhere').textContent = fresh ? tr('Файл: {root}/.claude/agents/<имя>.md. Блок «Шина» допишется сам.', { root: state.here.root || '…' }) : role.where;
+  $('agentWarn').textContent = fresh ? '' : role.warning;
+  $('agentWarn').hidden = fresh || !role.warning;
+  $('agentDelete').hidden = fresh || !role.deletable;
+  $('agentNoDelete').hidden = fresh || role.deletable;
+  $('agentSave').textContent = fresh ? tr('Создать') : tr('Сохранить');
+  agentError('');
+  resetAgentAi();
+}
+
+function resetAgentAi(note = tr('ИИ правит описание и роль прямо в форме. На диск ничего не уходит, пока не нажмёшь «Сохранить».'), bad = false) {
+  agentPanel.before = null;
+  agentPanel.after = null;
+  agentPanel.shown = 'new';
+  $('agentAiSwap').hidden = true;
+  $('agentAiUndo').hidden = true;
+  $('agentAiNote').textContent = note;
+  $('agentAiNote').className = `role-ai-note${bad ? ' bad' : ''}`;
+}
+
+async function openAgentPanel(agent) {
+  if (!agent && !state.here.project) return say(tr('Нового агента заводить некуда: интерфейс запущен не из проекта шины. Подключи каталог — bus.js init <имя> — и открой шину из него.'), true);
+  let role = null;
+  if (agent) {
+    try {
+      const res = await fetch(`/api/agent?key=${encodeURIComponent(agent.key)}&k=${TOKEN}`, { headers: langHeader() });
+      role = await res.json();
+      if (!res.ok) throw new Error(role.error || tr('Сервер ответил {status}.', { status: res.status }));
+    } catch (err) {
+      return say(tr('Роль не открылась: {why}', { why: err.message }), true);
+    }
+  }
+  agentPanel.open = true;
+  agentPanel.agent = agent;
+  agentPanel.opener = document.activeElement;
+  fillAgentForm(role);
+  $('agentBackdrop').hidden = false;
+  $('agentPanel').hidden = false;
+  // Фокус в поле роли прокручивал и форму, и сам текст к концу: на телефоне панель открывалась с середины
+  (agent ? $('agentClose') : $('agentName')).focus();
+  $('agentForm').scrollTop = 0;
+  $('agentBody').scrollTop = 0;
+}
+
+function closeAgentPanel() {
+  if (agentPanel.busy) return; // ответ ИИ лёг бы в закрытую форму
+  agentPanel.open = false;
+  $('agentBackdrop').hidden = true;
+  $('agentPanel').hidden = true;
+  const back = agentPanel.opener;
+  if (back && back.isConnected) back.focus();
+  else $('toggleAgents').focus();
+}
+
+$('agentClose').addEventListener('click', closeAgentPanel);
+$('agentCancel').addEventListener('click', closeAgentPanel);
+$('agentBackdrop').addEventListener('click', closeAgentPanel);
+
+$('agentForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (agentPanel.busy) return;
+  const fresh = !agentPanel.agent;
+  const name = $('agentName').value.trim();
+  if (fresh && !L.validAgentName(name)) return agentError(tr('Имя: латиница в нижнем регистре, цифры и дефис, до 31 символа; files, scheduler и schedule заняты шиной.'));
+  const fields = { description: $('agentAbout').value, model: $('agentModel').value, effort: $('agentEffort').value, fast: $('agentFast').checked, body: $('agentBody').value };
+  // Сервер откажет так же; здесь — шобы причина встала сразу, без запроса
+  if (fields.fast && fields.model && !/opus|inherit/i.test(fields.model)) return agentError(tr('Fast mode есть только на Opus. Поставь модель opus или сними галочку.'));
+  $('agentSave').disabled = true;
+  try {
+    const r = fresh ? await post('/api/agent/create', { name, ...fields }) : await post('/api/agent/save', { key: agentPanel.agent.key, ...fields });
+    closeAgentPanel();
+    say(fresh ? tr('Агент «{name}» создан и заведён в шину: {file}', { name, file: r.file }) : tr('Роль сохранена: {file}', { file: r.file }));
+    if (fresh) {
+      pendingTo = r.key; // «Кому» переезжает на нового
+      renderRecipients(); // список агентов мог обновиться раньше, чем пришёл этот ответ
+    }
+  } catch (err) {
+    agentError(err.message);
+  } finally {
+    $('agentSave').disabled = false;
+  }
+});
+
+$('agentDelete').addEventListener('click', async () => {
+  const agent = agentPanel.agent;
+  if (!agent || agentPanel.busy) return;
+  const what = agent.wraps ? tr('файл-обёртка в проекте и ящик; сама глобальная роль останется') : tr('файл роли и ящик с непрочитанным');
+  if (!confirm(tr('Удалить агента «{name}»? Уйдут: {what}. Переписка в ленте останется. Вернуть нельзя.', { name: agent.name, what }))) return;
+  try {
+    const r = await post('/api/agent/delete', { key: agent.key });
+    closeAgentPanel();
+    if (filters.agents.has(agent.key)) selectAgents([...filters.agents].filter((key) => key !== agent.key));
+    const left = r.left ? tr(' Непрочитанных было: {n}.', { n: r.left }) : '';
+    const jobs = r.jobs.length ? tr(' В расписании остались задачи на него: {jobs} — выключи или перенаправь.', { jobs: r.jobs.join(', ') }) : '';
+    say(`${tr('Агент «{name}» удалён: {file}.', { name: agent.name, file: r.file })}${left}${jobs}`, Boolean(r.jobs.length));
+  } catch (err) {
+    agentError(err.message);
+  }
+});
+
+function showAgentDraft(which) {
+  const draft = which === 'old' ? agentPanel.before : agentPanel.after;
+  agentPanel.shown = which;
+  $('agentAbout').value = draft.description;
+  $('agentBody').value = draft.body;
+  $('agentAiSwap').textContent = which === 'old' ? tr('Показать, как стало') : tr('Показать, как было');
+}
+
+$('agentRewrite').addEventListener('click', async () => {
+  if (agentPanel.busy) return;
+  const instruction = $('agentAsk').value.trim();
+  if (!instruction) {
+    $('agentAsk').focus();
+    return resetAgentAi(tr('Напиши, шо поменять в роли, — и жми.'), true);
+  }
+  // Просьбы идут поверх того, шо сейчас в форме, а не файла на диске: так их можно слать одну за другой
+  const before = { description: $('agentAbout').value, body: $('agentBody').value };
+  const button = $('agentRewrite');
+  agentPanel.busy = true;
+  button.disabled = true;
+  $('agentSave').disabled = true;
+  button.lastElementChild.textContent = tr('Переписываю…');
+  try {
+    const r = await post('/api/agent/rewrite', { key: agentPanel.agent ? agentPanel.agent.key : null, name: $('agentName').value.trim() || 'новый агент', instruction, ...before });
+    agentPanel.before = before;
+    agentPanel.after = { description: r.description || before.description, body: r.body };
+    showAgentDraft('new');
+    $('agentAiSwap').hidden = false;
+    $('agentAiUndo').hidden = false;
+    $('agentAiNote').textContent = tr('ИИ переписал · ≈{n} ток. Проверь текст и жми «Сохранить» — до этого на диске ничего не поменялось.', { n: L.short(r.tokens) });
+    $('agentAiNote').className = 'role-ai-note';
+    $('agentAsk').value = '';
+  } catch (err) {
+    $('agentAiNote').textContent = err.message;
+    $('agentAiNote').className = 'role-ai-note bad';
+  } finally {
+    agentPanel.busy = false;
+    button.disabled = false;
+    $('agentSave').disabled = false;
+    button.lastElementChild.textContent = tr('Переписать с ИИ');
+  }
+});
+
+$('agentAiSwap').addEventListener('click', () => {
+  // Правки руками поверх ответа ИИ не теряем: перед переключением запоминаем то, шо в полях
+  agentPanel[agentPanel.shown === 'new' ? 'after' : 'before'] = { description: $('agentAbout').value, body: $('agentBody').value };
+  showAgentDraft(agentPanel.shown === 'new' ? 'old' : 'new');
+});
+
+$('agentAiUndo').addEventListener('click', () => {
+  showAgentDraft('old');
+  resetAgentAi(tr('Вернул как было. ИИ-правка отменена.'));
+});
+
+// ---------- отправка ----------
+
+function say(text, bad = false) {
+  $('result').textContent = text;
+  $('result').className = `result${bad ? ' bad' : ''}`;
+}
+
+async function post(path, body) {
+  const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Bus-Token': TOKEN, ...langHeader() }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || tr('Сервер ответил {status}.', { status: res.status }));
+  return data;
+}
+
+$('composer').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if ($('sendBtn').disabled) return; // requestSubmit по Enter выключенную кнопку не видит: второй Enter, пока идёт отправка, слал дубль
+  const body = { to: $('to').value, type: $('type').value, text: $('text').value, files: picked.map((f) => f.id) };
+  if (!body.text.trim() && !body.files.length) return say(tr('Пустое сообщение не отправляю.'), true);
+  if (uploading) return say(tr('Файл ещё грузится — секунду.'), true);
+  $('sendBtn').disabled = true;
+  try {
+    const r = await post('/api/send', body);
+    say(L.sentNote(r));
+    if (r.enrolled && r.key !== body.to) {
+      pendingTo = r.key;
+      if (filters.agents.delete(body.to)) filters.agents.add(r.key);
+      renderRecipients(); // список агентов мог обновиться раньше, чем пришёл этот ответ
+      renderAgents();
+      renderFeed();
+    }
+    $('text').value = '';
+    picked = [];
+    renderPicked();
+  } catch (err) {
+    say(tr('Не отправлено: {why}', { why: err.message }), true);
+  } finally {
+    $('sendBtn').disabled = !$('to').options.length; // писать некому — кнопка так и остаётся выключенной
+  }
+});
+
+// ---------- вложения ----------
+
+let uploading = 0;
+
+function renderPicked() {
+  $('picked').replaceChildren(...picked.map((f) => {
+    const drop = el('button', { type: 'button', title: tr('Убрать'), ariaLabel: tr('Убрать {name}', { name: f.name }) }, icon('x'));
+    drop.addEventListener('click', () => {
+      picked = picked.filter((x) => x !== f);
+      renderPicked();
+    });
+    return el('span', { className: 'filechip' }, icon('file'), f.name, el('small', {}, L.sizeOf(f.size)), drop);
+  }));
+  $('attachHint').hidden = picked.length > 0;
+}
+
+async function addFiles(list, pasted = false) {
+  for (const file of list) {
+    const name = L.nameOf(file.name, pasted);
+    if (picked.length + uploading >= state.maxFiles) return say(tr('Вложений не больше {n} на сообщение.', { n: state.maxFiles }), true);
+    if (file.size > state.maxFileBytes) {
+      say(tr('«{name}» больше {size} — не беру.', { name, size: L.sizeOf(state.maxFileBytes) }), true);
+      continue;
+    }
+    uploading++;
+    say(tr('Гружу «{name}»…', { name }));
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-Bus-Token': TOKEN, 'X-File-Name': encodeURIComponent(name), ...langHeader() }, body: file });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || tr('Сервер ответил {status}.', { status: res.status }));
+      picked.push({ id: data.id, name: data.name, size: data.size });
+      say(tr('Приложено: {name}. Уйдёт вместе с сообщением.', { name: data.name }));
+    } catch (err) {
+      say(tr('«{name}» не загрузился: {why}', { name, why: err.message }), true);
+    } finally {
+      uploading--;
+      renderPicked();
+    }
+  }
+}
+
+$('pickBtn').addEventListener('click', () => $('pick').click());
+$('pick').addEventListener('change', (e) => {
+  addFiles([...e.target.files]);
+  e.target.value = ''; // тот же файл можно выбрать второй раз
+});
+document.addEventListener('paste', (e) => {
+  const list = [...(e.clipboardData ? e.clipboardData.files : [])];
+  if (!list.length) return; // обычный текст вставляется как всегда
+  e.preventDefault();
+  addFiles(list, true);
+});
+{
+  const zone = document.querySelector('main');
+  const hasFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+  let depth = 0; // dragenter/dragleave летят с каждого вложенного элемента
+  zone.addEventListener('dragenter', (e) => { if (hasFiles(e)) { depth++; zone.classList.add('drop'); } });
+  zone.addEventListener('dragleave', (e) => { if (hasFiles(e) && --depth <= 0) { depth = 0; zone.classList.remove('drop'); } });
+  zone.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+  zone.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth = 0;
+    zone.classList.remove('drop');
+    addFiles([...e.dataTransfer.files]);
+  });
+  // Файл уронили мимо ленты (список агентов, шапка, панель) — без этого браузер открыл бы его вместо страницы вместе с недописанным
+  for (const type of ['dragover', 'drop']) document.addEventListener(type, (e) => { if (hasFiles(e)) e.preventDefault(); });
+}
+
+/** Удаление правит журналы на диске; ленту после него сервер присылает целиком событием reset. */
+async function destroy(path, body, done) {
+  try {
+    const r = await post(path, body);
+    marked.clear();
+    renderMarked();
+    say(done(r));
+  } catch (err) {
+    say(tr('Не удалено: {why}', { why: err.message }), true);
+  }
+}
+
+$('markedDelete').addEventListener('click', () => {
+  if (!marked.size || !confirm(tr('Удалить выделенные сообщения ({n}) из журнала? Вернуть нельзя.', { n: marked.size }))) return;
+  destroy('/api/delete', { ids: [...marked] }, (r) => tr('Удалено сообщений: {n}.', { n: r.removed }));
+});
+$('markedNone').addEventListener('click', () => {
+  marked.clear();
+  renderMarked();
+});
+
+$('clear').addEventListener('click', () => {
+  // Выбран один агент — чистим твой диалог с ним, а не весь журнал: «Очистить всё» осталось только без выбора
+  const wipe = L.clearTarget(filters, state.agents);
+  if (wipe.mode === 'none') return say(wipe.hint, true);
+  if (wipe.mode !== 'all') {
+    if (!confirm(tr('Удалить весь диалог {names} вместе со сводками? Вернуть нельзя.', { names: wipe.names }))) return;
+    return destroy('/api/clear', { a: wipe.a, b: wipe.b }, (r) => tr('Диалог {names} очищен, сообщений: {n}.', { names: wipe.names, n: r.removed }));
+  }
+  if (!state.here.root) return say(tr('Интерфейс запущен не из проекта шины — журнала каталога тут нет. Выбери пару агентов, шобы очистить их диалог.'), true);
+  if (!confirm(tr('Удалить ВЕСЬ журнал директории {root} — переписку всех её агентов? Вернуть нельзя.', { root: state.here.root }))) return;
+  destroy('/api/clear', { all: true }, (r) => tr('Журнал очищен, сообщений: {n}.', { n: r.removed }));
+});
+
+$('squeeze').addEventListener('click', async () => {
+  const [a, b] = [...filters.agents];
+  const button = $('squeeze');
+  const note = (text, bad = false) => Object.assign($('pairNote'), { textContent: text, className: `note${bad ? ' bad' : ''}` });
+  if (!L.selectedPair(filters)) {
+    // Панель пары открываем ради одной подсказки; следующая перерисовка ленты спрячет её сама
+    $('pair').hidden = false;
+    $('pairNames').textContent = tr('Пара не выбрана');
+    $('pairWeight').textContent = '';
+    return note(tr(NO_PAIR_HINT));
+  }
+  button.dataset.busy = '1';
+  button.disabled = true;
+  button.lastElementChild.textContent = tr('Сжимаю…');
+  note(tr('Отдал диалог claude на haiku. Обычно это 5–15 секунд.'));
+  try {
+    const r = await post('/api/summarize', { a, b });
+    note(tr('Сжато сообщений: {n}. Ушло ≈{tokens} токенов haiku.', { n: r.compressed, tokens: L.short(r.tokens) }) + (r.left ? tr(' Осталось несжатых: {n} — нажми ещё раз.', { n: r.left }) : ''));
+  } catch (err) {
+    note(tr('Не сжато: {why}', { why: err.message }), true);
+  } finally {
+    delete button.dataset.busy;
+    button.lastElementChild.textContent = tr('Сжать диалог');
+    renderFeed(new Set(), false);
+  }
+});
+// Enter — отправить, Shift+Enter — перенос строки (Ctrl/Cmd+Enter тоже шлёт, по старой привычке).
+// isComposing — Enter подтверждает слово в IME; идёт диктовка — текст в поле ещё не тот, шо будет
+$('text').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.shiftKey || e.altKey || e.isComposing || voice.rec) return;
+  e.preventDefault();
+  if (!e.repeat) $('composer').requestSubmit();
+});
+
+// ---------- голосовой ввод: удержание пробела ----------
+
+// Распознаёт браузер (Web Speech API, Chrome и Edge), сервер шины звука не видит. Текст ложится в поле, а не уходит агенту:
+// распознавание путает имена и термины, а TASK стоит токенов — пользователь сначала читает, шо надиктовал
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+const HOLD_MS = 400; // короче — это пробел или клик, дольше — диктовка
+const voice = { held: false, timer: null, tap: 'none', target: null, rec: null, field: null, before: '', after: '', final: '', error: '' };
+$('voiceHint').hidden = !SpeechRec;
+
+/** Тап, а не удержание: доигрываем то, шо пробел сделал бы сам. */
+function commitTap() {
+  clearTimeout(voice.timer);
+  voice.timer = null;
+  if (voice.tap === 'click') voice.target.click();
+  // execCommand, а не setRangeText: пробел остаётся в истории отмены поля
+  else if (voice.tap === 'type' && !document.execCommand('insertText', false, ' ')) voice.target.setRangeText(' ', voice.target.selectionStart, voice.target.selectionEnd, 'end');
+}
+
+function showDictated(text) {
+  const d = L.dictated(voice.before, voice.after, text);
+  voice.field.value = d.value;
+  voice.field.setSelectionRange(d.caret, d.caret);
+  voice.field.dispatchEvent(new Event('input', { bubbles: true })); // поиск фильтрует ленту по input
+}
+
+function startVoice() {
+  voice.timer = null;
+  if (!SpeechRec) return say(L.voiceNote('unsupported'), true);
+  const field = voice.tap === 'type' ? voice.target : $('text');
+  field.focus();
+  Object.assign(voice, { field, before: field.value.slice(0, field.selectionStart), after: field.value.slice(field.selectionEnd), final: '', error: '' });
+
+  const rec = new SpeechRec();
+  Object.assign(rec, { lang: I.lang() === 'en' ? 'en-US' : 'ru-RU', continuous: true, interimResults: true }); // диктуют на языке интерфейса
+  rec.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) voice.final += `${e.results[i][0].transcript} `;
+      else interim += e.results[i][0].transcript;
+    }
+    showDictated(voice.final + interim);
+  };
+  rec.onerror = (e) => (voice.error = e.error);
+  rec.onend = () => {
+    voice.rec = null;
+    field.classList.remove('listening');
+    if (voice.error === 'aborted') showDictated('');
+    else showDictated(voice.final); // недослышанный хвост без isFinal в поле не оставляем
+    const note = L.voiceNote(voice.error || (voice.final.trim() ? '' : 'no-speech'));
+    say(note || tr('Надиктовано — проверь текст и отправляй.'), Boolean(note) && voice.error !== 'aborted');
+  };
+  try {
+    rec.start();
+  } catch (err) {
+    return say(tr('Голосовой ввод не удался: {why}', { why: err.message }), true);
+  }
+  voice.rec = rec;
+  field.classList.add('listening');
+  say(tr('Слушаю… отпусти пробел, когда договоришь. Esc — отмена.'));
+  if (!voice.held) rec.stop(); // пробел отпустили, пока поднимался микрофон
+}
+
+// capture: раньше, чем пробел успеет напечатать себя в поле, нажать кнопку или прокрутить страницу
+document.addEventListener('keydown', (e) => {
+  if (voice.rec && e.key === 'Escape') return voice.rec.abort();
+  if (e.key === 'Escape' && agentPanel.open) return closeAgentPanel();
+  if (e.key === 'Escape' && scheduleOpen) return closeSchedule();
+  if (e.key === 'Escape' && marked.size) {
+    marked.clear();
+    return renderMarked();
+  }
+  if (e.code !== 'Space') {
+    if (voice.timer) commitTap(); // быстрый набор: следующая буква нажата раньше, чем отпущен пробел — пробел встаёт перед ней
+    return;
+  }
+  if (voice.held) return e.preventDefault(); // автоповтор зажатой клавиши
+  if (e.repeat || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+  const el = document.activeElement || document.body;
+  const tap = L.spaceTap(el.tagName, el.type);
+  if (tap === 'skip' || el.isContentEditable) return;
+  e.preventDefault();
+  Object.assign(voice, { held: true, tap, target: el, timer: setTimeout(startVoice, HOLD_MS) });
+}, true);
+
+document.addEventListener('keyup', (e) => {
+  if (e.code !== 'Space' || !voice.held) return;
+  voice.held = false;
+  e.preventDefault(); // Chrome нажимает кнопку по keyup пробела — клик тапа делает commitTap, второй не нужен
+  if (voice.timer) commitTap();
+  else if (voice.rec) voice.rec.stop();
+}, true);
+
+// Окно потеряло фокус с зажатым пробелом — keyup сюда уже не придёт
+window.addEventListener('blur', () => {
+  clearTimeout(voice.timer);
+  Object.assign(voice, { held: false, timer: null });
+  if (voice.rec) voice.rec.stop();
+});
+document.addEventListener('visibilitychange', scheduleRead);
+$('q').addEventListener('input', (e) => {
+  filters.q = e.target.value.trim();
+  renderFeed();
+});
+$('to').addEventListener('change', renderFrom);
+$('toggleAgents').addEventListener('click', () => toggleAside());
+$('toBottom').addEventListener('click', () => {
+  $('wrap').scrollTop = $('wrap').scrollHeight;
+  $('toBottom').hidden = true;
+});
+$('wrap').addEventListener('scroll', () => {
+  pinned = atBottom();
+  if (pinned) $('toBottom').hidden = true;
+}, { passive: true });
+$('theme').addEventListener('click', () => {
+  const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+  try { localStorage.setItem('bus-theme', document.documentElement.dataset.theme); } catch {}
+});
+try { if (localStorage.getItem('bus-theme')) document.documentElement.dataset.theme = localStorage.getItem('bus-theme'); } catch {}
+
+// ---------- расписание ----------
+
+let scheduleOpen = false;
+let scheduleEditing = null; // редактируемая задача ({root,name,...}) или null — форма собирает новую
+let scheduleNote = null; // daemonNote последнего действия — показываем его, пока не пришло свежее состояние по SSE
+
+const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0]; // пн..вс для формы; значения — как в cron.js (0 — воскресенье)
+const WEEKDAY_LABEL = { 0: N('воскресенье'), 1: N('понедельник'), 2: N('вторник'), 3: N('среда'), 4: N('четверг'), 5: N('пятница'), 6: N('суббота') };
+const SCHED_PRESET_IDS = { daily: 'schedDaily', weekdays: 'schedWeekdays', weekly: 'schedWeekly', minutes: 'schedMinutes', hours: 'schedHours', custom: 'schedCustom' };
+
+const fillSelect = (select, items) => setOptions(select, items.map((it) => el('option', { value: it.value }, it.label)));
+setOptions($('schedPreset')); // опции в разметке — только подложить подпись
+/** Списки формы с подписями на языке UI; зовётся на старте и на смену языка — выбранные значения остаются. */
+function fillScheduleChoices() {
+  const fill = (select, items) => {
+    const keep = select.value;
+    fillSelect(select, items);
+    if (keep) select.value = keep;
+  };
+  fill($('schedWeeklyDay'), WEEKDAY_ORDER.map((d) => ({ value: String(d), label: tr(WEEKDAY_LABEL[d]) })));
+  fill($('schedMinutesN'), L.SCHEDULE_MINUTE_STEPS.map((n) => ({ value: String(n), label: tr('{n} мин', { n }) })));
+  fill($('schedHoursN'), L.SCHEDULE_HOUR_STEPS.map((n) => ({ value: String(n), label: tr('{n} ч', { n }) })));
+}
+fillScheduleChoices();
+
+function renderScheduleBadge() {
+  const jobs = (state.schedule && state.schedule.jobs) || [];
+  const { count, alert } = L.scheduleBadge(jobs);
+  $('scheduleBadge').textContent = String(count);
+  $('scheduleBadge').hidden = !count;
+  $('scheduleBadge').classList.toggle('alert', alert);
+  $('scheduleBtn').classList.toggle('alert', alert);
+}
+
+function renderScheduleDaemon() {
+  const node = $('scheduleDaemon');
+  if (!state.schedule) return (node.textContent = '');
+  if (scheduleNote) {
+    node.textContent = scheduleNote;
+    node.className = 'sched-daemon';
+    return;
+  }
+  const n = L.scheduleDaemonNote(state.schedule.daemon);
+  node.textContent = n.text;
+  node.className = `sched-daemon${n.tone === 'bad' ? ' bad' : ''}`;
+}
+
+/** Строка задачи в списке: тумблер, имя, cron человеком и мелко моноширинным, кому, ближайший запуск, итог последнего, кнопки. */
+function jobNode(job, defaultModel) {
+  const toggle = el('button', { type: 'button', className: 'job-toggle', title: job.enabled ? tr('Выключить') : tr('Включить'), ariaLabel: job.enabled ? tr('Выключить задачу «{name}»', { name: job.name }) : tr('Включить задачу «{name}»', { name: job.name }) });
+  toggle.setAttribute('role', 'switch');
+  toggle.setAttribute('aria-checked', String(job.enabled));
+  toggle.addEventListener('click', () => scheduleToggle(job));
+
+  const last = L.scheduleLastNote(job.last);
+  const about = job.error
+    ? el('div', { className: 'job-error' }, tr('ошибка: {error}', { error: job.error }))
+    : el('div', { className: 'job-about' }, C.describe(job.cron), el('code', {}, job.cron)); // job.about сервера — всегда русский, а describe тут — на языке вкладки
+  const info = el('div', { className: 'job-line' }, `${L.scheduleTarget(job, defaultModel)} · ${tr('след.: {at}', { at: job.enabled && !job.error ? L.scheduleNextLabel(job.next) : '—' })}`);
+  const lastLine = el('div', { className: `job-line ${last.tone}` }, last.text);
+
+  const runBtn = el('button', { type: 'button', className: 'ghost' }, icon('play'), tr('Запустить'));
+  runBtn.disabled = Boolean(job.error) || (job.last && job.last.state === 'running');
+  runBtn.addEventListener('click', () => scheduleRun(job));
+  const editBtn = el('button', { type: 'button', className: 'ghost' }, icon('edit'), tr('Изменить'));
+  editBtn.addEventListener('click', () => showScheduleFormFor(job));
+  const delBtn = el('button', { type: 'button', className: 'ghost' }, icon('trash'), tr('Удалить'));
+  delBtn.addEventListener('click', () => scheduleDelete(job));
+
+  return el('div', { className: 'job' }, toggle, el('div', { className: 'job-name' }, job.name), about, info, lastLine, el('div', { className: 'job-actions' }, runBtn, editBtn, delBtn));
+}
+
+function renderScheduleList() {
+  renderScheduleDaemon();
+  const list = $('scheduleList');
+  list.replaceChildren();
+  const jobs = (state.schedule && state.schedule.jobs) || [];
+  if (!jobs.length) return list.append(el('p', { className: 'sched-empty' }, tr('Задач по расписанию пока нет — заведи первую кнопкой «Новая задача» выше.')));
+  const targets = state.schedule.targets || [];
+  for (const group of L.scheduleGroups(jobs, targets, state.schedule.here)) {
+    list.append(el('div', { className: 'sched-group' }, el('span', { className: 'label' }, group.label), ...group.jobs.map((job) => jobNode(job, state.schedule.defaultModel))));
+  }
+}
+
+/** Новое состояние расписания — с сервера (GET/POST) или по SSE. note — daemonNote действия, до следующего свежего состояния. */
+function applySchedule(data, note) {
+  state.schedule = data;
+  scheduleNote = note || null;
+  renderScheduleBadge();
+  if (scheduleOpen && $('scheduleList').hidden === false) renderScheduleList(); // форму, которую правят, не перерисовываем
+  else if (scheduleOpen) renderScheduleDaemon();
+}
+
+function openSchedule() {
+  scheduleOpen = true;
+  $('scheduleBackdrop').hidden = false;
+  $('schedule').hidden = false;
+  $('scheduleBtn').setAttribute('aria-expanded', 'true');
+  showScheduleList();
+  fetch('/api/schedule', { headers: langHeader() }).then((r) => r.json()).then((data) => applySchedule(data)).catch((err) => say(tr('Расписание не загрузилось: {why}', { why: err.message }), true));
+  $('scheduleClose').focus();
+}
+
+function closeSchedule() {
+  scheduleOpen = false;
+  $('scheduleBackdrop').hidden = true;
+  $('schedule').hidden = true;
+  $('scheduleBtn').setAttribute('aria-expanded', 'false');
+  $('scheduleBtn').focus();
+}
+
+function showScheduleList() {
+  scheduleEditing = null;
+  $('scheduleWarn').hidden = true;
+  $('scheduleList').hidden = false;
+  $('scheduleNew').hidden = false;
+  $('scheduleForm').hidden = true;
+  renderScheduleList();
+}
+
+function updateSchedPresetVisibility() {
+  const preset = $('schedPreset').value;
+  for (const [key, id] of Object.entries(SCHED_PRESET_IDS)) $(id).hidden = key !== preset;
+}
+
+/** cron из текущих полей формы, по выбранному пресету. Мусор в полях — null: describe покажет, шо не собралось. */
+function buildCurrentCron() {
+  const preset = $('schedPreset').value;
+  const p = {
+    time: preset === 'weekdays' ? $('schedWeekdaysTime').value : preset === 'weekly' ? $('schedWeeklyTime').value : $('schedDailyTime').value,
+    day: $('schedWeeklyDay').value,
+    n: preset === 'minutes' ? $('schedMinutesN').value : $('schedHoursN').value,
+    minute: $('schedHoursMinute').value,
+    expr: $('schedCustomExpr').value,
+  };
+  return L.buildScheduleCron(preset, p);
+}
+
+/** Живая расшифровка cron под пресетом: BusCron.describe и три ближайших запуска. → собранная cron-строка или null. */
+function updateSchedDescribe() {
+  const expr = buildCurrentCron();
+  const describeEl = $('schedDescribe');
+  const upcomingEl = $('schedUpcoming');
+  if (!expr) {
+    describeEl.textContent = tr('Заполни расписание.');
+    describeEl.className = 'sched-describe bad';
+    upcomingEl.replaceChildren();
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = C.parse(expr);
+  } catch (e) {
+    describeEl.textContent = e.message;
+    describeEl.className = 'sched-describe bad';
+    upcomingEl.replaceChildren();
+    return null;
+  }
+  describeEl.textContent = C.describe(expr);
+  describeEl.className = 'sched-describe';
+  upcomingEl.replaceChildren(...C.upcoming(parsed, 3).map((d) => el('li', {}, d.toLocaleString(I.locale(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))));
+  return expr;
+}
+
+function updateSchedModelVisibility() {
+  $('schedModelLabel').hidden = $('schedTo').value !== '';
+}
+
+function fillScheduleToOptions(root) {
+  const targets = (state.schedule && state.schedule.targets) || [];
+  const t = targets.find((x) => x.root === root);
+  const agents = (t && t.agents) || [];
+  setOptions($('schedTo'), [el('option', { value: '' }, tr('сессия проекта (headless)')), ...agents.map((name) => el('option', { value: name }, name))]);
+}
+
+/** Форма новой или существующей задачи: каталог и имя блокируются при редактировании, остальное заполняется из job. */
+function fillScheduleForm(job) {
+  $('schedError').hidden = true;
+  $('schedError').textContent = '';
+  $('schedForceSave').hidden = true;
+  const targets = (state.schedule && state.schedule.targets) || [];
+  const here = state.schedule ? state.schedule.here : null;
+  $('schedFormTitle').textContent = job ? tr('Изменить «{name}»', { name: job.name }) : tr('Новая задача');
+
+  const rootSelect = $('schedRoot');
+  fillSelect(rootSelect, targets.map((t) => ({ value: t.root === null ? '' : t.root, label: t.root === null ? tr('глобальные') : t.project || t.root })));
+  rootSelect.value = job ? (job.root === null ? '' : job.root) : here === null ? '' : here;
+  rootSelect.disabled = Boolean(job);
+
+  $('schedName').value = job ? job.name : '';
+  $('schedName').disabled = Boolean(job);
+
+  const guess = job ? L.scheduleCronPreset(job.cron) : { preset: 'daily', time: '09:00' };
+  $('schedPreset').value = guess.preset;
+  $('schedDailyTime').value = guess.time || '09:00';
+  $('schedWeekdaysTime').value = guess.time || '09:00';
+  $('schedWeeklyDay').value = guess.day || '1';
+  $('schedWeeklyTime').value = guess.time || '09:00';
+  $('schedMinutesN').value = guess.preset === 'minutes' ? guess.n : '5';
+  $('schedHoursN').value = guess.preset === 'hours' ? guess.n : '1';
+  $('schedHoursMinute').value = guess.minute || '0';
+  $('schedCustomExpr').value = guess.preset === 'custom' ? guess.expr : job ? job.cron : '';
+  updateSchedPresetVisibility();
+  updateSchedDescribe();
+
+  fillScheduleToOptions(rootSelect.value === '' ? null : rootSelect.value);
+  $('schedTo').value = job ? job.to : '';
+  $('schedModelDefault').textContent = (state.schedule && state.schedule.defaultModel) || 'sonnet';
+  $('schedModel').value = job ? job.model : '';
+  updateSchedModelVisibility();
+
+  $('schedTimeout').value = job ? job.timeout : 10;
+  $('schedCatchup').checked = job ? job.catchup : false;
+  $('schedEnabled').checked = job ? job.enabled : true;
+  $('schedPrompt').value = job ? job.prompt : '';
+}
+
+function showScheduleFormFor(job) {
+  scheduleEditing = job || null;
+  $('scheduleList').hidden = true;
+  $('scheduleNew').hidden = true;
+  $('scheduleForm').hidden = false;
+  fillScheduleForm(job);
+  $('schedName').focus();
+}
+
+function showSchedError(text) {
+  $('schedError').textContent = text;
+  $('schedError').hidden = false;
+}
+
+async function scheduleToggle(job) {
+  try {
+    const r = await post('/api/schedule/toggle', { root: job.root, name: job.name, on: !job.enabled });
+    applySchedule(r, r.daemonNote);
+  } catch (err) {
+    say(tr('Не переключено: {why}', { why: err.message }), true);
+  }
+}
+
+async function scheduleRun(job) {
+  try {
+    const r = await post('/api/schedule/run', { root: job.root, name: job.name });
+    applySchedule(r);
+    say(tr('«{name}» запущена.', { name: job.name }));
+  } catch (err) {
+    say(tr('Не запущено: {why}', { why: err.message }), true);
+  }
+}
+
+async function scheduleDelete(job) {
+  if (!confirm(tr('Удалить задачу «{name}»? Вернуть нельзя.', { name: job.name }))) return;
+  try {
+    const r = await post('/api/schedule/delete', { root: job.root, name: job.name });
+    applySchedule(r, r.daemonNote);
+    say(tr('Задача «{name}» удалена.', { name: job.name }));
+  } catch (err) {
+    say(tr('Не удалено: {why}', { why: err.message }), true);
+  }
+}
+
+async function scheduleSave(force) {
+  const expr = updateSchedDescribe();
+  const name = $('schedName').value.trim();
+  $('schedError').hidden = true;
+  $('schedForceSave').hidden = true;
+  if (!L.validScheduleName(name)) return showSchedError(tr('Имя: латиница в нижнем регистре, цифры и дефис, до 31 символа.'));
+  if (!expr) return showSchedError(tr('Расписание не собралось — проверь поля или свой cron.'));
+  const prompt = $('schedPrompt').value.trim();
+  if (!prompt) return showSchedError(tr('Промпт пустой.'));
+  const to = $('schedTo').value;
+  const body = {
+    root: $('schedRoot').value === '' ? null : $('schedRoot').value,
+    name, cron: expr, to,
+    model: to ? '' : $('schedModel').value.trim(),
+    timeout: Number($('schedTimeout').value) || 10,
+    catchup: $('schedCatchup').checked,
+    enabled: $('schedEnabled').checked,
+    prompt,
+    isNew: !scheduleEditing,
+    force,
+  };
+  try {
+    const r = await post('/api/schedule/save', body);
+    applySchedule(r, r.daemonNote);
+    showScheduleList();
+    if (r.warning) {
+      $('scheduleWarn').textContent = r.warning;
+      $('scheduleWarn').hidden = false;
+    }
+    say(tr('Задача «{name}» сохранена.', { name }));
+  } catch (err) {
+    showSchedError(err.message);
+    if (L.isFrequentError(err.message)) $('schedForceSave').hidden = false;
+  }
+}
+
+$('scheduleBtn').addEventListener('click', () => (scheduleOpen ? closeSchedule() : openSchedule()));
+$('scheduleClose').addEventListener('click', closeSchedule);
+$('scheduleBackdrop').addEventListener('click', closeSchedule);
+$('scheduleNew').addEventListener('click', () => showScheduleFormFor(null));
+$('schedCancel').addEventListener('click', showScheduleList);
+$('scheduleForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  scheduleSave(false);
+});
+$('schedForceSave').addEventListener('click', () => scheduleSave(true));
+$('schedRoot').addEventListener('change', () => {
+  fillScheduleToOptions($('schedRoot').value === '' ? null : $('schedRoot').value);
+  updateSchedModelVisibility();
+});
+$('schedTo').addEventListener('change', updateSchedModelVisibility);
+$('schedPreset').addEventListener('change', () => {
+  updateSchedPresetVisibility();
+  updateSchedDescribe();
+});
+['schedDailyTime', 'schedWeekdaysTime', 'schedWeeklyDay', 'schedWeeklyTime', 'schedMinutesN', 'schedHoursN', 'schedHoursMinute', 'schedCustomExpr'].forEach((id) => $(id).addEventListener('input', updateSchedDescribe));
+
+/** Смена языка без перезагрузки: черновик сообщения, выбранные агенты и фильтры остаются. Панели в этот момент закрыты — шапка под их подложкой. */
+function setLanguage(lang) {
+  I.setLang(lang);
+  try { localStorage.setItem('bus-lang', I.lang()); } catch {}
+  applyStatic();
+  fillScheduleChoices();
+  renderTypes(true);
+  applyAgents({ agents: state.agents, here: state.here });
+  renderFeed(new Set(), false);
+  say('');
+}
+$('lang').addEventListener('click', () => setLanguage(I.lang() === 'en' ? 'ru' : 'en'));
+
+connect();
+</script>
+</body>
+</html>
