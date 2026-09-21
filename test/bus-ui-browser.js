@@ -48,14 +48,28 @@ fs.mkdirSync(configDir, { recursive: true });
 
 // Подставной claude: «поднятый агент» забирает свой inbox и отчитывается, сводка — одна строка
 const fakeClaude = path.join(sandbox, 'fake-claude.js');
+const fakeMode = path.join(sandbox, 'fake-claude-mode.txt');
+// Подъём агента потоковый (--input-format stream-json): stdin остаётся открытым, промпт — первая строка. hang в файле режима — агент «завис», пока его не остановят
 fs.writeFileSync(fakeClaude, `let s = '';
-process.stdin.on('data', (c) => (s += c)).on('end', () => {
+let fired = false;
+const go = () => {
+  if (fired) return;
+  fired = true;
+  main();
+};
+process.stdin.on('data', (c) => {
+  s += c;
+  if (process.argv.includes('--input-format') && s.includes('\\n')) go();
+}).on('end', go);
+function main() {
   const argv = process.argv.slice(2);
+  if (argv.includes('--input-format')) console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'fake-session-ui' }));
+  if (argv.includes('--agent') && require('fs').existsSync(${JSON.stringify(fakeMode)}) && require('fs').readFileSync(${JSON.stringify(fakeMode)}, 'utf8').trim() === 'hang') return setTimeout(() => {}, 120000);
   if (argv.includes('--agent')) require('child_process').spawnSync(process.execPath, [${JSON.stringify(BUS_JS)}, '--as', argv[argv.indexOf('--agent') + 1], 'inbox', '--quiet'], { cwd: process.cwd(), env: process.env });
   // Правка роли в панели агента: ИИ отвечает JSON-ом с описанием и телом
   const rewrite = JSON.stringify({ description: 'описание от ИИ', body: '# Роль\\n\\nПереписано ИИ.' });
   console.log(JSON.stringify({ type: 'result', is_error: false, result: argv.includes('--agent') ? 'ответил' : s.includes('Просьба пользователя:') ? rewrite : 'сводка от подставного claude', usage: { input_tokens: 1200, output_tokens: 300 } }));
-});
+}
 `);
 
 const baseEnv = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: configDir, BUS_CLAUDE_CMD: `"${process.execPath}" "${fakeClaude}"`, TG_NOTIFY_DRY_RUN: '1', BUS_PM2_CMD: 'rem', BUS_STARTUP_DIR: path.join(home, 'startup'), BUS_SCHEDULER_START_WAIT_MS: '0' }; // расписание: ни настоящего pm2, ни автозагрузки Windows
@@ -79,6 +93,20 @@ const defFile = (root, name) => {
 };
 const read = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '');
 
+// Настройки проекта (шестерёнка): та же свёртка каталога в ключ, шо rootKey в settings.js — иначе тест смотрит не туда
+const settingsFile = path.join(configDir, 'bus', 'settings.json');
+const settingsKey = (root) => {
+  const resolved = path.resolve(root).split(path.sep).join('/').replace(/\/+$/, '');
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+};
+const projectSettings = (root) => {
+  try {
+    return JSON.parse(fs.readFileSync(settingsFile, 'utf8')).projects[settingsKey(root)] || {};
+  } catch {
+    return {};
+  }
+};
+
 const shop = mkProject('shop');
 const landing = mkProject('landing');
 bus(shop, ['init', 'shop']);
@@ -98,6 +126,8 @@ fs.appendFileSync(journal, JSON.stringify({ id: `${oldRecords[1].id}s`, t: '2026
 
 const XSS = '<img src=x onerror="window.__xss=1"> <b>не тег</b>';
 bus(shop, ['send', 'masha', 'task', XSS], quiet);
+const MD = '## Разметка в ленте\nабзац с **жирным** и `кодом`\n\n- пункт один\n- пункт <i>два</i>\n\n```\n<script>window.__xss = 2</script>\n```\n[зло](javascript:window.__xss=3)';
+bus(shop, ['send', 'masha', 'task', MD], quiet);
 bus(shop, ['--as', 'masha', 'send', 'dima', 'question', 'какое поле в ответе?'], quiet);
 bus(shop, ['send', 'landing', 'done', 'апи переехал'], quiet);
 bus(landing, ['send', 'qa', 'done', 'чужой каталог'], quiet);
@@ -234,6 +264,13 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       return [list.includes(XSS) && (await page.locator('.msg .text img, .msg .text b').count()) === 0 && (await page.evaluate(() => window.__xss)) === undefined, JSON.stringify(list.slice(0, 3))];
     });
 
+    await scenario('E2a markdown: заголовок, жирный, код и список в сообщении отрисованы узлами; HTML и javascript:-ссылка внутри разметки остались текстом', async () => {
+      const card = page.locator('.msg', { hasText: 'Разметка в ленте' });
+      const [heading, bold, code, items, pre] = await Promise.all([card.locator('.text h4').textContent(), card.locator('.text strong').textContent(), card.locator('.text p code').textContent(), card.locator('.text li').count(), card.locator('.text pre').textContent()]);
+      const live = await card.locator('.text i, .text script, .text a').count();
+      return [heading === 'Разметка в ленте' && bold === 'жирным' && code === 'кодом' && items === 2 && pre.includes('<script>') && live === 0 && (await page.evaluate(() => window.__xss)) === undefined, JSON.stringify({ heading, bold, code, items, pre, live })];
+    });
+
     // Снять выбор агентов: пару и группу — кнопкой в списке, одного — повторным кликом по нему
     const unpick = async () => {
       if (await page.isVisible('#unpick')) return page.click('#unpick');
@@ -351,6 +388,18 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       return [hint.includes('Выбери пару') && before === 9 && after === 0 && note.includes('Сжато сообщений: 9') && (await page.locator('.summary p').first().textContent()) !== '', JSON.stringify({ hint: hint.slice(0, 30), before, after, note })];
     });
 
+    // Подпись, которую код уже менял («Сжимаю…», «Переписываю…»), из статичной разметки выпала — язык ей ставит сам код
+    const labelInBothLangs = async (selector) => {
+      await page.click('#lang');
+      const en = (await page.locator(selector).textContent()).trim();
+      await page.click('#lang');
+      return `${en} | ${(await page.locator(selector).textContent()).trim()}`;
+    };
+    await scenario('E7a после сжатия кнопка «Сжать диалог» переводится вместе со страницей, а не застревает на языке, на котором сжимали', async () => {
+      const labels = await labelInBothLangs('#squeeze');
+      return [labels === 'Compress dialog | Сжать диалог', labels];
+    });
+
     const inboxOf = (name) => read(path.join(shop, '.claude', 'bus', name, 'inbox.md'));
     await scenario('E8 отправка: Enter шлёт от имени оркестратора каталога (он подписан у «Кому»), Shift+Enter — перенос строки без отправки, сообщение приезжает в ленту по SSE, поле очищается, пустое не уходит', async () => {
       await page.selectOption('#to', { label: 'dima' });
@@ -379,6 +428,44 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const done = await agentButton('masha').locator('.note.ok').textContent();
       bus(shop, ['autowake', 'off']); // дальше сценарии шлют TASK и QUESTION — фон им не нужен
       return [done.includes('ответил') && done.includes('≈1.5к') && (await page.locator('#autowake').count()) === 0 && inboxOf('masha') === '', JSON.stringify({ done })];
+    });
+
+    await scenario('E40 отметка запуска: на сообщении, с которого агент начал, — «работает» с часами и «Остановить»; занятому агенту форма предлагает btw, оно уходит вбросом; стоп → «остановлен» и «Продолжить»; продолжение поднимает ту же сессию → «отработал»', async () => {
+      bus(shop, ['autowake', 'on']);
+      fs.writeFileSync(fakeMode, 'hang');
+      await page.selectOption('#to', { label: 'masha' });
+      const btwHiddenIdle = await page.locator('#btwWrap').isHidden();
+      await page.selectOption('#type', 'TASK');
+      await page.fill('#text', 'долгая работа из браузера');
+      await page.click('#sendBtn');
+      const card = page.locator('.msg', { hasText: 'долгая работа из браузера' });
+      await card.locator('.run-mark.run').waitFor({ timeout: 20000 });
+      const running = await card.locator('.run-mark.run').textContent();
+      await page.locator('#btwWrap').waitFor({ state: 'visible' });
+
+      await page.check('#btw');
+      await page.selectOption('#type', 'QUESTION');
+      await page.fill('#text', 'попутно из браузера');
+      await page.click('#sendBtn');
+      await page.locator('#result', { hasText: 'вброшено' }).waitFor();
+      await page.locator('.msg', { hasText: 'попутно из браузера' }).locator('.btw-tag').waitFor();
+      const btwReset = !(await page.isChecked('#btw'));
+      const notInInbox = !inboxOf('masha').includes('попутно из браузера');
+
+      await card.locator('.run-mark button', { hasText: 'Остановить' }).click();
+      await card.locator('.run-mark.wait', { hasText: 'остановлен' }).waitFor({ timeout: 20000 });
+      const stopNote = await page.locator('#result').textContent();
+      await page.locator('#btwWrap').waitFor({ state: 'hidden' });
+
+      fs.writeFileSync(fakeMode, 'ok');
+      const session = path.join(configDir, 'projects', 'C--shop', 'fake-session-ui.jsonl');
+      fs.mkdirSync(path.dirname(session), { recursive: true });
+      fs.writeFileSync(session, '{}\n');
+      await card.locator('.run-mark button', { hasText: 'Продолжить' }).click();
+      await card.locator('.run-mark.ok', { hasText: 'отработал' }).waitFor({ timeout: 20000 });
+      const resumeNote = await page.locator('#result').textContent();
+      bus(shop, ['autowake', 'off']);
+      return [btwHiddenIdle && /masha работает\d+:\d\d/.test(running) && btwReset && notInInbox && stopNote.includes('masha остановлен') && resumeNote.includes('продолжает прежнюю сессию') && inboxOf('masha') === '', JSON.stringify({ btwHiddenIdle, running, btwReset, notInInbox, stopNote, resumeNote })];
     });
 
     await scenario('E10 ответ оркестратору каталога UI: приходит без перезагрузки, подсвечен «новое», счётчик в шапке и в заголовке вкладки, медный бейдж — на ответившем, у оркестратора ни бейджа, ни подписи про промпт; открыл диалог агента — его ответы прочитаны, ответ другого агента остался', async () => {
@@ -520,7 +607,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         return page.inputValue('#text');
       });
       const ok = live.value === 'привет это тест дик мир' && live.listening && live.status.includes('Слушаю') && afterHold === 'привет это мир' && doneStatus.includes('Надиктовано')
-        && !(await page.evaluate(() => document.getElementById('text').classList.contains('listening'))) && typed === 'a  b' && cancelled === 'черновик' && !(await page.isHidden('#voiceHint'));
+        && !(await page.evaluate(() => document.getElementById('text').classList.contains('listening'))) && typed === 'a  b' && cancelled === 'черновик';
       await page.fill('#text', '');
       return [ok, JSON.stringify({ live, afterHold, doneStatus, typed, cancelled })];
     });
@@ -610,6 +697,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       await page.click('#agentNew');
       await page.locator('#agentPanel').waitFor();
       const title = await page.locator('#agentTitle').textContent();
+      const aboutOptional = await page.evaluate(() => !document.getElementById('agentAbout').required); // пустое описание сервер берёт из роли
       await page.fill('#agentName', 'Кривое');
       await page.fill('#agentAbout', 'тестировщик из браузера');
       await page.fill('#agentBody', '# Тестер\n\nПроверяет.');
@@ -622,7 +710,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       await page.locator('.agent .name', { hasText: /^tester$/ }).waitFor({ timeout: 10000 });
       const text = read(roleFile('tester'));
       const to = await page.locator('#to').inputValue();
-      return [title === 'Новый агент' && nameError.includes('латиница') && text.includes('name: tester') && text.includes('model: sonnet') && text.includes('## Шина') && text.includes('--as tester') && to === `tester@${shop}`, JSON.stringify({ title, nameError, to, text: text.slice(0, 120) })];
+      return [title === 'Новый агент' && aboutOptional && nameError.includes('латиница') && text.includes('name: tester') && text.includes('model: sonnet') && text.includes('## Шина') && text.includes('--as tester') && to === `tester@${shop}`, JSON.stringify({ title, nameError, to, text: text.slice(0, 120) })];
     });
 
     await scenario('E34 правка роли: карандаш у агента виден без наведения и открывает панель; поля «Инструменты» нет, effort пишется в роль, fast mode на sonnet — ошибка в форме; с ролью без блока «Шина» (блок — отдельно, только чтение), имя не меняется, «Сохранить» пишет на диск, блок цел', async () => {
@@ -646,27 +734,141 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       return [pencilSeen && noTools && fastError.includes('Opus') && text.includes('effort: high') && body === '# Тестер\n\nПроверяет.' && nameLocked && busShown.includes('--as tester') && text.includes('Проверяет и отчитывается.') && text.includes('## Шина') && !text.includes('memory:'), JSON.stringify({ body, nameLocked })];
     });
 
-    await scenario('E35 «Переписать с ИИ»: ответ ложится в форму, а не на диск; «Показать, как было» и обратно переключают текст, «Вернуть как было» отменяет правку; пустая просьба — подсказка', async () => {
+    await scenario('E38 доступ агента: по умолчанию «Всё» и строки в роли нет; набор «Код» снимает субагентов и служебные и показывает экономию; снятая руками галочка — «Свой набор»; Bash не снимается; «Сохранить» пишет disallowedTools без Bash, панель открывается с теми же галочками; «Всё» строку убирает', async () => {
+      const pencil = page.locator('.agent-row', { hasText: 'tester' }).locator('.agent-edit');
+      const box = (key) => page.locator(`#accessGroups input[data-access="${key}"]`);
+      await pencil.click();
+      await page.locator('#agentPanel').waitFor();
+      const before = { preset: await page.locator('#accessPreset').inputValue(), total: await page.locator('#accessTotal').textContent(), bashLocked: await page.locator('#accessGroups input:not([data-access])').isDisabled(), line: read(roleFile('tester')).includes('disallowedTools') };
+      await page.selectOption('#accessPreset', 'code');
+      const code = { agents: await box('agents').isChecked(), service: await box('service').isChecked(), read: await box('read').isChecked(), total: await page.locator('#accessTotal').textContent(), delta: await page.locator('#accessGroups output[data-delta="agents"]').textContent() };
+      await box('web').uncheck();
+      const custom = await page.locator('#accessPreset').inputValue();
+      await page.click('#agentSave');
+      await page.locator('#agentPanel').waitFor({ state: 'hidden' });
+      const saved = (/^disallowedTools: (.*)$/m.exec(read(roleFile('tester'))) || ['', ''])[1];
+      await pencil.click();
+      await page.locator('#agentPanel').waitFor();
+      const reopened = { preset: await page.locator('#accessPreset').inputValue(), web: await box('web').isChecked(), agents: await box('agents').isChecked(), edit: await box('edit').isChecked() };
+      await page.selectOption('#accessPreset', 'all');
+      await page.click('#agentSave');
+      await page.locator('#agentPanel').waitFor({ state: 'hidden' });
+      const cleared = !read(roleFile('tester')).includes('disallowedTools');
+      return [before.preset === 'all' && before.total.includes('≈') && before.bashLocked && !before.line && !code.agents && !code.service && code.read && code.total.includes('экономия') && code.delta.startsWith('вернуть: +')
+        && custom === 'custom' && saved === 'WebFetch, WebSearch, Agent, Workflow, SendMessage, ListAgents, CronCreate, CronDelete, CronList, TaskCreate, TaskGet, TaskList, TaskStop, TaskUpdate, EnterWorktree, ExitWorktree, Monitor, PowerShell, PushNotification, RemoteTrigger, ReportFindings, ScheduleWakeup, DesignSync'
+        && reopened.preset === 'custom' && !reopened.web && !reopened.agents && reopened.edit && cleared, JSON.stringify({ before, code, custom, saved, reopened, cleared })];
+    });
+
+    await scenario('E39 доступ на 390px: секция с галочками не даёт горизонтального скролла', async () => {
+      const mobileCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+      const mobile = await mobileCtx.newPage();
+      await mobile.goto(page.url());
+      await mobile.waitForSelector('.msg, .empty');
+      await mobile.evaluate(() => openAgentPanel(null)); // на узком экране список агентов в шторке — панель открываем её же функцией
+      await mobile.locator('#agentPanel').waitFor();
+      await mobile.selectOption('#accessPreset', 'chat');
+      const wide = await overflow(mobile);
+      await mobile.close();
+      return [wide <= 0, String(wide)];
+    });
+
+    await scenario('E35 «Переписать с ИИ»: ответ ложится в форму, а не на диск; под кнопками diff как в git — «−» и «+» строки описания и роли, правка руками его пересчитывает; в заметке время работы ИИ; «Откатить» возвращает текст и прячет diff; пустая просьба — подсказка', async () => {
       await page.locator('.agent-row', { hasText: 'tester' }).locator('.agent-edit').click();
       await page.locator('#agentPanel').waitFor();
       await page.click('#agentRewrite');
       const emptyNote = await page.locator('#agentAiNote').textContent();
       const onDisk = read(roleFile('tester'));
+      const old = await page.locator('#agentBody').inputValue();
       await page.fill('#agentAsk', 'добавь правило про отчёты');
       await page.click('#agentRewrite');
       await page.locator('#agentAiUndo').waitFor({ timeout: 15000 });
       const after = await page.locator('#agentBody').inputValue();
       const about = await page.locator('#agentAbout').inputValue();
       const note = await page.locator('#agentAiNote').textContent();
-      await page.click('#agentAiSwap');
-      const old = await page.locator('#agentBody').inputValue();
-      await page.click('#agentAiSwap');
-      const again = await page.locator('#agentBody').inputValue();
+      const signs = (kind) => page.locator(`#agentAiDiff .role-diff-line.${kind}`).allTextContents();
+      const dels = await signs('del');
+      const adds = await signs('add');
+      const heads = await page.locator('#agentAiDiff .role-diff-head').allTextContents();
+      await page.fill('#agentBody', `${after}\nДописал руками.`);
+      const addsAfterEdit = await signs('add');
       await page.click('#agentAiUndo');
       const undone = await page.locator('#agentBody').inputValue();
       const undoHidden = await page.locator('#agentAiUndo').isHidden();
+      const diffHidden = await page.locator('#agentAiDiff').isHidden();
+      const swapGone = (await page.locator('#agentAiSwap').count()) === 0;
       await page.click('#agentCancel');
-      return [emptyNote.includes('Напиши') && after === '# Роль\n\nПереписано ИИ.' && about === 'описание от ИИ' && note.includes('ИИ переписал') && old.includes('Проверяет и отчитывается.') && again === after && undone === old && undoHidden && read(roleFile('tester')) === onDisk, JSON.stringify({ emptyNote, after, about, note })];
+      return [emptyNote.includes('Напиши') && after === '# Роль\n\nПереписано ИИ.' && about === 'описание от ИИ' && /ИИ переписал за \d+:\d\d/.test(note) && old.includes('Проверяет и отчитывается.')
+        && heads.length === 2 && dels.some((t) => t.includes('Проверяет и отчитывается.')) && adds.includes('Переписано ИИ.') && adds.includes('описание от ИИ') && addsAfterEdit.includes('Дописал руками.')
+        && undone === old && undoHidden && diffHidden && swapGone && read(roleFile('tester')) === onDisk, JSON.stringify({ emptyNote, after, about, note, heads, dels, adds, addsAfterEdit })];
+    });
+
+    await scenario('E35b после правки ИИ кнопка «Переписать с ИИ» переводится вместе со страницей', async () => {
+      const open = async () => {
+        await page.locator('.agent-row', { hasText: 'tester' }).locator('.agent-edit').click();
+        await page.locator('#agentPanel').waitFor();
+        const label = (await page.locator('#agentRewrite').textContent()).trim();
+        await page.click('#agentCancel');
+        return label;
+      };
+      await page.click('#lang');
+      const en = await open();
+      await page.click('#lang');
+      const ru = await open();
+      return [en === 'Rewrite with AI' && ru === 'Переписать с ИИ', `${en} | ${ru}`];
+    });
+
+    await scenario('E35c самоправка роли: галочка в форме — только субагенту, сообщение с ней помечено в ленте и галочка снимается; агент с черновиком подписан в списке; редактор открывается с черновиком в форме, diff и пояснением агента; «Отклонить правку агента» возвращает роль с диска и сносит черновик', async () => {
+      await page.selectOption('#to', { label: 'landing' });
+      const hiddenForProject = await page.locator('#evolveWrap').isHidden();
+      await page.selectOption('#to', { label: 'tester' });
+      await page.locator('#evolveWrap').waitFor({ state: 'visible' });
+      await page.check('#evolve');
+      await page.selectOption('#type', 'TASK');
+      await page.fill('#text', 'задача с самоправкой из браузера');
+      await page.click('#sendBtn');
+      await page.locator('.msg', { hasText: 'задача с самоправкой из браузера' }).locator('.btw-tag', { hasText: 'самоправка' }).waitFor();
+      const reset = !(await page.isChecked('#evolve'));
+      const testerBox = path.join(shop, '.claude', 'bus', 'tester');
+      const marked = fs.existsSync(path.join(testerBox, 'wake-evolve.json'));
+      fs.rmSync(path.join(testerBox, 'wake-evolve.json'), { force: true });
+
+      const onDisk = read(roleFile('tester'));
+      fs.writeFileSync(path.join(testerBox, 'role-proposal.json'), JSON.stringify({ at: Date.now(), id: 'x', from: 'shop', base: '', description: 'черновик: когда поднимать', body: '# Роль\n\nВыучил новое правило.', note: 'Добавил правило: пользователь поправил дважды.' }));
+      const row = page.locator('.agent-row', { hasText: 'tester' });
+      await row.locator('.note', { hasText: 'предлагает правку роли' }).waitFor({ timeout: 15000 });
+      await row.locator('.agent-edit').click();
+      await page.locator('#agentPanel').waitFor();
+      const body = await page.locator('#agentBody').inputValue();
+      const about = await page.locator('#agentAbout').inputValue();
+      const note = await page.locator('#agentAiNote').textContent();
+      const adds = await page.locator('#agentAiDiff .role-diff-line.add').allTextContents();
+      await page.click('#agentReject');
+      await page.locator('#agentReject').waitFor({ state: 'hidden' });
+      const back = await page.locator('#agentBody').inputValue();
+      const diffHidden = await page.locator('#agentAiDiff').isHidden();
+      await page.click('#agentCancel');
+      await row.locator('.note', { hasText: 'предлагает правку роли' }).waitFor({ state: 'detached', timeout: 15000 });
+      return [hiddenForProject && reset && marked && body === '# Роль\n\nВыучил новое правило.' && about === 'черновик: когда поднимать' && note.includes('Агент предлагает правку своей роли') && note.includes('поправил дважды') && adds.includes('Выучил новое правило.')
+        && !onDisk.includes('Выучил новое правило.') && onDisk.includes(back.split('\n').pop()) && diffHidden && !fs.existsSync(path.join(testerBox, 'role-proposal.json')) && read(roleFile('tester')) === onDisk, JSON.stringify({ hiddenForProject, reset, marked, body, about, note, adds, back })];
+    });
+
+    await scenario('E35a диктовка в панели агента: фокус на кнопке — удержание пробела диктует в просьбу к ИИ, а не в сообщение за панелью; статус — в заметке панели; подсказка про пробел видна', async () => {
+      await page.locator('.agent-row', { hasText: 'tester' }).locator('.agent-edit').click();
+      await page.locator('#agentPanel').waitFor();
+      await page.focus('#agentRewrite');
+      await page.keyboard.down('Space');
+      await page.waitForFunction(() => window.__rec && window.__rec.live, null, { timeout: 3000 });
+      const listening = await page.locator('#agentAiNote').textContent();
+      await page.evaluate(() => window.__rec.emit([['добавь правило про отчёты', true]]));
+      await page.keyboard.up('Space');
+      await wait(450);
+      const ask = await page.inputValue('#agentAsk');
+      const message = await page.inputValue('#text');
+      const done = await page.locator('#agentAiNote').textContent();
+      const hint = await page.locator('#agentVoiceHint').isVisible();
+      const busy = await page.locator('#agentRewrite').isDisabled(); // удержание кнопку не нажало
+      await page.click('#agentCancel');
+      return [ask === 'добавь правило про отчёты' && message === '' && listening.includes('Слушаю') && done.includes('Надиктовано') && hint && !busy, JSON.stringify({ ask, message, listening, done, hint, busy })];
     });
 
     await scenario('E36 удаление агента: у глобального кнопки «Удалить агента» нет, есть подпись почему; у локального после confirm уходят файл роли и ящик, строка пропадает из списка; Esc закрывает панель', async () => {
@@ -708,6 +910,95 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const picked = await page.locator('.agent[aria-pressed="true"]').count();
       if (await page.locator('#unpick').count()) await page.click('#unpick');
       return [/^≈\S+ ток\.$/.test(sum) && total.includes('Эта директория: диалогов') && rows >= 1 && /сообщ\. · несжатых \d+/.test(rowText) && rowText.includes('↔') && !overflow && pairShown && picked === 2, JSON.stringify({ sum, total, rows, rowText, overflow, pairShown, picked })];
+    });
+
+    await scenario('E41 настройки проекта: шестерёнка открывает панель над лентой; правка поля помечает его «изменено» и включает «Сохранить»; сохранение пишет ключ в settings.json проекта', async () => {
+      await page.click('#settingsBtn');
+      await page.waitForSelector('#settings:not([hidden])');
+      const expanded = await page.getAttribute('#settingsBtn', 'aria-expanded');
+      const field = page.locator('.settings-field[data-key="wake.perHour"]');
+      await field.waitFor();
+      const saveDisabledIdle = await page.isDisabled('#settingsSave');
+      await field.locator('input').fill('3');
+      const changed = (await field.getAttribute('class')).includes('changed');
+      const saveEnabled = !(await page.isDisabled('#settingsSave'));
+      await page.click('#settingsSave');
+      await page.waitForFunction(() => document.getElementById('settingsStatus').textContent.includes('Сохранено'));
+      const saved = projectSettings(shop);
+      return [expanded === 'true' && saveDisabledIdle && changed && saveEnabled && saved['wake.perHour'] === 3, JSON.stringify({ expanded, saveDisabledIdle, changed, saveEnabled, saved })];
+    });
+
+    await scenario('E42 настройки проекта: значение переживает перезагрузку страницы и видно как изменённое; «↺ по умолчанию» + «Сохранить» убирает ключ из файла; кривое число — ошибка у поля без запроса на сервер; Esc закрывает панель и возвращает фокус на шестерёнку', async () => {
+      await page.reload();
+      await page.waitForSelector('.msg, .empty');
+      await page.click('#settingsBtn');
+      await page.waitForSelector('#settings:not([hidden])');
+      const field = page.locator('.settings-field[data-key="wake.perHour"]');
+      await field.waitFor();
+      const valueAfterReload = await field.locator('input').inputValue();
+      const changedAfterReload = (await field.getAttribute('class')).includes('changed');
+      await field.locator('.settings-revert').click();
+      await page.click('#settingsSave');
+      await page.waitForFunction(() => document.getElementById('settingsStatus').textContent.includes('Сохранено'));
+      const clearedFromFile = projectSettings(shop)['wake.perHour'] === undefined;
+
+      const callsBefore = calls.length; // calls — общий список путей запросов страницы, собирается с самого начала прогона (E1)
+      await field.locator('input').fill('999');
+      const fieldError = await field.locator('.settings-field-error').textContent();
+      const noRequestSent = !calls.slice(callsBefore).includes('/api/settings');
+      const untouched = projectSettings(shop)['wake.perHour'] === undefined;
+      await field.locator('input').fill('6'); // назад к дефолту — иначе Esc наткнётся на подтверждение несохранённых правок
+
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('#settings', { state: 'hidden' });
+      const focused = await page.evaluate(() => document.activeElement.id);
+      return [valueAfterReload === '3' && changedAfterReload && clearedFromFile && fieldError.includes('от 1 до 60') && noRequestSent && untouched && focused === 'settingsBtn', JSON.stringify({ valueAfterReload, changedAfterReload, clearedFromFile, fieldError, untouched, focused })];
+    });
+
+    await scenario('E42a настройки, промпт агентов: общий текст — textarea с пометкой «все проекты» и счётчиком; сохранённое лежит в global, а не в каталоге, и переживает перезагрузку; длиннее лимита — ошибка у поля, «Сохранить» погашена; «Сбросить всё» общий текст не трогает', async () => {
+      await page.click('#settingsBtn');
+      await page.waitForSelector('#settings:not([hidden])');
+      const field = page.locator('.settings-field[data-key="agent.promptGlobal"]');
+      await field.waitFor();
+      const scope = await field.locator('.settings-scope').textContent();
+      const localScopes = await page.locator('.settings-field[data-key="agent.prompt"] .settings-scope').count();
+      await field.locator('textarea').fill('Коммить только по просьбе.\n  - вложенный пункт  ');
+      const counter = await field.locator('.settings-count').textContent();
+      const changed = (await field.getAttribute('class')).includes('changed');
+      await page.click('#settingsSave');
+      await page.waitForFunction(() => document.getElementById('settingsStatus').textContent.includes('Сохранено'));
+      const file = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+      const savedGlobal = (file.global || {})['agent.promptGlobal'];
+      const inProject = 'agent.promptGlobal' in projectSettings(shop);
+
+      await page.reload();
+      await page.waitForSelector('.msg, .empty');
+      await page.click('#settingsBtn');
+      await page.waitForSelector('#settings:not([hidden])');
+      await field.waitFor();
+      const afterReload = await field.locator('textarea').inputValue();
+
+      await field.locator('textarea').fill('я'.repeat(2001));
+      const tooLong = await field.locator('.settings-field-error').textContent();
+      const over = (await field.locator('.settings-count').getAttribute('class')).includes('over');
+      const saveBlocked = await page.isDisabled('#settingsSave');
+      await field.locator('textarea').fill(afterReload);
+
+      page.once('dialog', (d) => d.accept());
+      await page.click('#settingsReset');
+      await page.waitForFunction(() => document.getElementById('settingsStatus').textContent.includes('Сохранено'));
+      const keptAfterReset = (JSON.parse(fs.readFileSync(settingsFile, 'utf8')).global || {})['agent.promptGlobal'];
+
+      await field.locator('.settings-revert').click();
+      await page.evaluate(() => (document.getElementById('settingsStatus').textContent = '')); // «Сохранено.» висит от сброса — ждём своё
+      await page.click('#settingsSave');
+      await page.waitForFunction(() => document.getElementById('settingsStatus').textContent.includes('Сохранено'));
+      const cleared =!('global' in JSON.parse(fs.readFileSync(settingsFile, 'utf8')));
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('#settings', { state: 'hidden' });
+      const expected = 'Коммить только по просьбе.\n  - вложенный пункт';
+      return [scope === 'все проекты' && localScopes === 0 && counter === `${expected.length} / 2000` && changed && savedGlobal === expected && !inProject && afterReload === expected
+        && tooLong.includes('не длиннее 2000') && over && saveBlocked && keptAfterReset === expected && cleared, JSON.stringify({ scope, localScopes, counter, changed, savedGlobal, inProject, afterReload, tooLong, over, saveBlocked, keptAfterReset, cleared })];
     });
 
     // ---------- расписание: свой сервер с заглушками pm2 и автозагрузки, шобы не тронуть настоящую систему ----------
@@ -848,6 +1139,57 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       schedServer.kill();
     }
 
+    await scenario('E43 сервер ответил 500 на /api/state и /api/schedule: причина — в строке статуса словами сервера, состояние страницы цело — смена языка и лента работают', async () => {
+      const fail = (route) => route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'сервер споткнулся' }) });
+      const before = errors.length;
+      const cards = await page.locator('.msg').count();
+      await page.route('**/api/state', fail);
+      await page.evaluate(() => load().catch((err) => say(err.message, true)));
+      await wait(300);
+      const stateNote = await page.locator('#result').textContent();
+      const labels = await labelInBothLangs('#sendBtn'); // со сломанным state.types смена языка падала с TypeError до F5
+      await page.unroute('**/api/state');
+      await page.route('**/api/schedule', fail);
+      await page.click('#scheduleBtn');
+      await wait(300);
+      const scheduleNote = await page.locator('#result').textContent();
+      const broken = await page.evaluate(() => Boolean(state.schedule && state.schedule.error)); // { error } не должен лечь на место расписания
+      await page.keyboard.press('Escape');
+      await page.unroute('**/api/schedule');
+      const pageErrors = errors.slice(before).filter((e) => !/Failed to load resource/.test(e)); // сам 500 браузер пишет в консоль — это не ошибка страницы
+      errors.length = before;
+      return [stateNote === 'сервер споткнулся' && labels === 'Send | Отправить' && scheduleNote.includes('сервер споткнулся') && !broken && (await page.locator('.msg').count()) === cards && !pageErrors.length, JSON.stringify({ stateNote, labels, scheduleNote, broken, pageErrors })];
+    });
+
+    await scenario('E44 два запроса состояния внахлёст: поздний ответ старого запроса ленту свежего не затирает', async () => {
+      const cards = await page.locator('.msg').count();
+      let seen = 0;
+      await page.route('**/api/state', async (route) => {
+        if (++seen > 1) return route.continue();
+        const response = await route.fetch();
+        const json = await response.json();
+        await wait(800);
+        return route.fulfill({ response, json: { ...json, messages: [] } }); // старый снимок: приходит последним и пустой
+      });
+      await page.evaluate(() => { load(); load(); });
+      await wait(1500);
+      await page.unroute('**/api/state');
+      const after = await page.locator('.msg').count();
+      return [cards > 0 && after === cards, JSON.stringify({ cards, after })];
+    });
+
+    await scenario('E45 «Кому» не пересобирается на каждое событие agents: опция с фокусом в раскрытом списке остаётся на месте, сменился состав — список новый', async () => {
+      await page.evaluate(() => { window.__toOption = document.querySelector('#to option'); });
+      bus(shop, ['--as', 'dima', 'send', 'masha', 'done', 'счётчик непрочитанного у masha'], quiet);
+      await page.locator('.msg', { hasText: 'счётчик непрочитанного у masha' }).waitFor();
+      await wait(1200); // снимок агентов приходит следом за сообщением
+      const kept = await page.evaluate(() => window.__toOption.isConnected);
+      defFile(path.join(shop, '.claude'), 'novice');
+      bus(shop, ['add', 'novice']);
+      await page.locator('#to option', { hasText: 'novice' }).waitFor({ state: 'attached', timeout: 10000 });
+      return [kept, JSON.stringify({ kept })];
+    });
+
     await scenario('E19 журнал удалили при открытой вкладке: сервер шлёт reset, сообщения уходят из ленты без перезагрузки страницы', async () => {
       const before = await page.locator('.msg .text', { hasText: 'привет из браузера' }).count();
       fs.rmSync(journal, { force: true });
@@ -865,7 +1207,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       // Кириллица в обвязке страницы: шапка, фильтры, список агентов (кроме имён и описаний), форма, панели. Тексты сообщений и сама кнопка языка — не обвязка
       const chrome = () => en.evaluate(() => {
         const skip = '#lang, .msg .text, .summary p, .agent .name, #cwd, #project, textarea, select#to, .job-name, .job-line, .job-error'; // имя, адресат и ошибка задачи — данные, а не подписи
-        const texts = [...document.querySelectorAll('header.top, .filters, #agents, #composer, #schedule, #agentPanel, .msg .meta, .day')].map((root) => {
+        const texts = [...document.querySelectorAll('header.top, .filters, #agents, #composer, #schedule, #agentPanel, #settings, .msg .meta, .day')].map((root) => {
           const copy = root.cloneNode(true);
           for (const node of copy.querySelectorAll(skip)) node.remove();
           return copy.textContent;

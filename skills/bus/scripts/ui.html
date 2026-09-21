@@ -154,7 +154,7 @@
   .chip { display: inline-flex; align-items: center; gap: 6px; min-height: var(--h); font: 700 11px/1 var(--label); letter-spacing: .08em; background: none; border: 1px solid var(--line); border-radius: 999px; padding: 0 12px 0 10px; color: var(--ink-soft); transition: background-color .15s, border-color .15s, color .15s; }
   /* Точка чётная: 7px в 32px кнопке вставала на полпикселя мимо центра. Подпись обрезана по прописным — её центр на центре точки */
   .chip::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
-  .chip span { text-box: trim-both cap alphabetic; margin-right: -.08em; }
+  .chip span, .squeeze span { text-box: trim-both cap alphabetic; margin-right: -.08em; }
   .chip:hover { border-color: var(--c); color: var(--ink); }
   /* Включённый фильтр залит: полупрозрачная заливка на сером щите не давала тексту 4.5:1 */
   .chip[aria-pressed="true"] { background: var(--c); border-color: var(--c); color: var(--on-copper); }
@@ -165,8 +165,7 @@
   /* Иконка под жирные прописные: 16px тонким штрихом рядом с ними смотрелась крупнее и легче текста. Меньше, толще — и отступ слева короче правого: у иконки внутри своё поле */
   .squeeze .icon { width: 14px; height: 14px; stroke-width: 2.5; }
   .squeeze:has(> .icon) { padding-left: 10px; }
-  /* Строка подписи обрезана по прописным — центр букв встаёт на центр иконки, а не на полпикселя выше; хвост разрядки за последней буквой снят */
-  .squeeze span { text-box: trim-both cap alphabetic; margin-right: -.08em; }
+  /* Строка подписи обрезана по прописным (.chip span выше) — центр букв встаёт на центр иконки, а не на полпикселя выше; хвост разрядки за последней буквой снят */
   .squeeze:hover:not(:disabled) { background: var(--sq); border-color: var(--sq); color: var(--on-copper); }
   .squeeze:disabled, .squeeze.danger:disabled { background: none; color: var(--ink-soft); border-color: var(--line); cursor: not-allowed; }
   #squeeze { margin-left: auto; }
@@ -234,10 +233,34 @@
   .arrow:hover, .arrow[aria-pressed="true"] { color: var(--copper); background: var(--copper-soft); }
   .arrow .icon { width: 14px; height: 14px; }
   /* Бирка: тип сообщения, «новое», пометка расписания — одна форма, разный цвет */
-  .type, .new, .sched-tag { font: 700 11px/1 var(--label); letter-spacing: .08em; text-transform: uppercase; text-box: trim-both cap alphabetic; border-radius: 999px; padding: 5px 8px; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
+  .type, .new, .sched-tag, .btw-tag { font: 700 11px/1 var(--label); letter-spacing: .08em; text-transform: uppercase; text-box: trim-both cap alphabetic; border-radius: 999px; padding: 5px 8px; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
   .new { color: var(--on-copper); background: var(--copper); }
   .sched-tag { --c: var(--fyi); }
-  .text { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .btw-tag { --c: var(--done); }
+  /* Отметка запуска на сообщении, с которого агент начал работу: идёт / остановлен / упал / отработал */
+  .run-mark { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 12px; color: var(--ink-soft); }
+  .run-mark.run { color: var(--done); font-weight: 600; }
+  .run-mark.bad { color: var(--danger); }
+  .run-mark .clock { font-variant-numeric: tabular-nums; }
+  .run-mark .ghost { min-height: 26px; padding: 0 10px; font-size: 12px; font-weight: 400; color: var(--ink); }
+  .btw-switch { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); cursor: pointer; }
+  .text { margin: 6px 0 0; overflow-wrap: anywhere; }
+  /* markdown в сообщении: заголовки скромные — карточка не документ */
+  .text > * { margin: 8px 0 0; }
+  .text > :first-child { margin-top: 0; }
+  .text p, .text li, .text blockquote { white-space: pre-wrap; }
+  .text h3, .text h4, .text h5 { font: 600 15px/1.35 var(--body); margin-top: 14px; }
+  .text h4 { font-size: 14px; }
+  .text h5 { font-size: 13px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .04em; }
+  .text ul { list-style: none; padding: 0; display: grid; gap: 4px; }
+  .text li { display: flex; gap: 8px; padding-left: calc(var(--depth, 0) * 18px); }
+  .text li .marker { flex: none; min-width: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .text code { font: 12.5px/1.5 var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 1px 5px; }
+  .text pre { overflow-x: auto; white-space: pre; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; }
+  .text pre code { background: none; border: 0; padding: 0; }
+  .text blockquote { border-left: 2px solid var(--line); padding-left: 10px; color: var(--ink-soft); }
+  .text hr { border: 0; border-top: 1px solid var(--line); }
+  .text a { color: var(--copper); }
   /* Найденное поиском: в тексте, именах и вложениях */
   mark { background: color-mix(in srgb, var(--copper) 30%, transparent); color: inherit; border-radius: var(--r-xs); box-shadow: 0 0 0 1px color-mix(in srgb, var(--copper) 50%, transparent); }
   .files { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; align-items: flex-end; }
@@ -265,7 +288,7 @@
   .to-bottom { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(100% + 10px); z-index: 2; min-height: var(--h); background: var(--copper); color: var(--on-copper); border: 0; border-radius: 999px; padding: 0 16px; font: 700 12px var(--label); letter-spacing: .08em; text-transform: uppercase; box-shadow: var(--shadow); }
 
   /* ---- отправка ---- */
-  #composer { position: relative; border-top: 1px solid var(--line); background: var(--plate); padding: 12px var(--gutter); display: grid; grid-template-columns: minmax(140px, 200px) 220px minmax(0, 1fr) auto; gap: 8px 12px; align-items: end; }
+  #composer { position: relative; border-top: 1px solid var(--line); background: var(--plate); padding: 12px var(--gutter); display: grid; grid-template-columns: minmax(140px, 200px) 220px minmax(0, 1fr) auto auto; gap: 8px 12px; align-items: end; }
   form label { display: grid; gap: 4px; min-width: 0; }
   /* Подпись поля — всегда одна строка: перенос пояснения сдвигал поле вниз, и соседние в ряду переставали стоять вровень */
   form label > .label { display: flex; align-items: baseline; gap: 6px; min-width: 0; white-space: nowrap; }
@@ -284,9 +307,11 @@
   .send:disabled { background: var(--raised); color: var(--ink-soft); box-shadow: inset 0 0 0 1px var(--line); cursor: not-allowed; }
   .attach { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-soft); min-width: 0; }
   #picked { display: contents; }
+  #pickBtn { width: var(--h-lg); min-height: var(--h-lg); }
   main.drop .feed-wrap { outline: 2px dashed var(--copper); outline-offset: -8px; }
-  .result { grid-column: 1 / 3; font-size: 13px; line-height: 20px; color: var(--ink-soft); min-height: 20px; margin: 0; }
-  .keys { grid-column: 3 / -1; margin: 0; text-align: right; font-size: 12px; line-height: 20px; color: var(--ink-soft); }
+  main.drop #composer textarea { border-color: var(--copper); box-shadow: 0 0 0 3px var(--copper-soft); } /* бросать можно и на форму — поле это показывает */
+  .result { grid-column: 1 / -1; font-size: 13px; line-height: 20px; color: var(--ink-soft); min-height: 20px; margin: 0; }
+  .keys { font-size: 12px; line-height: 20px; color: var(--ink-soft); }
   .result.bad { color: var(--danger); }
 
   /* ---- расписание ---- */
@@ -327,7 +352,7 @@
 
   .schedule form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 16px var(--gutter) 20px; overflow-y: auto; min-height: 0; }
   .schedule form h3 { grid-column: 1 / -1; margin: 0; font: 600 14px var(--body); }
-  .schedule form label { display: grid; gap: 4px; min-width: 0; align-content: start; }
+  .schedule form label { align-content: start; }
   .schedule form label.wide, .schedule form fieldset, .schedule form .sched-actions, .schedule form .hint, .schedule form .sched-error { grid-column: 1 / -1; }
   .schedule form .hint { padding: 0; margin-top: -6px; } /* подсказка к полю над ней: стоит по левому краю формы и ближе к полю, чем к следующему */
   .schedule form textarea { min-height: 90px; }
@@ -360,16 +385,70 @@
   .schedule form details, .schedule form .role-ai, .schedule form .role-where { grid-column: 1 / -1; min-width: 0; }
   .schedule form #agentBody { min-height: max(260px, 42vh); font: 13px/1.5 var(--mono); }
   .schedule form #agentAsk { min-height: 56px; }
+  /* Доступ агента: пресет и итог в шапке, ниже галочки групп в две колонки; дельта токенов прижата к правому краю строки */
+  .access-head { display: grid; grid-template-columns: minmax(0, 220px) 1fr; gap: 12px; align-items: end; }
+  .access-total { margin: 0; min-height: var(--h-lg); display: flex; flex-wrap: wrap; align-items: center; gap: 0 5px; font-size: 13px; color: var(--ink-soft); } /* gap — flex съедает пробел между цифрой и подписью */
+  .access-total b { color: var(--ink); font-weight: 600; }
+  .access-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; }
+  .schedule form .access-groups label.check, .schedule form .access-servers label.check { align-self: auto; min-height: 36px; align-items: start; padding: 6px 0; }
+  .access-groups label.check > span, .settings-list label.check > span { flex: 1; min-width: 0; display: grid; }
+  .access-groups label.check small, .settings-list label.check small { font-size: 12px; line-height: 16px; color: var(--ink-soft); overflow-wrap: anywhere; }
+  .access-groups output { font: 12px/20px var(--mono); color: var(--ink-soft); white-space: nowrap; }
+  .access-groups output.worse { color: var(--danger); }
+  .access-servers { display: flex; flex-wrap: wrap; gap: 0 16px; padding-left: 24px; }
+  .access-manual { display: grid; gap: 8px; justify-items: start; }
+  .access-manual code { font: 12px/1.5 var(--mono); overflow-wrap: anywhere; }
   .role-ai-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .role-ai-note { margin: 0; font-size: 12px; color: var(--ink-soft); flex: 1; min-width: 140px; }
   .role-ai-note.bad { color: var(--danger); }
+  .role-ai-row .keys { margin-left: auto; }
+  /* diff ИИ-правки — как в git: «−» красным, «+» зелёным, изменённые слова фоном погуще */
+  .role-diff { max-height: 260px; overflow: auto; font: 12px/1.5 var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
+  .role-diff-head { position: sticky; top: 0; padding: 2px 10px; font: 11px var(--label); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); background: var(--panel); border-bottom: 1px solid var(--line); }
+  .role-diff-gap { padding: 0 10px; color: var(--ink-soft); background: color-mix(in srgb, var(--line) 45%, transparent); user-select: none; }
+  .role-diff-line { display: grid; grid-template-columns: 22px minmax(0, 1fr); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-soft); }
+  .role-diff-line::before { content: attr(data-sign); text-align: center; user-select: none; }
+  .role-diff-line.add { color: var(--ink); background: color-mix(in srgb, var(--done) 16%, transparent); }
+  .role-diff-line.del { color: var(--ink); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+  .role-diff-line.add::before { color: var(--done); }
+  .role-diff-line.del::before { color: var(--danger); }
+  .role-diff-line.add mark { color: inherit; border-radius: 2px; background: color-mix(in srgb, var(--done) 38%, transparent); }
+  .role-diff-line.del mark { color: inherit; border-radius: 2px; background: color-mix(in srgb, var(--danger) 34%, transparent); }
   .role-bus { margin: 6px 0 0; padding: 8px 10px; max-height: 180px; overflow: auto; white-space: pre-wrap; font: 12px/1.5 var(--mono); color: var(--ink-soft); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
   .role-where { margin: 0; font: 11px var(--mono); color: var(--ink-soft); word-break: break-all; padding: 0; }
   .sched-actions .push { margin-left: auto; }
   /* Галочка в ряду с полем стоит по его высоте, а не висит посреди ячейки */
   .schedule form label.check { display: flex; align-items: center; gap: 8px; align-self: end; min-height: var(--h-lg); font-size: 14px; line-height: 20px; }
-  .schedule form #agentFastLabel { flex-wrap: wrap; align-content: center; gap: 0 8px; }
-  .schedule form #agentFastLabel small { flex-basis: 100%; font-size: 12px; line-height: 16px; color: var(--ink-soft); }
+  .schedule form :is(#agentFastLabel, #agentRulesLabel, #schedRulesLabel) { flex-wrap: wrap; align-content: center; gap: 0 8px; }
+  .schedule form :is(#agentFastLabel, #agentRulesLabel, #schedRulesLabel) small { flex-basis: 100%; font-size: 12px; line-height: 16px; color: var(--ink-soft); }
+
+  /* ---- настройки проекта (шестерёнка) ---- */
+  .settings-list, #settingsStatus { grid-column: 1 / -1; }
+  .settings-list { display: grid; gap: 0; }
+  .settings-group-label { padding: 14px 0 2px; }
+  .settings-group-label:first-child { padding-top: 0; }
+  .settings-field { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .settings-group-label:first-child + .settings-field { border-top: 0; }
+  .settings-field-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .settings-field-name { font-size: 14px; }
+  .settings-field.changed .settings-field-name { display: inline-flex; align-items: center; gap: 6px; }
+  .settings-field.changed .settings-field-name::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--copper); flex: none; }
+  .settings-revert { border: 0; background: none; padding: 0; margin: 0; font-size: 12px; color: var(--copper); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; flex: none; }
+  .settings-revert:hover { opacity: .8; }
+  .settings-control { display: flex; align-items: center; gap: 8px; }
+  .settings-control input[type="number"], .settings-control input[type="text"] { width: 140px; flex: 0 0 140px; }
+  .settings-unit { font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
+  .settings-field-text .settings-control { display: grid; gap: 4px; align-items: stretch; }
+  .settings-field-text textarea { min-height: 120px; font-size: 13px; line-height: 18px; }
+  .settings-count { font-size: 12px; color: var(--ink-soft); justify-self: end; font-variant-numeric: tabular-nums; }
+  .settings-count.over { color: var(--danger); }
+  .settings-scope { margin-left: 6px; padding: 0 6px; border: 1px solid var(--line); border-radius: 999px; font-size: 11px; line-height: 16px; color: var(--ink-soft); white-space: nowrap; }
+  .settings-field.changed .settings-scope { margin-left: 0; }
+  .settings-field .hint { padding: 0; margin: 0; }
+  .settings-field-error { color: var(--danger); font-size: 12px; margin: 0; }
+  /* Булевы настройки — та же строка с галочкой и подсказкой, шо у групп доступа агента */
+  .schedule form .settings-list label.check { align-self: auto; min-height: 36px; align-items: start; padding: 0; gap: 8px; }
+  .settings-list label.check > span { gap: 4px; }
 
   /* ---- выпадающие списки ---- */
   /* Нативный select: клавиатура и доступность остаются браузерные. Свой вид самого списка — там, где есть base-select (Chrome 135+);
@@ -418,11 +497,14 @@
     .search { flex-basis: 100%; }
     /* Типы — одной прокручиваемой строкой: шесть фишек в два ряда съедали бы ленту */
     #types { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-    #composer { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-    #composer .wide, #composer .send, .result { grid-column: 1 / -1; }
-    #attachHint, .keys { display: none; } /* перетаскивать и жать Enter на телефоне нечем, а лента и так зажата формой */
+    #composer { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+    #composer label:nth-of-type(2) { grid-column: 2 / -1; }
+    #composer .wide { grid-column: 1 / 3; } /* третья колонка — скрепка */
+    #composer .send, .result { grid-column: 1 / -1; }
+    #attachHint, .keys { display: none; } /* перетаскивать и держать пробел на телефоне нечем, а лента и так зажата формой */
     .thumb { max-width: 100%; }
     .schedule form { grid-template-columns: 1fr; }
+    .access-head, .access-groups { grid-template-columns: 1fr; }
     .job-toggle, .job-actions .ghost { min-height: 32px; }
   }
 </style>
@@ -444,6 +526,7 @@
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
   <symbol id="i-edit" viewBox="0 0 24 24"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
 </svg>
 
 <header class="top">
@@ -452,6 +535,7 @@
   <button class="ghost" id="scheduleBtn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="schedule" title="Расписание: задачи по cron"><svg class="icon"><use href="#i-clock"/></svg>Расписание<span class="sched-badge" id="scheduleBadge" hidden>0</span></button>
   <button class="ghost" id="weightBtn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="weightPanel" title="Вес переписки этой директории: столько токенов агенты затянут в контекст, прочитав несжатое. Оценка: символы / 3"><svg class="icon"><use href="#i-squeeze"/></svg><span id="weightSum"></span></button>
   <button class="ghost" id="toggleAgents" type="button" aria-expanded="false" aria-controls="agents"><svg class="icon"><use href="#i-users"/></svg>Агенты</button>
+  <button class="ghost iconbtn" id="settingsBtn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="settings" aria-label="Настройки проекта" title="Настройки проекта"><svg class="icon"><use href="#i-gear"/></svg></button>
   <button class="ghost" id="lang" type="button"></button>
   <button class="ghost iconbtn" id="theme" type="button" aria-label="Сменить тему: светлая или тёмная" title="Сменить тему"><svg class="icon"><use href="#i-theme"/></svg></button>
 </header>
@@ -486,15 +570,16 @@
       <label><span class="label">Кому<small id="fromHint"></small></span><select id="to" required></select></label>
       <label><span class="label">Тип</span><select id="type"></select></label>
       <label class="wide"><span class="label">Сообщение</span><textarea id="text" placeholder="Шо сделать, где (файл:строка), зачем — агент читает без твоего контекста"></textarea></label>
+      <button class="ghost iconbtn" id="pickBtn" type="button" title="Приложить файл" aria-label="Приложить файл"><svg class="icon"><use href="#i-clip"/></svg></button>
       <button class="send" id="sendBtn" type="submit"><svg class="icon"><use href="#i-send"/></svg>Отправить</button>
       <div class="attach">
-        <button class="ghost" id="pickBtn" type="button"><svg class="icon"><use href="#i-clip"/></svg>Приложить файл</button>
         <input type="file" id="pick" multiple hidden>
         <span id="picked"></span>
-        <span id="attachHint">или перетащи сюда · скрин — Ctrl+V. Агент получит путь и откроет файл, только если он нужен</span>
+        <label class="btw-switch" id="btwWrap" hidden title="Агент сейчас работает. Обычное сообщение дождётся конца его работы, btw — дойдёт посреди хода, между вызовами инструментов"><input type="checkbox" id="btw"> btw — вбросить сейчас</label>
+        <label class="btw-switch" id="evolveWrap" hidden title="Когда агент сдаст задачу (DONE), он в той же сессии разберёт, как работал, и предложит правку своей роли: нужное допишет, лишнее уберёт. Черновик с diff откроется в редакторе роли — на диск пойдёт только по «Сохранить»"><input type="checkbox" id="evolve"> самоправка роли</label>
+        <span id="attachHint">Файл — скрепкой или перетащи сюда · скрин — Ctrl+V. Агент получит путь и откроет файл, только если он нужен</span>
       </div>
       <p class="result" id="result" role="status"></p>
-      <p class="keys">Enter — отправить · Shift+Enter — новая строка<span id="voiceHint" hidden> · удержи пробел — диктовка</span></p>
     </form>
   </main>
 </div>
@@ -543,12 +628,13 @@
 
     <label><span class="label">Кому</span><select id="schedTo"></select></label>
     <label id="schedModelLabel"><span class="label">Модель<small>по умолчанию — <span id="schedModelDefault"></span></small></span><input id="schedModel" type="text" placeholder="sonnet" autocomplete="off"></label>
-    <label><span class="label">Таймаут, мин</span><input id="schedTimeout" type="number" min="1" max="120" value="10"></label>
+    <label><span class="label">Таймаут, мин</span><input id="schedTimeout" type="number" min="1" max="120" value="60"></label>
     <label class="check"><input type="checkbox" id="schedCatchup"> догонять пропущенное (комп спал)</label>
+    <label class="check" id="schedRulesLabel"><input type="checkbox" id="schedRules"> глобальные правила<small>~/.claude/CLAUDE.md и rules/; +≈3.3к токенов на запуск</small></label>
     <label class="check"><input type="checkbox" id="schedEnabled" checked> включена</label>
 
     <label class="wide"><span class="label">Промпт</span><textarea id="schedPrompt" required></textarea></label>
-    <p class="hint">длиннее ~1700 символов уйдёт агенту вложением</p>
+    <p class="hint">длиннее лимита сообщения — уйдёт агенту вложением</p>
 
     <p class="sched-error" id="schedError" role="alert" hidden></p>
     <button class="squeeze danger" id="schedForceSave" type="button" hidden>Всё равно сохранить</button>
@@ -580,19 +666,47 @@
   <form id="agentForm">
     <label><span class="label">Имя<small>латиница, цифры, дефис</small></span><input id="agentName" type="text" maxlength="31" pattern="[a-z0-9][a-z0-9\-]{0,30}" required autocomplete="off" spellcheck="false"></label>
     <label><span class="label">Модель</span><select id="agentModel"></select></label>
-    <label class="wide"><span class="label">Описание<small>когда этого агента поднимать</small></span><input id="agentAbout" type="text" required autocomplete="off"></label>
+    <label class="wide"><span class="label">Описание<small>когда этого агента поднимать; пусто — первая строка роли</small></span><input id="agentAbout" type="text" autocomplete="off"></label>
     <label><span class="label">Effort<small>сколько модель думает</small></span><select id="agentEffort"></select></label>
     <label class="check" id="agentFastLabel"><input type="checkbox" id="agentFast"> fast mode<small>только Opus; при фоновом подъёме шиной</small></label>
+    <label class="check" id="agentRulesLabel"><input type="checkbox" id="agentRules"> глобальные правила<small>~/.claude/CLAUDE.md и rules/ при фоновом подъёме; +≈3.3к токенов</small></label>
+
+    <fieldset class="role-ai">
+      <legend class="label">Доступ</legend>
+      <div class="access-manual" id="accessManual" hidden>
+        <p class="role-ai-note">Доступ этой роли задан руками — белым списком tools. Галочки с ним не дружат: переведи роль на галочки или правь строку в файле.</p>
+        <code id="accessTools"></code>
+        <button class="ghost" id="accessConvert" type="button">Перевести на галочки</button>
+      </div>
+      <div class="access-head" id="accessHead">
+        <label><span class="label">Набор</span><select id="accessPreset"></select></label>
+        <p class="access-total" id="accessTotal" role="status"></p>
+      </div>
+      <div class="access-groups" id="accessGroups">
+        <label class="check"><input type="checkbox" data-access="read"><span>Файлы: чтение<small>Read, Glob, Grep</small></span><output data-delta="read"></output></label>
+        <label class="check"><input type="checkbox" data-access="edit"><span>Файлы: правка<small>Edit, Write, NotebookEdit</small></span><output data-delta="edit"></output></label>
+        <label class="check"><input type="checkbox" checked disabled><span>Bash<small>не снимается: без него агент не ответит по шине</small></span></label>
+        <label class="check"><input type="checkbox" data-access="web"><span>Веб<small>WebFetch, WebSearch</small></span><output data-delta="web"></output></label>
+        <label class="check"><input type="checkbox" data-access="agents"><span>Субагенты и workflow<small>Agent, Workflow, SendMessage, ListAgents</small></span><output data-delta="agents"></output></label>
+        <label class="check"><input type="checkbox" data-access="service"><span>Служебные<small>cron, задачи, worktree, монитор, пуши</small></span><output data-delta="service"></output></label>
+        <label class="check"><input type="checkbox" data-access="skills"><span>Скиллы<small>тул Skill: скиллы и команды плагинов</small></span><output data-delta="skills"></output></label>
+        <label class="check"><input type="checkbox" data-access="mcp"><span>MCP-серверы<small>все, в том числе будущие; ниже — по одному</small></span><output data-delta="mcp"></output></label>
+      </div>
+      <div class="access-servers" id="accessServers"></div>
+      <p class="role-ai-note" id="accessNote"></p>
+    </fieldset>
 
     <fieldset class="role-ai">
       <legend class="label">Переписать с ИИ</legend>
       <textarea id="agentAsk" aria-label="Шо поменять в роли" placeholder="Шо поменять: «добавь правило — перед правкой схемы спрашивать пользователя»"></textarea>
       <div class="role-ai-row">
         <button class="squeeze" id="agentRewrite" type="button"><svg class="icon"><use href="#i-squeeze"/></svg><span>Переписать с ИИ</span></button>
-        <button class="ghost" id="agentAiSwap" type="button" hidden>Показать, как было</button>
-        <button class="ghost" id="agentAiUndo" type="button" hidden>Вернуть как было</button>
+        <button class="ghost" id="agentAiUndo" type="button" hidden>Откатить</button>
+        <button class="ghost" id="agentReject" type="button" hidden>Отклонить правку агента</button>
+        <span class="keys" id="agentVoiceHint" hidden>удержи пробел — диктовка</span>
       </div>
       <p class="role-ai-note" id="agentAiNote" role="status">ИИ правит описание и роль прямо в форме. На диск ничего не уходит, пока не нажмёшь «Сохранить».</p>
+      <div class="role-diff" id="agentAiDiff" role="region" aria-label="Изменения ИИ" tabindex="0" hidden></div>
     </fieldset>
 
     <label class="wide"><span class="label">Роль<small>зона ответственности, правила работы</small></span><textarea id="agentBody" required spellcheck="false"></textarea></label>
@@ -605,6 +719,26 @@
       <button class="send" id="agentSave" type="submit">Сохранить</button>
       <button class="ghost" id="agentCancel" type="button">Отмена</button>
       <button class="squeeze danger push" id="agentDelete" type="button" hidden><svg class="icon"><use href="#i-trash"/></svg><span>Удалить агента</span></button>
+    </div>
+  </form>
+</section>
+
+<div class="sched-backdrop" id="settingsBackdrop" hidden></div>
+<section class="schedule" id="settings" hidden role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <div class="sched-head">
+    <b id="settingsTitle">Настройки проекта</b>
+    <button class="ghost iconbtn" id="settingsClose" type="button" aria-label="Закрыть панель настроек"><svg class="icon"><use href="#i-x"/></svg></button>
+  </div>
+  <p class="sched-daemon" id="settingsRoot" hidden></p>
+  <p class="sched-warn" id="settingsOff" hidden></p>
+  <form id="settingsForm">
+    <p class="hint">Настройки действуют только в этом проекте и переопределяют значения по умолчанию. Поля с пометкой «все проекты» — общие для всей шины.</p>
+    <div class="settings-list" id="settingsList"></div>
+    <p class="result" id="settingsStatus" role="status"></p>
+    <div class="sched-actions">
+      <button class="send" id="settingsSave" type="submit" disabled>Сохранить</button>
+      <button class="squeeze danger" id="settingsReset" type="button">Сбросить всё</button>
+      <button class="ghost" id="settingsClose2" type="button">Закрыть</button>
     </div>
   </form>
 </section>
@@ -685,7 +819,7 @@ function icon(name) {
   return svg;
 }
 
-const state = { agents: [], here: {}, types: [], maxFiles: 5, maxFileBytes: 10 * 1024 * 1024, messages: new Map(), summaries: new Map(), hues: new Map(), schedule: null };
+const state = { agents: [], here: {}, types: [], maxFiles: 10, maxFileBytes: 30 * 1024 * 1024, messages: new Map(), summaries: new Map(), hues: new Map(), schedule: null, access: { servers: [], weights: null } };
 let picked = []; // загруженные, но ещё не отправленные вложения: { id, name, size }
 let showCovered = false; // в режиме пары: раскрыты ли сообщения, которые уже ушли в сводку
 const filters = { agents: new Set(), types: new Set(), q: '' };
@@ -702,11 +836,22 @@ function selectAgents(keys) {
 
 // ---------- агенты ----------
 
-function agentButton(agent) {
+/** Несжатая переписка по агентам: один проход по ленте на перерисовку списка, а не по проходу на каждого агента. */
+function freshByAgent() {
+  const lists = new Map();
+  const push = (key, m) => (lists.get(key) || lists.set(key, []).get(key)).push(m);
+  for (const m of state.messages.values()) {
+    if (L.covered(m, state.summaries)) continue;
+    push(m.fromKey, m);
+    if (m.toKey !== m.fromKey) push(m.toKey, m);
+  }
+  return lists;
+}
+
+function agentButton(agent, fresh, me) {
   // Столько агент потянет в контекст, если прочтёт всю свою переписку: сигнал, в какой диалог зайти и сжать
-  const load = L.tokensOf(messageList().filter((m) => (m.fromKey === agent.key || m.toKey === agent.key) && !L.covered(m, state.summaries)));
+  const load = L.tokensOf(fresh.get(agent.key) || []);
   const status = L.agentStatus(agent, load);
-  const me = hereBoss();
   const replies = (me && me.repliesBy && me.repliesBy[agent.key]) || 0;
   const button = el('button', { type: 'button', className: `agent${agent.registered ? '' : ' off'}${agent.alive ? '' : ' gone'}${status.busy ? ' running' : ''}`, title: agent.description ? `${agent.description}\n${agent.where}` : agent.where },
     el('span', { className: 'wire' }),
@@ -737,14 +882,10 @@ function renderWeight() {
   $('weightTotal').textContent = total.dialogs
     ? tr('Эта директория: диалогов {dialogs} · несжатых сообщений {fresh}, ≈{tokens} токенов', { dialogs: total.dialogs, fresh: total.fresh, tokens: L.short(total.tokens) }) + (total.summary ? tr(' · сводки ≈{n}', { n: L.short(total.summary) }) : '') + tr('. Оценка: символы / 3. Клик по диалогу откроет его — там «Сжать диалог».')
     : tr('В этой директории переписки нет.');
-  const row = (r) => {
-    const button = el('button', { type: 'button', className: `weight-row${r.heavy ? ' heavy' : ''}`, title: tr('Открыть диалог'), onclick: () => { closeWeight(); selectAgents(r.keys); } },
-      el('span', { className: 'names' }, r.names[0], el('i', {}, '↔'), r.names[1]),
-      el('span', { className: 'tokens' }, tr('≈{n} ток.', { n: L.short(r.tokens) })),
-      el('span', { className: 'detail' }, tr('{total} сообщ. · несжатых {fresh}', { total: r.total, fresh: r.fresh }) + (r.summary ? tr(' · сводка ≈{n} ток.', { n: L.short(r.summary) }) : '') + (r.heavy ? tr(' · пора сжать') : '')));
-    button.dataset.pair = r.pair;
-    return button;
-  };
+  const row = (r) => el('button', { type: 'button', className: `weight-row${r.heavy ? ' heavy' : ''}`, title: tr('Открыть диалог'), onclick: () => { closeWeight(); selectAgents(r.keys); } },
+    el('span', { className: 'names' }, r.names[0], el('i', {}, '↔'), r.names[1]),
+    el('span', { className: 'tokens' }, tr('≈{n} ток.', { n: L.short(r.tokens) })),
+    el('span', { className: 'detail' }, tr('{total} сообщ. · несжатых {fresh}', { total: r.total, fresh: r.fresh }) + (r.summary ? tr(' · сводка ≈{n} ток.', { n: L.short(r.summary) }) : '') + (r.heavy ? tr(' · пора сжать') : '')));
   const here = report.rows.filter((r) => r.here);
   const others = report.rows.filter((r) => !r.here);
   $('weightList').replaceChildren(
@@ -805,6 +946,11 @@ function renderAgents() {
   const { here, globals, others } = L.groupAgents(state.agents);
   const aside = $('agents');
   const othersOpen = Boolean(aside.querySelector('details[open]')); // перерисовка не должна схлопывать раскрытую группу под курсором
+  // …и уводить фокус: кнопки пересобираются, а с клавиатуры после выбора агента идут дальше по списку
+  const focused = aside.contains(document.activeElement) ? document.activeElement.closest('.agent') : null;
+  const fresh = freshByAgent();
+  const me = hereBoss();
+  const button = (agent) => agentButton(agent, fresh, me);
   aside.replaceChildren();
   // Одного агента снимает повторный клик по нему; пару и группу — эта кнопка
   if (filters.agents.size >= 2) aside.append(el('button', { type: 'button', id: 'unpick', className: 'ghost unpick', onclick: () => selectAgents([]) }, icon('x'), tr('Снять выбор · {n}', { n: filters.agents.size })));
@@ -815,20 +961,26 @@ function renderAgents() {
   }
   // Не disabled: причина, почему агента не завести, понятнее из клика, чем из полупрозрачной кнопки
   hereGroup.append(el('button', { type: 'button', id: 'agentNew', className: 'squeeze agent-new', onclick: () => openAgentPanel(null) }, icon('plus'), el('span', {}, tr('Новый агент'))));
-  hereGroup.append(...here.map(agentButton));
+  hereGroup.append(...here.map(button));
   aside.append(hereGroup);
-  if (globals.length) aside.append(el('div', { className: 'group' }, el('span', { className: 'label' }, tr('Глобальные')), ...globals.map(agentButton)));
+  if (globals.length) aside.append(el('div', { className: 'group' }, el('span', { className: 'label' }, tr('Глобальные')), ...globals.map(button)));
   if (others.length) {
-    const details = el('details', {}, el('summary', { className: 'label' }, tr('Другие проекты · {n}', { n: others.length })), ...others.map(agentButton));
+    const details = el('details', {}, el('summary', { className: 'label' }, tr('Другие проекты · {n}', { n: others.length })), ...others.map(button));
     details.open = othersOpen || others.some((a) => filters.agents.has(a.key));
     aside.append(el('div', { className: 'group' }, details));
   }
   aside.append(el('p', { className: 'hint' }, tr('Клик — переписка одного агента. Двойной клик по второму или стрелка между именами в сообщении — их диалог; тогда «Сжать диалог» сжимает именно его.')));
+  if (focused) {
+    const again = [...aside.querySelectorAll('.agent')].find((node) => node.dataset.key === focused.dataset.key);
+    if (again) again.focus({ preventScroll: true });
+  }
   renderWeight();
 }
 
 // Агента завели первым сообщением: у обёртки ключ другой (qa → qa@каталог) — «Кому» и выбор в списке переезжают на него
 let pendingTo = '';
+let recipientsSign = ''; // состав и подписи «Кому», какими их собрали в прошлый раз
+let hadRecipients = null;
 
 function renderRecipients() {
   const select = $('to');
@@ -836,15 +988,21 @@ function renderRecipients() {
   const moved = pendingTo && can.some((a) => a.key === pendingTo && a.registered);
   const keep = moved ? pendingTo : select.value;
   if (moved) pendingTo = '';
-  const group = (label, list) => (list.length ? [el('optgroup', { label }, ...list.map((a) => el('option', { value: a.key }, a.orchestrator && a.here ? tr('{name} — оркестратор', { name: a.name }) : a.registered ? a.name : tr('{name} — заведётся в шину', { name: a.name }))))] : []);
-  setOptions(select, [
-    ...group(tr('Эта директория'), can.filter((a) => a.here)),
-    ...group(tr('Глобальные'), can.filter((a) => !a.root)),
-    ...group(tr('Другие проекты'), can.filter((a) => a.root && !a.here))]);
-  if (can.some((a) => a.key === keep)) select.value = keep;
+  const groups = [[tr('Эта директория'), can.filter((a) => a.here)], [tr('Глобальные'), can.filter((a) => !a.root)], [tr('Другие проекты'), can.filter((a) => a.root && !a.here)]]
+    .map(([label, list]) => [label, list.map((a) => [a.key, a.orchestrator && a.here ? tr('{name} — оркестратор', { name: a.name }) : a.registered ? a.name : tr('{name} — заведётся в шину', { name: a.name })])]);
+  // Событие agents летит на каждый счётчик непрочитанного: список пересобираем, только когда он правда другой — иначе в раскрытом
+  // списке из-под клавиатуры пропадала опция с фокусом
+  const sign = JSON.stringify(groups);
+  if (sign !== recipientsSign) {
+    setOptions(select, groups.filter(([, list]) => list.length).map(([label, list]) => el('optgroup', { label }, ...list.map(([value, text]) => el('option', { value }, text)))));
+    recipientsSign = sign;
+  }
+  if (can.some((a) => a.key === keep) && select.value !== keep) select.value = keep;
   renderFrom();
   $('sendBtn').disabled = !can.length;
-  if (!can.length) say(tr('Писать пока некому: в шине нет агентов. Подключи проект — bus.js init <имя>.'), true);
+  // Один раз, а не на каждое событие: иначе строка затирала бы любой другой статус
+  if (!can.length && hadRecipients !== false) say(tr('Писать пока некому: в шине нет агентов. Подключи проект — bus.js init <имя>.'), true);
+  hadRecipients = Boolean(can.length);
 }
 
 /** Оркестратор каталога UI: от его имени пользователь пишет, ему агенты и отвечают. */
@@ -854,6 +1012,11 @@ const hereBoss = () => state.agents.find((a) => a.orchestrator && a.here);
 function renderFrom() {
   const to = state.agents.find((a) => a.key === $('to').value);
   $('fromHint').textContent = to && to.from ? tr('от имени {from}', { from: to.from }) : '';
+  // btw есть смысл предлагать, только пока получатель работает; закончил — галочка снимается, сообщение уйдёт обычным
+  $('btwWrap').hidden = !L.canBtw(to);
+  if ($('btwWrap').hidden) $('btw').checked = false;
+  $('evolveWrap').hidden = !L.canEvolve(to);
+  if ($('evolveWrap').hidden) $('evolve').checked = false;
 }
 
 function renderMine() {
@@ -934,8 +1097,30 @@ function togglePick(id) {
   renderMarked();
 }
 
-function messageNode(m, { fresh, unread, covered, cont }) {
-  const toMe = Boolean(hereBoss() && m.toKey === hereBoss().key);
+/** Листья идут через hl() — подсветка поиска живёт и внутри разметки. Узлы строит el(): HTML из текста сообщения не исполняется. */
+const mdInline = (nodes) => nodes.flatMap((n) =>
+  n.kind === 'code' ? [el('code', {}, ...hl(n.text))]
+  : n.kind === 'bold' ? [el('strong', {}, ...hl(n.text))]
+  : n.kind === 'italic' ? [el('em', {}, ...hl(n.text))]
+  : n.kind === 'link' ? [el('a', { href: n.href, target: '_blank', rel: 'noopener noreferrer' }, ...hl(n.text))]
+  : hl(n.text));
+
+/**
+ * Текст сообщения с markdown-разметкой (L.markdown). Сообщение без разметки — один абзац, как и раньше.
+ * Разбор кладём на само сообщение: лента пересобирается на каждое событие, а текст у записи с тем же объектом не меняется.
+ */
+function textNode(m) {
+  return el('div', { className: 'text' }, ...(m.md || (m.md = L.markdown(m.text))).map((b) =>
+    b.kind === 'heading' ? el(`h${Math.min(b.level, 3) + 2}`, {}, ...mdInline(b.inline))
+    : b.kind === 'code' ? el('pre', {}, el('code', {}, ...hl(b.text)))
+    : b.kind === 'quote' ? el('blockquote', {}, ...mdInline(b.inline))
+    : b.kind === 'hr' ? el('hr')
+    : b.kind === 'list' ? el('ul', {}, ...b.items.map((item) => el('li', { style: `--depth: ${item.depth}` }, el('span', { className: 'marker' }, item.marker), el('span', {}, ...mdInline(item.inline)))))
+    : el('p', {}, ...mdInline(b.inline))));
+}
+
+function messageNode(m, { fresh, unread, covered, cont, me }) {
+  const toMe = Boolean(me && m.toKey === me.key);
   const pick = el('button', { type: 'button', className: 'pick', title: tr('Выделить, шобы удалить'), ariaLabel: tr('Выделить сообщение') }, icon('check'));
   const node = el('li', { className: `msg${fresh ? ' fresh' : ''}${toMe ? ' to-me' : ''}${unread ? ' unread' : ''}${covered ? ' covered' : ''}${cont ? ' cont' : ''}` },
     el('span', { className: 'node' }),
@@ -943,10 +1128,14 @@ function messageNode(m, { fresh, unread, covered, cont }) {
       whoButton(m.from, m.fromKey), pairButton(m), whoButton(m.to, m.toKey),
       el('span', { className: `type ${m.type}`, title: typeNote(m.type) }, m.type),
       m.from === 'schedule' ? el('span', { className: 'sched-tag', title: tr('Отчёт запуска по расписанию') }, tr('по расписанию')) : '',
+      m.btw ? el('span', { className: 'btw-tag', title: tr('Вброшено агенту посреди работы, в inbox не лежало') }, 'btw') : '',
+      m.evolve ? el('span', { className: 'btw-tag', title: tr('После DONE агент разберёт свою работу и предложит правку роли') }, tr('самоправка')) : '',
       unread ? el('span', { className: 'new' }, tr('новое')) : '',
       el('time', { title: m.t }, m.t.slice(11, 16)), pick),
-    el('p', { className: 'text' }, ...hl(m.text)));
+    textNode(m));
   if (m.files.length) node.append(el('div', { className: 'files' }, ...m.files.map((f, n) => fileNode(m, f, n))));
+  const mark = L.runMark(m, state.agents);
+  if (mark) node.append(runMarkNode(mark));
   // Клик по карточке выделяет её; кнопки и ссылки внутри живут своей жизнью, выделение текста мышью — не клик
   node.addEventListener('click', (e) => {
     if (e.target.closest('button, a') && !e.target.closest('.pick')) return;
@@ -957,6 +1146,34 @@ function messageNode(m, { fresh, unread, covered, cont }) {
   node.style.setProperty('--h', hueOf(m.from));
   return node;
 }
+
+/** Отметка запуска под сообщением: часы тикают сами (tickClocks), кнопка — стоп работающему или продолжение остановленному. */
+function runMarkNode(mark) {
+  const node = el('div', { className: `run-mark ${mark.tone}`, title: mark.title }, el('span', {}, mark.text));
+  if (mark.since) {
+    const clock = el('span', { className: 'clock' }, L.elapsed(Date.now() - mark.since));
+    clock.dataset.since = mark.since;
+    node.append(clock);
+  }
+  if (mark.action) {
+    const button = el('button', { type: 'button', className: 'ghost' }, mark.action === 'stop' ? tr('Остановить') : tr('Продолжить'));
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        const note = L.wakeActionNote(mark.action, mark.name, await post(`/api/${mark.action}`, { key: mark.key }));
+        say(note.text, note.bad);
+      } catch (err) {
+        say(err.message, true);
+        button.disabled = false;
+      }
+    });
+    node.append(button);
+  }
+  return node;
+}
+
+const tickClocks = () => document.querySelectorAll('.run-mark .clock').forEach((c) => (c.textContent = L.elapsed(Date.now() - Number(c.dataset.since))));
+setInterval(tickClocks, 1000);
 
 function fileNode(m, f, n) {
   if (f.gone) return el('span', { className: 'filechip gone', title: tr('Вложение вычищено командой files prune') }, f.name, el('small', {}, tr('файл удалён')));
@@ -993,7 +1210,7 @@ function renderFeed(freshIds = new Set(), jump = true) {
   feed.replaceChildren(...items.map((item) =>
     item.kind === 'day' ? el('li', { className: 'day' }, dayLabel(item.day))
     : item.kind === 'summary' ? summaryNode(item)
-    : messageNode(item.m, { fresh: freshIds.has(item.m.id), unread: unread.has(item.m.id), covered: item.covered, cont: item.cont })));
+    : messageNode(item.m, { fresh: freshIds.has(item.m.id), unread: unread.has(item.m.id), covered: item.covered, cont: item.cont, me })));
   // Выделенное, которого в ленте больше не видно (сменили фильтр, удалили), под удаление вслепую не идёт
   const visible = new Set(items.filter((item) => item.m).map((item) => item.m.id));
   for (const id of [...marked]) if (!visible.has(id)) marked.delete(id);
@@ -1022,6 +1239,8 @@ function renderPair(matched) {
   $('pair').hidden = !pair;
   if (pair !== renderPair.last) $('pairNote').textContent = ''; // итог прошлого сжатия относится к другой паре
   renderPair.last = pair;
+  // Подпись кнопки раз уже ставил код («Сжимаю…») — статичный узел выпал из документа, и на смену языка её переводим сами
+  if (!$('squeeze').dataset.busy) $('squeeze').lastElementChild.textContent = tr('Сжать диалог');
   const wipe = L.clearTarget(filters, state.agents);
   $('clear').lastElementChild.textContent = wipe.mode === 'all' ? tr('Очистить всё') : tr('Очистить диалог');
   $('clear').title = wipe.mode === 'all' ? tr('Удалить весь журнал этой директории. Вернуть нельзя. Выбери агента — очистится только твой диалог с ним')
@@ -1035,12 +1254,12 @@ function renderPair(matched) {
   const names = [...filters.agents].map((key) => (state.agents.find((a) => a.key === key) || { name: key.split('@')[0] }).name);
   const info = L.pairInfo(matched, state.summaries);
   $('pairNames').replaceChildren(names[0], el('i', {}, '↔'), names[1]);
-  // Вызов модели сам стоит ≈3–4к токенов haiku (замер): на коротком диалоге сводка дороже, чем десяток его чтений
-  $('pairWeight').textContent = tr('{total} сообщ. · агент прочтёт {tail}, ≈{weight} токенов', { total: info.total, tail: info.tail, weight: L.short(info.weight) }) + (info.early ? tr(' · сжимать рано: сама сводка стоит ≈3–4к токенов haiku') : '');
+  // Вызов модели сам стоит ≈3–4к токенов (замер на haiku): на коротком диалоге сводка дороже, чем десяток его чтений
+  $('pairWeight').textContent = tr('{total} сообщ. · агент прочтёт {tail}, ≈{weight} токенов', { total: info.total, tail: info.tail, weight: L.short(info.weight) }) + (info.early ? tr(' · сжимать рано: сама сводка стоит ≈3–4к токенов') : '');
   $('pairWeight').className = `weight${info.heavy ? ' heavy' : ''}`;
   if (!$('squeeze').dataset.busy) {
     $('squeeze').disabled = !info.canSqueeze;
-    $('squeeze').title = info.canSqueeze ? tr('claude -p на haiku сожмёт эти сообщения в сводку; исходные останутся в журнале') : tr('Сжимать нечего: несжатых сообщений меньше двух');
+    $('squeeze').title = info.canSqueeze ? tr('claude -p сожмёт эти сообщения в сводку; исходные останутся в журнале') : tr('Сжимать нечего: несжатых сообщений меньше двух');
   }
 }
 
@@ -1076,45 +1295,63 @@ function renderTypes(relabel = false) {
 
 // ---------- данные ----------
 
-function applyAgents(snapshot) {
+/** feedNext — следом придёт лента (load): список агентов с весом переписки рисуем один раз, уже по ней. */
+function applyAgents(snapshot, feedNext = false) {
   state.agents = snapshot.agents;
   state.here = snapshot.here;
   state.hues = L.assignHues(state.agents);
   $('project').replaceChildren(snapshot.here.project || tr('каталог не в шине'), ...(snapshot.here.project ? [el('small', {}, tr('оркестратор'))] : []));
   $('cwd').textContent = `‎${snapshot.here.cwd}`; // LRM: в rtl-обрезке путь остаётся слева направо
   $('cwd').title = snapshot.here.cwd;
-  renderAgents();
+  if (!feedNext) renderAgents();
   renderRecipients();
   renderMine();
 }
 
+const KEEP_MESSAGES = 5000; // как у сервера (ui.js): вкладка, открытая неделями, не копит ленту без конца
+let lastId = ''; // старший id в ленте: сообщения приходят по порядку, пересортировка нужна, только когда пришло более раннее
+
 function applyMessages(list, fresh, jump = false) {
-  for (const m of list) state.messages.set(m.id, { ...m, files: m.files || [] });
-  state.messages = new Map([...state.messages].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  let resort = false;
+  for (const m of list) {
+    if (m.id < lastId && !state.messages.has(m.id)) resort = true; // знакомый id остаётся на своём месте в Map
+    if (m.id > lastId) lastId = m.id;
+    state.messages.set(m.id, { ...m, files: m.files || [] });
+  }
+  if (resort) state.messages = new Map([...state.messages].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  let extra = state.messages.size - KEEP_MESSAGES;
+  for (const id of state.messages.keys()) {
+    if (extra-- <= 0) break;
+    state.messages.delete(id);
+  }
   renderFeed(fresh ? new Set(list.map((m) => m.id)) : new Set(), jump);
 }
 
 let arrived = null; // сообщения, пришедшие по SSE за время запроса /api/state
+let loadSeq = 0;
 
 async function load() {
+  const seq = ++loadSeq;
   const late = (arrived = []);
   let data;
   try {
-    data = await (await fetch('/api/state', { headers: langHeader() })).json();
+    data = await getJson('/api/state');
   } finally {
     if (arrived === late) arrived = null;
   }
+  if (seq !== loadSeq) return; // следом ушёл запрос свежее (частые реконнекты SSE): поздний ответ старого затёр бы его ленту
   // Сервер перезапустили или страницу поправили: у этой вкладки старый код и мёртвый токен. Недописанное сообщение не теряем
   if (data.page && data.page !== PAGE) {
     if (!$('text').value.trim() && !picked.length) return location.reload();
     say(tr('Шина обновилась, а эта вкладка — старая: отправка из неё не пройдёт. Скопируй текст и обнови страницу (F5).'), true);
   }
-  Object.assign(state, { types: data.types, maxFiles: data.maxFiles || state.maxFiles, maxFileBytes: data.maxFileBytes || state.maxFileBytes });
+  Object.assign(state, { access: data.access || state.access, types: data.types, maxFiles: data.maxFiles || state.maxFiles, maxFileBytes: data.maxFileBytes || state.maxFileBytes });
+  L.setThresholds({ showLoadFrom: data.showLoadFrom, heavyTokens: data.heavyTokens }); // настройки проекта — пороги веса переписки, дефолт остаётся, пока не пришло число
   renderTypes();
-  applyAgents(data);
+  applyAgents(data, true);
   // Ленту заменяем, а не доливаем: удалённое из журнала иначе жило бы во вкладке до F5. Пришедшее по SSE, пока шёл запрос, кладём поверх
   replaceFeed(data, late);
-  renderAgents(); // вес переписки у агентов в списке
+  renderAgents(); // после ленты: вес переписки у агентов в списке считается по ней
   if (data.error) say(data.error, true);
 }
 
@@ -1123,6 +1360,7 @@ let feedLoaded = false; // в конец ленту ставит только п
 function replaceFeed(data, late = []) {
   state.summaries = new Map((data.summaries || []).map((x) => [x.pair, x]));
   state.messages = new Map();
+  lastId = '';
   applyMessages([...(data.messages || []), ...late], false, !feedLoaded);
   feedLoaded = true;
 }
@@ -1172,8 +1410,9 @@ function connect() {
 
 const AGENT_MODELS = [['', N('главная модель — дорого')], ['sonnet', N('sonnet — рутинный код')], ['haiku', N('haiku — механика')], ['opus', 'opus']];
 const AGENT_EFFORTS = [['', N('по умолчанию у модели')], ['low', N('low — быстро и дёшево')], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', N('max — дольше и дороже')]];
-// agent: null — форма нового; before — описание и роль до правки ИИ, shown — шо сейчас в полях: 'new' или 'old'
-const agentPanel = { open: false, agent: null, busy: false, before: null, after: null, shown: 'new', opener: null };
+// agent: null — форма нового; before — описание и роль до правки ИИ: с ними сравнивает diff, к ним возвращает «Откатить»
+// access: off — снятые группы, serversOff — снятые по одному MCP-серверы, manual — роль с рукописной tools (галочки спрятаны), convert — нажали «Перевести на галочки»
+const agentPanel = { open: false, agent: null, busy: false, before: null, opener: null, access: { off: [], serversOff: [], servers: [], extra: [], manual: false, convert: false } };
 
 function agentError(text) {
   $('agentError').textContent = text || '';
@@ -1195,7 +1434,15 @@ function fillAgentForm(role) {
   setOptions($('agentEffort'), efforts.map(([value, label]) => el('option', { value }, tr(label))));
   $('agentEffort').value = effort;
   $('agentFast').checked = !fresh && Boolean(role.fast);
+  $('agentRules').checked = !fresh && Boolean(role.rules);
   $('agentBody').value = fresh ? '' : role.body;
+  const manual = !fresh && Boolean(role.toolsLine);
+  const servers = fresh ? state.access.servers : role.servers || [];
+  const given = L.accessFromDenied(fresh ? [] : role.denied);
+  // Сервер, снятый в роли, но уже пропавший из конфига, показываем тоже — иначе его галочка молча потерялась бы
+  agentPanel.access = { ...given, servers: [...new Set([...servers, ...given.serversOff])], extra: fresh ? [] : role.extra || [], manual, convert: false };
+  $('accessTools').textContent = manual ? `tools: ${role.toolsLine}` : '';
+  renderAccess();
   $('agentAsk').value = '';
   $('agentAsk').placeholder = fresh ? tr('Опиши агента: «фронтенд на Vue, следит за типами API, про бэкенд спрашивает диму» — ИИ напишет роль') : tr('Шо поменять: «добавь правило — перед правкой схемы спрашивать пользователя»');
   $('agentBusWrap').hidden = fresh || !role.busBlock;
@@ -1207,17 +1454,109 @@ function fillAgentForm(role) {
   $('agentDelete').hidden = fresh || !role.deletable;
   $('agentNoDelete').hidden = fresh || role.deletable;
   $('agentSave').textContent = fresh ? tr('Создать') : tr('Сохранить');
+  $('agentRewrite').lastElementChild.textContent = tr('Переписать с ИИ'); // после часов «Переписываю…» статичный узел подписи выпал — язык ставим сами
   agentError('');
   resetAgentAi();
+  $('agentReject').hidden = true;
+  if (!fresh && role.proposal) showProposal(role);
 }
+
+/** Черновик самоправки ложится в форму так же, как ответ «Переписать с ИИ»: diff от роли на диске, на диск — только по «Сохранить». */
+function showProposal(role) {
+  const p = role.proposal;
+  agentPanel.before = { description: role.description, body: role.body };
+  $('agentAbout').value = p.description || role.description;
+  $('agentBody').value = p.body;
+  $('agentAiUndo').hidden = false;
+  $('agentReject').hidden = false;
+  renderAgentDiff();
+  const stale = p.stale ? ` ${tr('Роль на диске с тех пор правили — diff покажет и эти правки как откат.')}` : '';
+  agentAiNote(`${tr('Агент предлагает правку своей роли ({at}).', { at: L.clock(p.at) })}${p.note ? ` ${tr('Его пояснение:')} ${p.note}` : ''} ${tr('Проверь diff и жми «Сохранить» — до этого на диске ничего не поменялось.')}${stale}`);
+}
+
+/** Секция «Доступ»: галочки и подписи — из agentPanel.access, цифры — из таблицы замеров (state.access.weights). */
+function renderAccess() {
+  const a = agentPanel.access;
+  const hidden = a.manual && !a.convert;
+  $('accessManual').hidden = !a.manual || a.convert;
+  for (const id of ['accessHead', 'accessGroups', 'accessServers']) $(id).hidden = hidden;
+  const weights = state.access.weights;
+  const weight = L.accessWeight(weights, a.off);
+  for (const box of $('accessGroups').querySelectorAll('input[data-access]')) {
+    const key = box.dataset.access;
+    const on = !a.off.includes(key);
+    box.checked = on;
+    const out = $('accessGroups').querySelector(`output[data-delta="${key}"]`);
+    const delta = weight ? weight.delta[key] : undefined;
+    out.textContent = typeof delta === 'number' ? tr(on ? N('снять: {d}') : N('вернуть: {d}'), { d: L.accessDeltaLabel(delta) }) : '';
+    out.className = on && delta >= 100 ? 'worse' : ''; // снять и стало дороже — так бывает у скиллов в одиночку
+  }
+  const presets = [...L.ACCESS_PRESETS, { key: 'custom', label: N('Свой набор'), off: null }];
+  setOptions($('accessPreset'), presets.map((preset) => {
+    const w = preset.off && L.accessWeight(weights, preset.off);
+    const option = el('option', { value: preset.key }, w ? `${tr(preset.label)} · ≈${L.short(w.total)}` : tr(preset.label));
+    option.hidden = preset.key === 'custom' && L.accessPreset(a.off, a.serversOff) !== 'custom';
+    return option;
+  }));
+  $('accessPreset').value = L.accessPreset(a.off, a.serversOff);
+  const mcpOff = a.off.includes('mcp');
+  $('accessServers').replaceChildren(...a.servers.map((name) => {
+    const box = el('input', { type: 'checkbox', checked: !mcpOff && !a.serversOff.includes(name), disabled: mcpOff });
+    box.dataset.server = name;
+    return el('label', { className: 'check' }, box, name);
+  }));
+  $('accessTotal').replaceChildren(...(hidden ? [] : !weight ? [tr('Замера токенов нет: node access-measure.js в каталоге скриптов шины.')]
+    : [el('b', {}, `≈${L.short(weight.total)}`), ` ${weight.saved >= 100 ? tr('токенов на подъём · экономия ≈{saved}', { saved: L.short(weight.saved) }) : tr('токенов на подъём')}`]));
+  const notes = [];
+  if (weights && !hidden) notes.push(tr('Замер {date} на {model}, Claude Code {cli}: первый ход фонового подъёма, на твоей роли и переписке будет больше. MCP и веб грузятся лениво — их галочки про доступ, а не про токены.', { date: weights.measured, model: weights.model, cli: weights.cli || '?' }));
+  if (a.extra.length && !hidden) notes.push(tr('Дописано руками в disallowedTools и сохранится: {list}.', { list: a.extra.join(', ') }));
+  if (a.convert) notes.push(tr('Строка tools уйдёт из роли по «Сохранить»; дальше доступ ведут галочки.'));
+  $('accessNote').textContent = notes.join(' ');
+  $('accessNote').hidden = !notes.length;
+}
+
+$('accessGroups').addEventListener('change', (e) => {
+  const key = e.target.dataset.access;
+  if (!key) return;
+  const a = agentPanel.access;
+  a.off = e.target.checked ? a.off.filter((k) => k !== key) : [...a.off, key];
+  renderAccess();
+  $('accessGroups').querySelector(`input[data-access="${key}"]`).focus(); // перерисовка не должна уводить фокус с клавиатуры
+});
+
+$('accessServers').addEventListener('change', (e) => {
+  const name = e.target.dataset.server;
+  if (!name) return;
+  const a = agentPanel.access;
+  a.serversOff = e.target.checked ? a.serversOff.filter((n) => n !== name) : [...a.serversOff, name];
+  renderAccess();
+  const box = [...$('accessServers').querySelectorAll('input')].find((input) => input.dataset.server === name);
+  if (box) box.focus();
+});
+
+$('accessPreset').addEventListener('change', () => {
+  const preset = L.ACCESS_PRESETS.find((p) => p.key === $('accessPreset').value);
+  if (!preset) return;
+  Object.assign(agentPanel.access, { off: [...preset.off], serversOff: [] });
+  renderAccess();
+});
+
+$('accessConvert').addEventListener('click', () => {
+  agentPanel.access.convert = true;
+  renderAccess();
+  $('accessPreset').focus();
+});
 
 function resetAgentAi(note = tr('ИИ правит описание и роль прямо в форме. На диск ничего не уходит, пока не нажмёшь «Сохранить».'), bad = false) {
   agentPanel.before = null;
-  agentPanel.after = null;
-  agentPanel.shown = 'new';
-  $('agentAiSwap').hidden = true;
   $('agentAiUndo').hidden = true;
-  $('agentAiNote').textContent = note;
+  $('agentAiDiff').hidden = true;
+  $('agentAiDiff').replaceChildren();
+  agentAiNote(note, bad);
+}
+
+function agentAiNote(text, bad = false) {
+  $('agentAiNote').textContent = text;
   $('agentAiNote').className = `role-ai-note${bad ? ' bad' : ''}`;
 }
 
@@ -1226,9 +1565,7 @@ async function openAgentPanel(agent) {
   let role = null;
   if (agent) {
     try {
-      const res = await fetch(`/api/agent?key=${encodeURIComponent(agent.key)}&k=${TOKEN}`, { headers: langHeader() });
-      role = await res.json();
-      if (!res.ok) throw new Error(role.error || tr('Сервер ответил {status}.', { status: res.status }));
+      role = await getJson(`/api/agent?key=${encodeURIComponent(agent.key)}&k=${TOKEN}`);
     } catch (err) {
       return say(tr('Роль не открылась: {why}', { why: err.message }), true);
     }
@@ -1265,7 +1602,10 @@ $('agentForm').addEventListener('submit', async (e) => {
   const fresh = !agentPanel.agent;
   const name = $('agentName').value.trim();
   if (fresh && !L.validAgentName(name)) return agentError(tr('Имя: латиница в нижнем регистре, цифры и дефис, до 31 символа; files, scheduler и schedule заняты шиной.'));
-  const fields = { description: $('agentAbout').value, model: $('agentModel').value, effort: $('agentEffort').value, fast: $('agentFast').checked, body: $('agentBody').value };
+  const fields = { description: $('agentAbout').value, model: $('agentModel').value, effort: $('agentEffort').value, fast: $('agentFast').checked, rules: $('agentRules').checked, body: $('agentBody').value };
+  // Роль с рукописной tools, которую на галочки не переводили, доступ не шлёт — сервер строку не тронет
+  const access = agentPanel.access;
+  if (!access.manual || access.convert) Object.assign(fields, { denied: L.accessDenied(access.off, access.serversOff) }, access.convert ? { convertTools: true } : {});
   // Сервер откажет так же; здесь — шобы причина встала сразу, без запроса
   if (fields.fast && fields.model && !/opus|inherit/i.test(fields.model)) return agentError(tr('Fast mode есть только на Opus. Поставь модель opus или сними галочку.'));
   $('agentSave').disabled = true;
@@ -1301,20 +1641,33 @@ $('agentDelete').addEventListener('click', async () => {
   }
 });
 
-function showAgentDraft(which) {
-  const draft = which === 'old' ? agentPanel.before : agentPanel.after;
-  agentPanel.shown = which;
-  $('agentAbout').value = draft.description;
-  $('agentBody').value = draft.body;
-  $('agentAiSwap').textContent = which === 'old' ? tr('Показать, как стало') : tr('Показать, как было');
+/** Diff «до правки ИИ → шо сейчас в полях»: правки руками поверх ответа ИИ попадают в него же. */
+function renderAgentDiff() {
+  const box = $('agentAiDiff');
+  if (!agentPanel.before) return;
+  const sections = [[tr('описание'), L.lineDiff(agentPanel.before.description, $('agentAbout').value)], [tr('роль'), L.lineDiff(agentPanel.before.body, $('agentBody').value)]].filter(([, diff]) => diff.hunks.length);
+  const line = (op) => {
+    const text = op.parts ? op.parts.map((part) => (part.changed ? el('mark', {}, part.text) : part.text)) : [op.text];
+    const row = el('div', { className: `role-diff-line ${op.kind}` }, el('span', {}, ...text));
+    row.dataset.sign = op.kind === 'add' ? '+' : op.kind === 'del' ? '−' : ' ';
+    return row;
+  };
+  box.replaceChildren(...sections.flatMap(([title, diff]) => [
+    el('div', { className: 'role-diff-head' }, `${title} · +${diff.added} −${diff.removed}`),
+    ...diff.hunks.flatMap((hunk, i) => [...(i ? [el('div', { className: 'role-diff-gap' }, '@@')] : []), ...hunk.map(line)]),
+  ]));
+  if (!sections.length) box.append(el('div', { className: 'role-diff-gap' }, tr('Изменений нет: в полях то же, шо было до правки ИИ.')));
+  box.hidden = false;
 }
+$('agentAbout').addEventListener('input', renderAgentDiff);
+$('agentBody').addEventListener('input', renderAgentDiff);
 
 $('agentRewrite').addEventListener('click', async () => {
   if (agentPanel.busy) return;
   const instruction = $('agentAsk').value.trim();
   if (!instruction) {
     $('agentAsk').focus();
-    return resetAgentAi(tr('Напиши, шо поменять в роли, — и жми.'), true);
+    return agentAiNote(tr('Напиши, шо поменять в роли, — и жми.'), true); // diff и «Откатить» прошлой правки остаются
   }
   // Просьбы идут поверх того, шо сейчас в форме, а не файла на диске: так их можно слать одну за другой
   const before = { description: $('agentAbout').value, body: $('agentBody').value };
@@ -1322,21 +1675,25 @@ $('agentRewrite').addEventListener('click', async () => {
   agentPanel.busy = true;
   button.disabled = true;
   $('agentSave').disabled = true;
-  button.lastElementChild.textContent = tr('Переписываю…');
+  // Модель думает до трёх минут — часы на кнопке показывают, шо запрос жив
+  const since = Date.now();
+  const spent = () => L.elapsed(Date.now() - since);
+  const tick = () => (button.lastElementChild.textContent = `${tr('Переписываю…')} ${spent()}`);
+  tick();
+  const clock = setInterval(tick, 1000);
   try {
     const r = await post('/api/agent/rewrite', { key: agentPanel.agent ? agentPanel.agent.key : null, name: $('agentName').value.trim() || 'новый агент', instruction, ...before });
     agentPanel.before = before;
-    agentPanel.after = { description: r.description || before.description, body: r.body };
-    showAgentDraft('new');
-    $('agentAiSwap').hidden = false;
+    $('agentAbout').value = r.description || before.description;
+    $('agentBody').value = r.body;
     $('agentAiUndo').hidden = false;
-    $('agentAiNote').textContent = tr('ИИ переписал · ≈{n} ток. Проверь текст и жми «Сохранить» — до этого на диске ничего не поменялось.', { n: L.short(r.tokens) });
-    $('agentAiNote').className = 'role-ai-note';
+    renderAgentDiff();
+    agentAiNote(tr('ИИ переписал за {time} · ≈{n} ток. Проверь изменения и жми «Сохранить» — до этого на диске ничего не поменялось.', { time: spent(), n: L.short(r.tokens) }));
     $('agentAsk').value = '';
   } catch (err) {
-    $('agentAiNote').textContent = err.message;
-    $('agentAiNote').className = 'role-ai-note bad';
+    agentAiNote(`${err.message} ${tr('Ушло времени: {time}.', { time: spent() })}`, true);
   } finally {
+    clearInterval(clock);
     agentPanel.busy = false;
     button.disabled = false;
     $('agentSave').disabled = false;
@@ -1344,15 +1701,29 @@ $('agentRewrite').addEventListener('click', async () => {
   }
 });
 
-$('agentAiSwap').addEventListener('click', () => {
-  // Правки руками поверх ответа ИИ не теряем: перед переключением запоминаем то, шо в полях
-  agentPanel[agentPanel.shown === 'new' ? 'after' : 'before'] = { description: $('agentAbout').value, body: $('agentBody').value };
-  showAgentDraft(agentPanel.shown === 'new' ? 'old' : 'new');
+$('agentAiUndo').addEventListener('click', () => {
+  $('agentAbout').value = agentPanel.before.description;
+  $('agentBody').value = agentPanel.before.body;
+  // Черновик агента при этом остаётся в его ящике: откроешь роль снова — он опять ляжет в форму. Убирает его «Отклонить правку агента»
+  resetAgentAi($('agentReject').hidden ? tr('Откатил. ИИ-правка отменена.') : tr('Откатил форму к роли на диске. Черновик агента остался — убрать его совсем: «Отклонить правку агента».'));
 });
 
-$('agentAiUndo').addEventListener('click', () => {
-  showAgentDraft('old');
-  resetAgentAi(tr('Вернул как было. ИИ-правка отменена.'));
+$('agentReject').addEventListener('click', async () => {
+  if (agentPanel.busy || !agentPanel.agent) return;
+  agentPanel.busy = true;
+  try {
+    await post('/api/agent/reject', { key: agentPanel.agent.key });
+    if (agentPanel.before) {
+      $('agentAbout').value = agentPanel.before.description;
+      $('agentBody').value = agentPanel.before.body;
+    }
+    $('agentReject').hidden = true;
+    resetAgentAi(tr('Правка агента отклонена: черновик удалён, роль на диске прежняя.'));
+  } catch (err) {
+    agentAiNote(err.message, true);
+  } finally {
+    agentPanel.busy = false;
+  }
 });
 
 // ---------- отправка ----------
@@ -1362,17 +1733,25 @@ function say(text, bad = false) {
   $('result').className = `result${bad ? ' bad' : ''}`;
 }
 
-async function post(path, body) {
-  const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Bus-Token': TOKEN, ...langHeader() }, body: JSON.stringify(body) });
+/** Ответ сервера → данные; не 2xx — исключение с его текстом (field — поле формы настроек, к которому относится отказ). */
+async function answer(res) {
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || tr('Сервер ответил {status}.', { status: res.status }));
-  return data;
+  if (res.ok) return data;
+  throw Object.assign(new Error(data.error || tr('Сервер ответил {status}.', { status: res.status })), { field: data.field });
+}
+
+async function getJson(path) {
+  return answer(await fetch(path, { headers: langHeader() }));
+}
+
+async function post(path, body) {
+  return answer(await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Bus-Token': TOKEN, ...langHeader() }, body: JSON.stringify(body) }));
 }
 
 $('composer').addEventListener('submit', async (e) => {
   e.preventDefault();
   if ($('sendBtn').disabled) return; // requestSubmit по Enter выключенную кнопку не видит: второй Enter, пока идёт отправка, слал дубль
-  const body = { to: $('to').value, type: $('type').value, text: $('text').value, files: picked.map((f) => f.id) };
+  const body = { to: $('to').value, type: $('type').value, text: $('text').value, files: picked.map((f) => f.id), btw: $('btw').checked, evolve: $('evolve').checked };
   if (!body.text.trim() && !body.files.length) return say(tr('Пустое сообщение не отправляю.'), true);
   if (uploading) return say(tr('Файл ещё грузится — секунду.'), true);
   $('sendBtn').disabled = true;
@@ -1387,6 +1766,8 @@ $('composer').addEventListener('submit', async (e) => {
       renderFeed();
     }
     $('text').value = '';
+    $('btw').checked = false;
+    $('evolve').checked = false; // галочка — на одно сообщение: самоправка стоит отдельного запуска
     picked = [];
     renderPicked();
   } catch (err) {
@@ -1423,9 +1804,7 @@ async function addFiles(list, pasted = false) {
     uploading++;
     say(tr('Гружу «{name}»…', { name }));
     try {
-      const res = await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-Bus-Token': TOKEN, 'X-File-Name': encodeURIComponent(name), ...langHeader() }, body: file });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || tr('Сервер ответил {status}.', { status: res.status }));
+      const data = await answer(await fetch('/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-Bus-Token': TOKEN, 'X-File-Name': encodeURIComponent(name), ...langHeader() }, body: file }));
       picked.push({ id: data.id, name: data.name, size: data.size });
       say(tr('Приложено: {name}. Уйдёт вместе с сообщением.', { name: data.name }));
     } catch (err) {
@@ -1514,10 +1893,12 @@ $('squeeze').addEventListener('click', async () => {
   button.dataset.busy = '1';
   button.disabled = true;
   button.lastElementChild.textContent = tr('Сжимаю…');
-  note(tr('Отдал диалог claude на haiku. Обычно это 5–15 секунд.'));
+  note(tr('Отдал диалог claude. Обычно это 5–15 секунд.'));
   try {
     const r = await post('/api/summarize', { a, b });
-    note(tr('Сжато сообщений: {n}. Ушло ≈{tokens} токенов haiku.', { n: r.compressed, tokens: L.short(r.tokens) }) + (r.left ? tr(' Осталось несжатых: {n} — нажми ещё раз.', { n: r.left }) : ''));
+    // Модель сжатия — настройка ui.summaryModel: называем ту, шо назвал сервер
+    const model = r.model || (settingsData && settingsData.values['ui.summaryModel']) || 'haiku';
+    note(tr('Сжато сообщений: {n}. Ушло ≈{tokens} токенов {model}.', { n: r.compressed, tokens: L.short(r.tokens), model }) + (r.left ? tr(' Осталось несжатых: {n} — нажми ещё раз.', { n: r.left }) : ''));
   } catch (err) {
     note(tr('Не сжато: {why}', { why: err.message }), true);
   } finally {
@@ -1541,7 +1922,9 @@ $('text').addEventListener('keydown', (e) => {
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 const HOLD_MS = 400; // короче — это пробел или клик, дольше — диктовка
 const voice = { held: false, timer: null, tap: 'none', target: null, rec: null, field: null, before: '', after: '', final: '', error: '' };
-$('voiceHint').hidden = !SpeechRec;
+$('agentVoiceHint').hidden = !SpeechRec;
+// Панель агента закрывает собой строку статуса под лентой — пока она открыта, про диктовку пишем в ней самой
+const voiceSay = (text, bad = false) => (agentPanel.open ? agentAiNote(text, bad) : say(text, bad));
 
 /** Тап, а не удержание: доигрываем то, шо пробел сделал бы сам. */
 function commitTap() {
@@ -1561,8 +1944,10 @@ function showDictated(text) {
 
 function startVoice() {
   voice.timer = null;
-  if (!SpeechRec) return say(L.voiceNote('unsupported'), true);
-  const field = voice.tap === 'type' ? voice.target : $('text');
+  if (!SpeechRec) return voiceSay(L.voiceNote('unsupported'), true);
+  if (agentPanel.busy) return; // ИИ пишет роль: его ответ затёр бы заметку про диктовку
+  // Фокус не в поле: в панели агента диктуют просьбу к ИИ, иначе — сообщение
+  const field = voice.tap === 'type' ? voice.target : agentPanel.open ? $('agentAsk') : $('text');
   field.focus();
   Object.assign(voice, { field, before: field.value.slice(0, field.selectionStart), after: field.value.slice(field.selectionEnd), final: '', error: '' });
 
@@ -1583,16 +1968,16 @@ function startVoice() {
     if (voice.error === 'aborted') showDictated('');
     else showDictated(voice.final); // недослышанный хвост без isFinal в поле не оставляем
     const note = L.voiceNote(voice.error || (voice.final.trim() ? '' : 'no-speech'));
-    say(note || tr('Надиктовано — проверь текст и отправляй.'), Boolean(note) && voice.error !== 'aborted');
+    voiceSay(note || (agentPanel.open ? tr('Надиктовано — проверь текст.') : tr('Надиктовано — проверь текст и отправляй.')), Boolean(note) && voice.error !== 'aborted');
   };
   try {
     rec.start();
   } catch (err) {
-    return say(tr('Голосовой ввод не удался: {why}', { why: err.message }), true);
+    return voiceSay(tr('Голосовой ввод не удался: {why}', { why: err.message }), true);
   }
   voice.rec = rec;
   field.classList.add('listening');
-  say(tr('Слушаю… отпусти пробел, когда договоришь. Esc — отмена.'));
+  voiceSay(tr('Слушаю… отпусти пробел, когда договоришь. Esc — отмена.'));
   if (!voice.held) rec.stop(); // пробел отпустили, пока поднимался микрофон
 }
 
@@ -1602,6 +1987,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && agentPanel.open) return closeAgentPanel();
   if (e.key === 'Escape' && scheduleOpen) return closeSchedule();
   if (e.key === 'Escape' && weightOpen) return closeWeight();
+  if (e.key === 'Escape' && settingsOpen) return closeSettings();
   if (e.key === 'Escape' && marked.size) {
     marked.clear();
     return renderMarked();
@@ -1634,9 +2020,11 @@ window.addEventListener('blur', () => {
   if (voice.rec) voice.rec.stop();
 });
 document.addEventListener('visibilitychange', scheduleRead);
+let searchTimer = null;
 $('q').addEventListener('input', (e) => {
   filters.q = e.target.value.trim();
-  renderFeed();
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(renderFeed, 120); // лента пересобирается целиком — не на каждую букву
 });
 $('to').addEventListener('change', renderFrom);
 $('toggleAgents').addEventListener('click', () => toggleAside());
@@ -1702,6 +2090,8 @@ function renderScheduleDaemon() {
   node.className = `sched-daemon${n.tone === 'bad' ? ' bad' : ''}`;
 }
 
+const scheduleTimeout = () => (state.schedule && state.schedule.defaultTimeout) || 60;
+
 /** Строка задачи в списке: тумблер, имя, cron человеком и мелко моноширинным, кому, ближайший запуск, итог последнего, кнопки. */
 function jobNode(job, defaultModel) {
   const toggle = el('button', { type: 'button', className: 'job-toggle', title: job.enabled ? tr('Выключить') : tr('Включить'), ariaLabel: job.enabled ? tr('Выключить задачу «{name}»', { name: job.name }) : tr('Включить задачу «{name}»', { name: job.name }) });
@@ -1754,7 +2144,7 @@ function openSchedule() {
   $('schedule').hidden = false;
   $('scheduleBtn').setAttribute('aria-expanded', 'true');
   showScheduleList();
-  fetch('/api/schedule', { headers: langHeader() }).then((r) => r.json()).then((data) => applySchedule(data)).catch((err) => say(tr('Расписание не загрузилось: {why}', { why: err.message }), true));
+  getJson('/api/schedule').then((data) => applySchedule(data)).catch((err) => say(tr('Расписание не загрузилось: {why}', { why: err.message }), true));
   $('scheduleClose').focus();
 }
 
@@ -1821,6 +2211,7 @@ function updateSchedDescribe() {
 
 function updateSchedModelVisibility() {
   $('schedModelLabel').hidden = $('schedTo').value !== '';
+  $('schedRulesLabel').hidden = $('schedTo').value !== ''; // агенту правила включает галочка в его форме
 }
 
 function fillScheduleToOptions(root) {
@@ -1866,8 +2257,9 @@ function fillScheduleForm(job) {
   $('schedModel').value = job ? job.model : '';
   updateSchedModelVisibility();
 
-  $('schedTimeout').value = job ? job.timeout : 10;
+  $('schedTimeout').value = job ? job.timeout : scheduleTimeout(); // у новой задачи — таймаут из настроек проекта
   $('schedCatchup').checked = job ? job.catchup : false;
+  $('schedRules').checked = job ? Boolean(job.rules) : false;
   $('schedEnabled').checked = job ? job.enabled : true;
   $('schedPrompt').value = job ? job.prompt : '';
 }
@@ -1930,8 +2322,9 @@ async function scheduleSave(force) {
     root: $('schedRoot').value === '' ? null : $('schedRoot').value,
     name, cron: expr, to,
     model: to ? '' : $('schedModel').value.trim(),
-    timeout: Number($('schedTimeout').value) || 10,
+    timeout: Number($('schedTimeout').value) || scheduleTimeout(),
     catchup: $('schedCatchup').checked,
+    rules: !to && $('schedRules').checked,
     enabled: $('schedEnabled').checked,
     prompt,
     isNew: !scheduleEditing,
@@ -1973,12 +2366,259 @@ $('schedPreset').addEventListener('change', () => {
 });
 ['schedDailyTime', 'schedWeekdaysTime', 'schedWeeklyDay', 'schedWeeklyTime', 'schedMinutesN', 'schedHoursN', 'schedHoursMinute', 'schedCustomExpr'].forEach((id) => $(id).addEventListener('input', updateSchedDescribe));
 
+// ---------- настройки проекта ----------
+
+let settingsOpen = false;
+let settingsOpener = null; // элемент, на который вернётся фокус после закрытия
+let settingsData = null; // снимок с сервера: { root, values, groups, schema }
+let settingsForm = {}; // текущие значения формы, ключ настройки → значение того же типа, шо default
+let settingsFields = new Map(); // ключ настройки → { item, wrap, input, revert, error }
+let settingsDirtyPatch = {}; // то, шо уйдёт в POST — пересчитывается на каждую правку поля
+
+function settingsSay(text, bad = false) {
+  $('settingsStatus').textContent = text;
+  $('settingsStatus').className = `result${bad ? ' bad' : ''}`;
+}
+
+/** «вкл»/«выкл» или число с единицей, или имя модели — как показать значение по умолчанию на кнопке возврата. */
+function settingsDefaultLabel(item) {
+  if (item.type === 'bool') return item.default ? tr('вкл') : tr('выкл');
+  if (item.type === 'model') return item.default;
+  if (item.type === 'text') return tr('пусто');
+  return item.unit ? `${item.default} ${item.unit}` : String(item.default);
+}
+
+/** Значение поля из его инпута. Невалидное число оставляем строкой как есть — ошибку покажет L.settingsFieldError, а не тихая замена на 0. */
+function settingsParse(item, input) {
+  if (item.type === 'bool') return input.checked;
+  if (item.type === 'model') return input.value.trim();
+  if (item.type === 'text') return input.value.replace(/\r\n?/g, '\n').trim(); // как settings.js: parse — иначе пробел в конце считался бы правкой
+  const raw = input.value.trim();
+  return /^-?\d+$/.test(raw) ? Number(raw) : raw;
+}
+
+function syncSettingsInput(key) {
+  const node = settingsFields.get(key);
+  if (!node) return;
+  if (node.item.type === 'bool') node.input.checked = Boolean(settingsForm[key]);
+  else node.input.value = settingsForm[key] === undefined ? '' : String(settingsForm[key]);
+}
+
+/** Индикатор «изменено», кнопка возврата и текст ошибки одного поля — по текущему settingsForm[key] против ДЕФОЛТА (не против сервера:
+ * сохранённый override и без правок формы должен остаться помеченным, шоб было видно, шо тут не дефолт). */
+function updateSettingsField(key) {
+  const node = settingsFields.get(key);
+  if (!node || !settingsData) return;
+  const { item, wrap, input, revert, error, count } = node;
+  const value = settingsForm[key];
+  const changed = value !== item.default;
+  if (count) {
+    count.textContent = `${String(value).length} / ${item.max}`;
+    count.classList.toggle('over', String(value).length > item.max);
+  }
+  wrap.classList.toggle('changed', changed);
+  revert.hidden = !changed;
+  const msg = L.settingsFieldError(item, value, settingsForm);
+  error.textContent = msg;
+  error.hidden = !msg;
+  input.setAttribute('aria-invalid', msg ? 'true' : 'false');
+}
+
+function onSettingsInput(item) {
+  const node = settingsFields.get(item.key);
+  settingsForm[item.key] = settingsParse(item, node.input);
+  updateSettingsField(item.key);
+  updateSettingsSave();
+}
+
+function settingsRevert(item) {
+  settingsForm[item.key] = item.default;
+  syncSettingsInput(item.key);
+  updateSettingsField(item.key);
+  updateSettingsSave();
+  settingsFields.get(item.key).input.focus();
+}
+
+/** Узел одного поля формы: чекбокс — строкой в духе доступа агента, int/model/text — подпись, контрол, юнит, подсказка и место под ошибку. */
+function settingsFieldNode(item) {
+  const revert = el('button', { type: 'button', className: 'settings-revert', hidden: true }, tr('↺ по умолчанию: {value}', { value: settingsDefaultLabel(item) }));
+  revert.addEventListener('click', () => settingsRevert(item));
+  const error = el('p', { className: 'settings-field-error', role: 'alert', hidden: true });
+  let input;
+  let wrap;
+  let count = null;
+  // Форма — про один проект, а общая настройка действует во всех: пометка у имени, шоб правка не стала сюрпризом в соседнем каталоге
+  const name = el('span', { className: 'settings-field-name' }, item.label, ...(item.global ? [el('span', { className: 'settings-scope' }, tr('все проекты'))] : []));
+  if (item.type === 'bool') {
+    input = el('input', { type: 'checkbox' });
+    input.addEventListener('change', () => onSettingsInput(item));
+    const head = el('span', { className: 'settings-field-head' }, name, revert);
+    wrap = el('label', { className: 'check settings-field' }, input, el('span', {}, head, el('small', {}, item.hint)));
+  } else {
+    let control;
+    if (item.type === 'text') {
+      input = el('textarea', { rows: 6, maxLength: item.max * 2 }); // запас сверх лимита: вставленное целиком видно, счётчик краснеет — а не молча обрезано
+      input.setAttribute('aria-label', item.label);
+      count = el('span', { className: 'settings-count' });
+      control = el('div', { className: 'settings-control' }, input, count);
+    } else if (item.type === 'model') {
+      const listId = `settings-models-${item.key}`;
+      input = el('input', { type: 'text', autocomplete: 'off', spellcheck: false });
+      input.setAttribute('list', listId);
+      control = el('div', { className: 'settings-control' }, input, el('datalist', { id: listId }, ...['haiku', 'sonnet', 'opus'].map((m) => el('option', { value: m }))));
+    } else {
+      input = el('input', { type: 'number', min: item.min, max: item.max, step: 1 });
+      control = el('div', { className: 'settings-control' }, input, ...(item.unit ? [el('span', { className: 'settings-unit' }, item.unit)] : []));
+    }
+    input.addEventListener('input', () => onSettingsInput(item));
+    input.addEventListener('change', () => onSettingsInput(item)); // стрелки у number и автозаполнение не всегда шлют input
+    const head = el('div', { className: 'settings-field-head' }, name, revert);
+    wrap = el('div', { className: `settings-field${item.type === 'text' ? ' settings-field-text' : ''}` }, head, control, el('p', { className: 'hint' }, item.hint), error);
+  }
+  wrap.dataset.key = item.key;
+  return { item, wrap, input, revert, error, count };
+}
+
+/** Вся форма с нуля — по schema/groups снимка settingsData и текущим значениям settingsForm. */
+function renderSettingsFields() {
+  const list = $('settingsList');
+  list.replaceChildren();
+  settingsFields = new Map();
+  if (!settingsData) return;
+  const byGroup = new Map(settingsData.groups.map((g) => [g.key, { group: g, items: [] }]));
+  for (const item of settingsData.schema) {
+    if (!byGroup.has(item.group)) byGroup.set(item.group, { group: { key: item.group, label: item.group }, items: [] });
+    byGroup.get(item.group).items.push(item);
+  }
+  for (const { group, items } of byGroup.values()) {
+    if (!items.length) continue;
+    list.append(el('p', { className: 'settings-group-label label' }, group.label));
+    for (const item of items) {
+      const node = settingsFieldNode(item);
+      settingsFields.set(item.key, node);
+      list.append(node.wrap);
+      syncSettingsInput(item.key);
+      updateSettingsField(item.key);
+    }
+  }
+}
+
+/** Каталог сверху и disabled на проектные поля, когда UI открыт не из проекта шины — там их привязывать не к чему. Общие (global) правятся и так. */
+function renderSettingsRoot() {
+  const root = settingsData && settingsData.root;
+  $('settingsOff').hidden = Boolean(root);
+  if (!root) $('settingsOff').textContent = tr('Интерфейс запущен не из проекта шины: править можно только поля «все проекты», остальные привязывать не к чему. Запусти bus.js ui из каталога проекта (bus.js init <имя>).');
+  $('settingsRoot').hidden = !root;
+  if (root) $('settingsRoot').textContent = tr('Каталог: {root}', { root });
+  $('settingsReset').disabled = !root;
+  for (const { item, input } of settingsFields.values()) input.disabled = !root && !item.global;
+}
+
+/** Кнопка «Сохранить» живёт, только пока есть несохранённые правки без ошибок — и есть куда их положить. */
+function updateSettingsSave() {
+  settingsDirtyPatch = settingsData ? L.settingsDirty(settingsData.schema, settingsData.values, settingsForm) : {};
+  const hasError = [...settingsFields.values()].some(({ error }) => !error.hidden);
+  const rootless = Boolean(settingsData) && !settingsData.root && Object.keys(settingsDirtyPatch).some((key) => !settingsFields.get(key).item.global);
+  $('settingsSave').disabled = !settingsData || rootless || !Object.keys(settingsDirtyPatch).length || hasError;
+}
+
+/** Ответ /api/settings (GET, POST save или reset) — снимок формы и лимиты страницы, шо от него зависят. */
+function applySettingsResponse(r) {
+  settingsData = { root: r.root, values: r.values, groups: r.groups, schema: r.schema };
+  settingsForm = { ...r.values };
+  renderSettingsFields();
+  renderSettingsRoot();
+  updateSettingsSave();
+  applySettingsLimits(r.limits);
+}
+
+/** limits меняются только после сохранения настроек — здесь, а не в load(), перерисовываем то, шо от порогов зависит, без перезагрузки. */
+function applySettingsLimits(limits) {
+  if (!limits) return;
+  Object.assign(state, { maxFiles: limits.maxFiles, maxFileBytes: limits.maxFileBytes });
+  L.setThresholds({ showLoadFrom: limits.showLoadFrom, heavyTokens: limits.heavyTokens });
+  renderAgents();
+  renderWeight();
+  renderFeed();
+  // Панель расписания держит defaultModel (settings.js: schedule.model) — если её уже открывали, обновим без перезагрузки страницы
+  if (scheduleOpen) getJson('/api/schedule').then((data) => applySchedule(data)).catch(() => {});
+}
+
+async function openSettings() {
+  settingsOpen = true;
+  settingsOpener = document.activeElement;
+  $('settingsBackdrop').hidden = false;
+  $('settings').hidden = false;
+  $('settingsBtn').setAttribute('aria-expanded', 'true');
+  settingsSay('');
+  try {
+    applySettingsResponse(await getJson('/api/settings')); // у GET нет limits — пороги страницы не трогаются
+  } catch (err) {
+    settingsSay(tr('Настройки не загрузились: {why}', { why: err.message }), true);
+  }
+  $('settingsClose').focus();
+}
+
+/** Несохранённые правки молча не теряем: подтверждение, как и у прочих необратимых действий страницы. */
+function closeSettings() {
+  if (settingsOpen && Object.keys(settingsDirtyPatch).length && !confirm(tr('Есть несохранённые изменения. Закрыть без сохранения?'))) return;
+  settingsOpen = false;
+  $('settingsBackdrop').hidden = true;
+  $('settings').hidden = true;
+  $('settingsBtn').setAttribute('aria-expanded', 'false');
+  const back = settingsOpener;
+  if (back && back.isConnected) back.focus();
+  else $('settingsBtn').focus();
+}
+
+$('settingsBtn').addEventListener('click', () => (settingsOpen ? closeSettings() : openSettings()));
+$('settingsClose').addEventListener('click', closeSettings);
+$('settingsClose2').addEventListener('click', closeSettings);
+$('settingsBackdrop').addEventListener('click', closeSettings);
+
+$('settingsForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if ($('settingsSave').disabled || !Object.keys(settingsDirtyPatch).length) return;
+  $('settingsSave').disabled = true;
+  try {
+    const r = await post('/api/settings', { values: settingsDirtyPatch }); // отказ 400 несёт field — поле, которое подсветить
+    applySettingsResponse(r);
+    settingsSay(tr('Сохранено.'));
+  } catch (err) {
+    if (err.field && settingsFields.has(err.field)) {
+      const node = settingsFields.get(err.field);
+      node.error.textContent = err.message;
+      node.error.hidden = false;
+      node.input.setAttribute('aria-invalid', 'true');
+      node.input.focus();
+    } else settingsSay(err.message, true);
+  } finally {
+    updateSettingsSave();
+  }
+});
+
+$('settingsReset').addEventListener('click', async () => {
+  if (!settingsData || !settingsData.root) return;
+  if (!confirm(tr('Сбросить все настройки проекта {root} к значениям по умолчанию? Вернуть нельзя.', { root: settingsData.root }))) return;
+  $('settingsReset').disabled = true;
+  try {
+    const r = await post('/api/settings', { reset: true });
+    applySettingsResponse(r);
+    settingsSay(tr('Сохранено.'));
+  } catch (err) {
+    settingsSay(err.message, true);
+  } finally {
+    $('settingsReset').disabled = !settingsData || !settingsData.root;
+  }
+});
+
 /** Смена языка без перезагрузки: черновик сообщения, выбранные агенты и фильтры остаются. Панели в этот момент закрыты — шапка под их подложкой. */
 function setLanguage(lang) {
   I.setLang(lang);
   try { localStorage.setItem('bus-lang', I.lang()); } catch {}
   applyStatic();
   fillScheduleChoices();
+  if (agentPanel.open) renderAccess();
   renderTypes(true);
   applyAgents({ agents: state.agents, here: state.here });
   renderFeed(new Set(), false);

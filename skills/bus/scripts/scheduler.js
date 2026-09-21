@@ -4,7 +4,7 @@
  *   node scheduler.js daemon                 — демон под pm2 (bus-scheduler): раз в 20 с сверяет cron задач всех проектов шины;
  *   node scheduler.js run <каталог> <имя> …  — отвязанный раннер одного запуска: демон и `schedule run` его не ждут.
  *
- * Задача — файл <проект>/.claude/bus/scheduler/<имя>.md: frontmatter (cron, to, enabled, model, timeout, catchup) + тело-промпт,
+ * Задача — файл <проект>/.claude/bus/scheduler/<имя>.md: frontmatter (cron, to, enabled, model, timeout, catchup, rules) + тело-промпт,
  * правится и руками. Рядом: <имя>.log — отчёты, <имя>.state.json — итог последнего запуска, <имя>.lock — запуск идёт.
  * Глобальные задачи — ~/.claude/bus/scheduler/, исполняются в домашней папке и только headless.
  *
@@ -37,16 +37,18 @@ const START_WAIT_MS = process.env.BUS_SCHEDULER_START_WAIT_MS === undefined ? 80
 const IDLE_TICKS = 3; // столько проходов подряд без включённых задач — и демон гасит себя
 const CATCHUP_MAX_MS = 7 * 24 * 60 * 60 * 1000; // пропуск старше недели не догоняем
 const NAME = /^[a-z0-9][a-z0-9-]{0,30}$/;
-const MODEL = /^[a-zA-Z0-9._-]{1,60}$/; // уходит в командную строку claude
-const DEFAULT_MODEL = 'sonnet'; // headless без присмотра — не на главной, самой дорогой модели
-const DEFAULT_TIMEOUT_MIN = 10;
-const MAX_TIMEOUT_MIN = 120;
-const WARN_GAP_MIN = 15;
-const REFUSE_GAP_MIN = 5;
-const INLINE_PROMPT = 1700; // длиннее — промпт уходит агенту вложением: сообщение шины — одна строка до 2000 символов
+const settings = require('./settings.js');
+const MODEL = settings.MODEL; // та же проверка, шо у настройки schedule.model: «opus[1m]» проходит и там, и в задаче
+// Дефолты; проект переопределяет их настройками schedule.* (settings.js, шестерёнка в UI). Глобальные задачи (root = null) живут на дефолтах
+const DEFAULT_TIMEOUT_MIN = settings.DEFAULTS['schedule.timeoutMin'];
+const MAX_TIMEOUT_MIN = settings.SCHEMA.find((item) => item.key === 'schedule.timeoutMin').max;
+const WARN_GAP_MIN = 15; // чаще — задача принимается, но с ценой в токенах за сутки; порог не настройка: пользователь убрал его из формы 21.09.2026
+const INLINE_MARGIN = 300; // длиннее «лимит сообщения − запас» — промпт уходит агенту вложением: сообщение шины — одна строка до message.maxLength символов
+const conf = (root) => settings.get(root);
+const modelOf = (job) => job.model || conf(job.root)['schedule.model'];
 const FEED_REPORT = 600; // отчёт headless-запуска в ленте; целиком — в логе задачи
 const LOG_REPORT = 4000;
-const WAKE_TOKENS = 14000; // замер автоподъёма на «привет», для оценки цены частого расписания
+const WAKE_TOKENS = 20000; // первый ход фонового подъёма без урезанного доступа (access-weights.json, замер 21.09.2026 — 19.7к), для оценки цены частого расписания
 
 const dirOf = (root) => (root ? path.join(root, '.claude', 'bus', 'scheduler') : path.join(bus.BUS, 'scheduler'));
 const jobFile = (root, name) => path.join(dirOf(root), `${name}.md`);
@@ -81,10 +83,10 @@ function parseJob(text) {
 function readJob(root, name) {
   const file = jobFile(root, name);
   const { meta, prompt } = parseJob(fs.readFileSync(file, 'utf8'));
-  const timeout = Number(meta.timeout) || DEFAULT_TIMEOUT_MIN;
+  const timeout = Number(meta.timeout) || conf(root)['schedule.timeoutMin']; // в задаче не указан — таймаут проекта
   // Флаги правят и руками: «False», «no», «0» молча читались как «включена», и задача дальше жгла токены
   const flag = (value, fallback) => (value === undefined || value === '' ? fallback : { true: true, false: false }[String(value).toLowerCase()]);
-  const flags = { enabled: flag(meta.enabled, true), catchup: flag(meta.catchup, false) };
+  const flags = { enabled: flag(meta.enabled, true), catchup: flag(meta.catchup, false), rules: flag(meta.rules, false) };
   const job = {
     name, root, file, prompt,
     cron: meta.cron || '',
@@ -93,13 +95,14 @@ function readJob(root, name) {
     model: meta.model || '',
     timeout: Math.min(Math.max(timeout, 1), MAX_TIMEOUT_MIN),
     catchup: flags.catchup === true,
+    rules: flags.rules === true,
     error: '',
   };
   try {
     for (const key of Object.keys(flags)) if (flags[key] === undefined) throw new Error(`${key}: «${meta[key]}» — только true или false`);
     cron.parse(job.cron);
     if (!prompt) throw new Error('пустой промпт');
-    if (job.model && !MODEL.test(job.model)) throw new Error(`model: «${job.model}» — только латиница, цифры, точка, дефис`);
+    if (job.model && !MODEL.test(job.model)) throw new Error(`model: «${job.model}» — только латиница, цифры, точка, дефис, [ ]`);
     if (job.to && !root) throw new Error('глобальная задача идёт только headless-сессией: to: — для задач проекта');
     if (job.to && !NAME.test(job.to)) throw new Error(`to: «${job.to}» — не имя агента`);
   } catch (e) {
@@ -119,7 +122,7 @@ function listJobs(root) {
     try {
       return readJob(root, name);
     } catch (e) {
-      return { name, root, file: jobFile(root, name), cron: '', to: '', enabled: false, model: '', timeout: DEFAULT_TIMEOUT_MIN, catchup: false, prompt: '', error: e.message };
+      return { name, root, file: jobFile(root, name), cron: '', to: '', enabled: false, model: '', timeout: DEFAULT_TIMEOUT_MIN, catchup: false, rules: false, prompt: '', error: e.message };
     }
   });
 }
@@ -139,17 +142,14 @@ function serialize(job) {
   if (job.to) lines.push(`to: ${job.to}`);
   lines.push(`enabled: ${job.enabled !== false}`);
   if (job.model) lines.push(`model: ${job.model}`);
-  if (job.timeout && job.timeout !== DEFAULT_TIMEOUT_MIN) lines.push(`timeout: ${job.timeout}`);
+  if (job.timeout && job.timeout !== conf(job.root)['schedule.timeoutMin']) lines.push(`timeout: ${job.timeout}`);
   if (job.catchup) lines.push('catchup: true');
+  if (job.rules && !job.to) lines.push('rules: true'); // агенту правила включает галочка в его форме, а не задача
   return `${lines.join('\n')}\n---\n${job.prompt.trim()}\n`;
 }
 
-function writeAtomic(file, text) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, text);
-  fs.renameSync(tmp, file);
-}
+// Свой rename тут падал с EPERM, когда state.json в этот миг читал UI или list: раннер «падал» на ровном месте. У шины запись с запасным путём
+const writeAtomic = bus.writeAtomic;
 
 /** Адресат задачи — субагент, видимый из каталога; отправителем будет оркестратор каталога. → { from, to } */
 function parties(root, toName) {
@@ -170,7 +170,7 @@ function costNote(gap) {
 }
 
 /**
- * Создать или перезаписать задачу. Проверки — до записи. force: перезаписать существующую и разрешить cron чаще REFUSE_GAP_MIN.
+ * Создать или перезаписать задачу. Проверки — до записи. force: перезаписать существующую и разрешить cron чаще schedule.minGapMin.
  * → { job, warning }
  */
 function saveJob(root, input, { force = false, overwrite = force } = {}) {
@@ -187,20 +187,21 @@ function saveJob(root, input, { force = false, overwrite = force } = {}) {
   const prompt = String(input.prompt || '').trim();
   if (!prompt) throw new bus.BusError('Пустой промпт.');
   const model = String(input.model || '');
-  if (model && !MODEL.test(model)) throw new bus.BusError('--model: только латиница, цифры, точка, дефис.');
+  if (model && !MODEL.test(model)) throw new bus.BusError('--model: только латиница, цифры, точка, дефис, [ ] — до 60 символов.');
   const to = String(input.to || '');
   if (to && !root) throw new bus.BusError('Глобальная задача идёт только headless-сессией: агенту — задача в проекте.');
   if (to) parties(root, to);
-  const timeout = input.timeout === undefined || input.timeout === '' ? DEFAULT_TIMEOUT_MIN : Number(input.timeout);
+  const limits = conf(root);
+  const timeout = input.timeout === undefined || input.timeout === '' ? limits['schedule.timeoutMin'] : Number(input.timeout);
   if (!(timeout >= 1 && timeout <= MAX_TIMEOUT_MIN)) throw new bus.BusError(`timeout — минуты, от 1 до ${MAX_TIMEOUT_MIN}.`);
 
   const gap = cron.minGapMinutes(parsed);
-  if (gap < REFUSE_GAP_MIN && !force) throw new bus.BusError(`Слишком часто: ${costNote(gap)}. Уверен — повтори с --force.`);
+  if (gap < limits['schedule.minGapMin'] && !force) throw new bus.BusError(`Слишком часто: ${costNote(gap)}. Уверен — повтори с --force.`);
   const warning = gap < WARN_GAP_MIN ? `Часто: ${costNote(gap)}.` : '';
 
   // Промпт режется тем же redact, шо и сообщения: файл задачи уходит агенту текстом или вложением
   const { redact } = require('./lib/redact.js');
-  const job = { name, cron: parsed.expr, to, enabled: input.enabled !== false, model, timeout, catchup: Boolean(input.catchup), prompt: redact(prompt) };
+  const job = { name, root, cron: parsed.expr, to, enabled: input.enabled !== false, model, timeout, catchup: Boolean(input.catchup), rules: Boolean(input.rules), prompt: redact(prompt) };
   writeAtomic(jobFile(root, name), serialize(job));
   return { job: readJob(root, name), warning };
 }
@@ -218,7 +219,7 @@ function setEnabled(root, name, on) {
   const head = /^(\uFEFF?---\r?\n)([\s\S]*?)(\r?\n---)/.exec(text);
   if (!head) throw new bus.BusError(`«${name}»: в файле нет frontmatter — поправь ${job.file} руками.`);
   const lines = /^enabled\s*:.*$/m.test(head[2]) ? head[2].replace(/^enabled\s*:.*$/m, `enabled: ${on}`) : `${head[2]}\nenabled: ${on}`;
-  writeAtomic(job.file, text.replace(head[0], `${head[1]}${lines}${head[3]}`));
+  writeAtomic(job.file, text.replace(head[0], () => `${head[1]}${lines}${head[3]}`)); // функцией: строку-замену replace разбирает сам, и «$&» из рукописного frontmatter портил файл
   return readJob(root, name);
 }
 
@@ -267,7 +268,7 @@ function view(job) {
     const at = cron.next(cron.parse(job.cron));
     next = at ? at.getTime() : null;
   }
-  return { name: job.name, root: job.root, cron: job.cron, about, to: job.to, enabled: job.enabled, model: job.model, timeout: job.timeout, catchup: job.catchup, prompt: job.prompt, error: job.error, next, last: jobState(job.root, job.name) };
+  return { name: job.name, root: job.root, cron: job.cron, about, to: job.to, enabled: job.enabled, model: job.model, timeout: job.timeout, catchup: job.catchup, rules: job.rules, prompt: job.prompt, error: job.error, next, last: jobState(job.root, job.name) };
 }
 
 // ---------- запуск задачи ----------
@@ -288,7 +289,7 @@ function takeLock(root, name, timeoutMs) {
       return true;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      if (isRunning(root, name)) return false;
+      if (isRunning(root, name) || wake.freshBlank(lockFile(root, name))) return false; // пустой молодой лок — чужой раннер между open(wx) и записью pid
       fs.rmSync(lockFile(root, name), { force: true });
     }
   }
@@ -302,21 +303,23 @@ function runForAgent(job) {
   let text = head + job.prompt;
   let attachments = [];
   let tmpDir = null;
-  if (text.length > INLINE_PROMPT) {
+  const limits = conf(job.root);
+  if (text.length > limits['message.maxLength'] - INLINE_MARGIN) {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bus-schedule-'));
     const file = path.join(tmpDir, `${job.name}.md`);
     // внутрь вложений шина не заглядывает — промпт режем сами: файл задачи могли править руками
     fs.writeFileSync(file, require('./lib/redact.js').redact(job.prompt) + '\n');
-    attachments = bus.checkAttachments([{ src: file }]);
+    attachments = bus.checkAttachments([{ src: file }], { maxFiles: limits['files.max'], maxFileBytes: limits['files.maxMb'] * 1024 * 1024 });
     text = `${head}${job.prompt.split(/\r?\n/)[0].slice(0, 200)}… — полный текст задачи во вложении, прочитай его.`;
   }
+  let sent = {};
   try {
     // ui: true — ответ агента адресован пользователю в ленте: сессии проекта придёт счётчик, а не текст
-    bus.deliver(from, to, 'TASK', bus.clean(text), attachments, { ui: true });
+    sent = bus.deliver(from, to, 'TASK', bus.clean(text, limits['message.maxLength']), attachments, { ui: true });
   } finally {
     if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
   }
-  const r = bus.autoWake(from, to, 'TASK', { here: job.root, ringSelf: true, human: true });
+  const r = bus.autoWake(from, to, 'TASK', { here: job.root, ringSelf: true, human: true, messageId: sent.id });
   if (r.state === 'started') return { state: 'ok', note: `TASK ушёл ${to.name}, поднят в фоне — ответ будет в ленте` };
   if (r.state === 'busy') return { state: 'ok', note: `TASK ушёл ${to.name}, он уже работает в фоне — заберёт сам` };
   return { state: 'ok', note: `TASK ушёл ${to.name}, но фон его не поднял (${r.reason || 'автоподъём выключен'})${r.ring ? ` — звонок ушёл оркестратору ${r.ring}` : ''}` };
@@ -345,7 +348,8 @@ function reportToFeed(job, report) {
 
 async function runHeadless(job) {
   if (!wake.enabled()) return { state: 'skipped', reason: 'автоподъём выключен (bus.js autowake on)' };
-  const r = await wake.runClaude({ cwd: cwdOf(job.root), model: job.model || DEFAULT_MODEL, prompt: headlessPrompt(job), timeoutMs: job.timeout * 60000 });
+  // Глобальные CLAUDE.md и rules/ — про чат с пользователем, в фоне это ≈3.3к токенов шума на запуск; нужны задаче — rules: true в её файле
+  const r = await wake.runClaude({ cwd: cwdOf(job.root), model: modelOf(job), settings: job.rules ? null : wake.headlessSettings(dirOf(job.root)), prompt: headlessPrompt(job), timeoutMs: job.timeout * 60000 });
   reportToFeed(job, r.ok ? r.report : `СБОЙ: ${r.reason}`);
   return { state: r.ok ? 'ok' : 'failed', ms: r.ms, tokens: r.tokens, cost: r.cost, reason: r.reason, report: r.report };
 }
@@ -531,7 +535,7 @@ function daemonStatus() {
 
 const USAGE = `bus.js schedule — задачи по расписанию (cron), только оркестратор
   schedule [list] [--all]            задачи каталога (--all — всех проектов) и статус демона
-  schedule add <имя> "<cron>" [--to <агент>] [--model m] [--timeout мин] [--catchup] [--off] [--force] [--global] <промпт | ->
+  schedule add <имя> "<cron>" [--to <агент>] [--model m] [--timeout мин] [--catchup] [--rules] [--off] [--force] [--global] <промпт | ->
                                      cron — 5 полей, время локальное; без --to — headless-сессия проекта; «-» — промпт из stdin
   schedule on|off <имя>              включить / выключить
   schedule rm <имя>                  удалить задачу и её лог
@@ -555,16 +559,8 @@ function printJobs(jobs, showRoot) {
   for (const job of jobs) {
     const v = view(job);
     const flag = v.error ? 'ОШИБКА' : v.enabled ? 'вкл' : 'выкл';
-    console.log(`${v.name.padEnd(20)} ${flag.padEnd(6)} ${`"${v.cron}"`.padEnd(18)} ${v.error || v.about} → ${v.to || `сессия (${v.model || DEFAULT_MODEL})`}${showRoot ? ` · ${v.root || '~ (глобальная)'}` : ''}`);
+    console.log(`${v.name.padEnd(20)} ${flag.padEnd(6)} ${`"${v.cron}"`.padEnd(18)} ${v.error || v.about} → ${v.to || `сессия (${modelOf(v)})`}${showRoot ? ` · ${v.root || '~ (глобальная)'}` : ''}`);
     if (!v.error) console.log(`${''.padEnd(20)} след.: ${v.enabled ? clock(v.next) : '—'} · ${lastNote(v.last)}`);
-  }
-}
-
-function readStdin() {
-  try {
-    return fs.readFileSync(0, 'utf8');
-  } catch {
-    return '';
   }
 }
 
@@ -611,12 +607,12 @@ function cli(asName, args) {
     console.log(`Демон: ${d.alive ? `работает (pid ${d.pid})` : d.active ? 'НЕ работает, а включённые задачи есть — schedule daemon start' : 'не нужен, включённых задач нет'}.`);
   } else if (command === 'add') {
     const force = takeFlag(flags, '--force');
-    const input = { to: takeFlag(flags, '--to', true), model: takeFlag(flags, '--model', true), timeout: takeFlag(flags, '--timeout', true), catchup: takeFlag(flags, '--catchup'), enabled: !takeFlag(flags, '--off') };
+    const input = { to: takeFlag(flags, '--to', true), model: takeFlag(flags, '--model', true), timeout: takeFlag(flags, '--timeout', true), catchup: takeFlag(flags, '--catchup'), rules: takeFlag(flags, '--rules'), enabled: !takeFlag(flags, '--off') };
     if (flags.length) throw new bus.BusError(`schedule add: не знаю флага «${flags[0]}».`);
     const [name, expr, ...words] = rest;
-    const prompt = words.length === 1 && words[0] === '-' ? readStdin() : words.join(' ');
+    const prompt = words.length === 1 && words[0] === '-' ? bus.readStdin() : words.join(' ');
     const { job, warning } = saveJob(needRoot(), { ...input, name, cron: expr, prompt }, { force });
-    console.log(`Задача «${job.name}»: ${cron.describe(job.cron)} → ${job.to || `headless-сессия (${job.model || DEFAULT_MODEL})`}. Ближайший запуск: ${clock(view(job).next)}. Файл: ${job.file}`);
+    console.log(`Задача «${job.name}»: ${cron.describe(job.cron)} → ${job.to || `headless-сессия (${modelOf(job)})`}. Ближайший запуск: ${clock(view(job).next)}. Файл: ${job.file}`);
     if (warning) console.log(warning);
     console.log(`Расписание: ${syncDaemon()}.`);
   } else if (command === 'on' || command === 'off') {
@@ -655,7 +651,7 @@ function cli(asName, args) {
   }
 }
 
-module.exports = { DEFAULT_MODEL, cli, listJobs, allJobs, saveJob, setEnabled, removeJob, requireJob, view, isRunning, spawnRun, tick, syncDaemon, ensureDaemon, daemonStatus };
+module.exports = { cli, listJobs, allJobs, saveJob, setEnabled, removeJob, requireJob, view, isRunning, spawnRun, tick, syncDaemon, ensureDaemon, daemonStatus };
 
 if (require.main === module) {
   const [mode, root, name, how, fired] = process.argv.slice(2);

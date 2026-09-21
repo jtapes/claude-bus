@@ -71,8 +71,19 @@ module.exports = async function busScheduleTests({ sandbox, configDir, baseEnv, 
   const claudeSeen = path.join(sandbox, 'fake-sched-claude.jsonl');
   const claudeMode = path.join(sandbox, 'fake-sched-mode.txt');
   const fakeClaude = path.join(sandbox, 'fake-sched-claude.js');
+  // Подъём агента потоковый (--input-format stream-json): stdin остаётся открытым, промпт — первая строка. Сессия расписания — разовая, до EOF
   fs.writeFileSync(fakeClaude, `let s = '';
-process.stdin.on('data', (c) => (s += c)).on('end', () => {
+let fired = false;
+const go = () => {
+  if (fired) return;
+  fired = true;
+  main();
+};
+process.stdin.on('data', (c) => {
+  s += c;
+  if (process.argv.includes('--input-format') && s.includes('\\n')) go();
+}).on('end', go);
+function main() {
   const fs = require('fs');
   const argv = process.argv.slice(2);
   const agent = argv.includes('--agent') ? argv[argv.indexOf('--agent') + 1] : '';
@@ -80,9 +91,16 @@ process.stdin.on('data', (c) => (s += c)).on('end', () => {
   fs.appendFileSync(${JSON.stringify(claudeSeen)}, JSON.stringify({ agent, cwd: process.cwd(), wakeEnv: process.env.BUS_WAKE || '', argv, stdin: s }) + '\\n');
   if (agent) require('child_process').spawnSync(process.execPath, [${JSON.stringify(BUS_JS)}, '--as', agent, 'inbox', '--quiet'], { cwd: process.cwd(), env: process.env });
   if (mode === 'fail') { console.error('модель недоступна'); process.exit(1); }
+  if (mode === 'split') {
+    // итог двумя чанками, граница — посреди двухбайтной «ш»
+    const bytes = Buffer.from(JSON.stringify({ type: 'result', is_error: false, result: 'Отчёт: решение принято', usage: { input_tokens: 1, output_tokens: 1 } }) + '\\n');
+    const cut = bytes.indexOf(Buffer.from('ш')) + 1;
+    process.stdout.write(bytes.subarray(0, cut));
+    return setTimeout(() => process.stdout.write(bytes.subarray(cut)), 300);
+  }
   const done = () => console.log(JSON.stringify({ type: 'result', is_error: false, result: agent ? 'ответил отправителю' : 'Отчёт по расписанию: всё проверено, ключ ${baseEnv.SOME_SERVICE_API_KEY}', total_cost_usd: 0.05, usage: { input_tokens: 10, cache_creation_input_tokens: 9000, output_tokens: 200 } }));
   return mode === 'slow' ? setTimeout(done, 1500) : done();
-});
+}
 `);
   const claudeRuns = () => lines(claudeSeen).map((l) => JSON.parse(l));
   // Только headless-сессии расписания: подъём агента из соседнего теста мог дописаться в лог с опозданием
@@ -144,6 +162,21 @@ process.stdin.on('data', (c) => (s += c)).on('end', () => {
   check('P4 schedule add: имя занято — отказ, --force перезаписывает; cron каждые 10 минут проходит с предупреждением о цене', dup.code === 1 && dup.all.includes('уже есть') && forced.code === 0 && forced.out.includes('Часто:') && forced.out.includes('токенов') && read(jobPath('morning')).includes('*/10 * * * *'), dup.all + forced.all);
   sched(['add', 'morning', '0 9 * * 1-5', '--force', '--to', 'dima', 'Проверь задачи']);
 
+  // Порог отказа, таймаут и модель по умолчанию — настройки каталога (settings.js); в задаче своё не указано — берётся его
+  bus(proj, ['settings', 'set', 'schedule.minGapMin', '20']);
+  bus(proj, ['settings', 'set', 'schedule.timeoutMin', '25']);
+  bus(proj, ['settings', 'set', 'schedule.model', 'haiku']);
+  const tooOften = sched(['add', 'often', '*/10 * * * *', 'при пороге 20 минут']);
+  const allowed = sched(['add', 'often', '*/20 * * * *', 'при пороге 20 минут']);
+  const warned = sched(['add', 'often', '*/10 * * * *', '--force', 'чаще порога — только с --force, и с ценой']);
+  const oftenList = sched(['list']);
+  bus(proj, ['settings', 'reset']);
+  const relaxed = sched(['add', 'often', '*/10 * * * *', '--force', 'пороги снова дефолтные']);
+  check('P4a schedule и настройки проекта: порог отказа и модель headless-сессии — из настроек каталога, предупреждение о цене — чаще 15 минут; после сброса — прежние 5 минут и sonnet',
+    tooOften.code === 1 && tooOften.all.includes('Слишком часто') && allowed.code === 0 && !allowed.out.includes('Часто:') && allowed.out.includes('headless-сессия (haiku)') && warned.code === 0 && warned.out.includes('Часто:') && /often.*сессия \(haiku\)/.test(oftenList.out)
+    && relaxed.code === 0 && relaxed.out.includes('headless-сессия (sonnet)'), tooOften.all + allowed.all + warned.all + oftenList.out + relaxed.all);
+  sched(['rm', 'often']);
+
   pm2Reset();
   r = sched(['list']);
   check('P5 schedule list: задача, подпись cron, адресат, ближайший запуск; демона нет, а задачи есть (pm2 после ребута не воскрес) — list сам поднимает его и говорит об этом', r.code === 0 && r.out.includes('morning') && r.out.includes('вкл') && r.out.includes('по будням в 09:00 → dima') && r.out.includes('след.:') && r.out.includes('ещё не запускалась') && r.out.includes('Демон не работал') && pm2Calls().some((c) => c[0] === 'start'), r.all + JSON.stringify(pm2Calls()));
@@ -187,7 +220,7 @@ process.stdin.on('data', (c) => (s += c)).on('end', () => {
   check('P11 schedule run → агенту: TASK от оркестратора с пометкой «По расписанию», в журнале ui: true; агент поднят в фоне из каталога проекта; итог в state.json и логе, лок снят', r.code === 0 && ok && task.from === 'scheda' && task.text.startsWith('По расписанию «morning»: Проверь задачи') && task.ui === true && woke.agent === 'dima' && path.relative(woke.cwd, proj) === '' && woke.wakeEnv === '1' && jobState('morning').manual === true && jobState('morning').note.includes('поднят в фоне') && read(jobPath('morning', 'log')).includes('вручную') && !fs.existsSync(jobPath('morning', 'lock')), r.all + JSON.stringify(jobState('morning')) + JSON.stringify(task));
   await until(() => !fs.existsSync(path.join(proj, '.claude', 'bus', 'dima', 'wake.lock')));
 
-  const longPrompt = `Шаг первый: проверь API.\n${'Дальше идёт длинное описание задачи. '.repeat(60)}\nключ ${baseEnv.SOME_SERVICE_API_KEY}`;
+  const longPrompt = `Шаг первый: проверь API.\n${'Дальше идёт длинное описание задачи. '.repeat(160)}\nключ ${baseEnv.SOME_SERVICE_API_KEY}`;
   sched(['add', 'long', '0 3 * * *', '--to', 'dima', '-'], { input: longPrompt });
   r = sched(['run', 'long'], wakeOn);
   ok = await settled('long', 'ok');
@@ -216,6 +249,38 @@ process.stdin.on('data', (c) => (s += c)).on('end', () => {
   r = sched(['list']);
   check('P14 schedule run: claude упал — задача «упала» с причиной в state.json, логе, ленте (DONE с «СБОЙ») и list; модель берётся из задачи', ok && session.argv[session.argv.indexOf('--model') + 1] === 'haiku' && jobState('report').reason.includes('модель недоступна') && note.type === 'DONE' && note.text.includes('СБОЙ') && read(jobPath('report', 'log')).includes('СБОЙ') && r.out.includes('упала'), JSON.stringify(jobState('report')) + r.out);
 
+  // Модель с «[1m]» настройка schedule.model принимала, а задача — нет; в командную строку claude она едет в кавычках
+  setMode('split');
+  fs.rmSync(claudeSeen, { force: true });
+  r = sched(['add', 'report', '0 8 * * *', '--force', '--model', 'opus[1m]', 'Собери отчёт по проекту']);
+  sched(['run', 'report'], wakeOn);
+  ok = await settled('report', 'ok');
+  session = sessions()[0] || { argv: [] };
+  note = journal().filter((m) => m.from === 'schedule').pop() || {};
+  check('P14a schedule: модель «opus[1m]» у задачи проходит и доезжает до claude; итог claude, разорванный на границе чанков посреди русской буквы, в логе и ленте цел', r.code === 0 && read(jobPath('report')).includes('model: opus[1m]') && ok && session.argv[session.argv.indexOf('--model') + 1] === 'opus[1m]' && read(jobPath('report', 'log')).includes('решение принято') && !read(jobPath('report', 'log')).includes('�') && String(note.text).includes('решение принято'), r.all + JSON.stringify(session.argv) + JSON.stringify(note) + read(jobPath('report', 'log')).slice(-200));
+
+  // Глобальные CLAUDE.md и rules/ headless-запуску по умолчанию срезаны настройками сессии; rules: true — запуск без них
+  const leanFile = path.join(proj, '.claude', 'bus', 'scheduler', 'headless-settings.json');
+  const leanArgv = session.argv;
+  const lean = JSON.parse(read(leanFile) || '{}');
+  fs.rmSync(claudeSeen, { force: true });
+  r = sched(['add', 'report', '0 8 * * *', '--force', '--rules', 'Собери отчёт по проекту']);
+  sched(['run', 'report'], wakeOn);
+  await until(() => sessions().length > 0); // прошлый запуск уже «ok»: ждём сам claude, иначе settled вернётся раньше, чем раннер стартует
+  ok = await settled('report', 'ok');
+  session = sessions()[0] || { argv: ['--settings'] };
+  const listed = sched(['list']).all;
+  check('P14c schedule rules: без поля headless-запуск идёт с --settings и claudeMdExcludes на глобальные CLAUDE.md и rules/; --rules пишет rules: true, и запуск идёт без --settings; файл настроек задачей не считается',
+    leanArgv.includes('--settings') && String(leanArgv[leanArgv.indexOf('--settings') + 1]).includes('headless-settings.json') && Array.isArray(lean.claudeMdExcludes) && lean.claudeMdExcludes.some((p) => p.endsWith('/CLAUDE.md')) && lean.claudeMdExcludes.some((p) => p.endsWith('/rules/**'))
+    && r.code === 0 && /^rules: true$/m.test(read(jobPath('report'))) && ok && !session.argv.includes('--settings') && !listed.includes('headless-settings'), JSON.stringify(leanArgv) + JSON.stringify(lean) + r.all + JSON.stringify(session.argv) + listed);
+
+  // «$&» в дописанном руками frontmatter: строку-замену replace разбирал сам и дублировал в файл весь frontmatter
+  fs.writeFileSync(jobPath('report'), read(jobPath('report')).replace('enabled: true', () => "enabled: true\nnote: цена $& и $' — как есть"));
+  sched(['off', 'report']);
+  r = sched(['on', 'report']);
+  file = read(jobPath('report'));
+  check('P14b schedule on/off: «$&» и «$\'» в рукописном frontmatter файл не портят', r.code === 0 && file.includes("note: цена $& и $' — как есть") && file.split('enabled:').length === 2 && file.includes('enabled: true') && file.split('---').length === 3, file);
+
   setMode('ok');
   fs.rmSync(claudeSeen, { force: true });
   sched(['run', 'report'], { extra: { BUS_AUTOWAKE: '0' } });
@@ -228,6 +293,33 @@ process.stdin.on('data', (c) => (s += c)).on('end', () => {
   const direct = spawnSync(process.execPath, [SCHEDULER_JS, 'run', proj, 'report', 'cron', '2026-09-21 08:00'], { encoding: 'utf8', env: env(proj, { BUS_AUTOWAKE: '1' }) });
   check('P16 schedule: предыдущий запуск ещё идёт — run отказывает, раннер демона пишет пропуск в лог и claude не зовёт', r.code === 1 && r.all.includes('уже идёт') && direct.status === 0 && read(jobPath('report', 'log')).includes('пропуск: предыдущий запуск ещё идёт') && sessions().length === 0, r.all + direct.stderr);
   fs.rmSync(jobPath('report', 'lock'));
+
+  // Лок пишется в два шага (open wx → запись pid). Пустой и молодой — чужой раннер между ними: стирать нельзя; пустой и старый — мусор
+  const skips = () => read(jobPath('report', 'log')).split('пропуск: предыдущий запуск').length;
+  const runDirect = () => spawnSync(process.execPath, [SCHEDULER_JS, 'run', proj, 'report', 'manual'], { encoding: 'utf8', env: env(proj, { BUS_AUTOWAKE: '1' }) });
+  fs.writeFileSync(jobPath('report', 'lock'), '');
+  const skipsBefore = skips();
+  runDirect();
+  const youngKept = skips() === skipsBefore + 1 && fs.existsSync(jobPath('report', 'lock')) && sessions().length === 0;
+  const longAgo = new Date(Date.now() - 10000);
+  fs.utimesSync(jobPath('report', 'lock'), longAgo, longAgo);
+  runDirect();
+  // Тот же замок у подъёма агента (wake.js) плюс правило «лок старше загрузки системы — его pid уже чужой»; в дочернем процессе — модуль читает CLAUDE_CONFIG_DIR при загрузке
+  const lockProbe = spawnSync(process.execPath, ['-e', `const fs = require('fs'), os = require('os'), path = require('path');
+const wake = require(${JSON.stringify(path.join(SCRIPTS, 'wake.js'))});
+const box = ${JSON.stringify(path.join(sandbox, 'lock-probe'))};
+fs.mkdirSync(box, { recursive: true });
+const lock = path.join(box, 'wake.lock');
+const put = (at) => fs.writeFileSync(lock, JSON.stringify({ pid: ${process.pid}, at, timeoutMs: 1e13 }));
+put(Date.now());
+const live = wake.running(box);
+put(Date.now() - (os.uptime() + 60) * 1000);
+const rebooted = wake.running(box);
+fs.writeFileSync(lock, '');
+const young = wake.freshBlank(lock);
+fs.utimesSync(lock, new Date(Date.now() - 10000), new Date(Date.now() - 10000));
+console.log(JSON.stringify({ live, rebooted, young, old: wake.freshBlank(lock) }));`], { encoding: 'utf8', env: baseEnv });
+  check('P16a локи: пустой молодой лок раннер не стирает (пропуск), пустой старый — занимает и запускает; wake.lock старше загрузки системы не считается живым, хоть pid и жив', youngKept && sessions().length === 1 && !fs.existsSync(jobPath('report', 'lock')) && lockProbe.stdout.trim() === JSON.stringify({ live: true, rebooted: false, young: true, old: false }), `youngKept=${youngKept} sessions=${sessions().length} ${lockProbe.stdout}${lockProbe.stderr}`);
 
   r = sched(['log', 'report', '5']);
   check('P17 schedule log: хвост отчётов задачи', r.code === 0 && r.out.includes('пропуск') && r.out.trim().split('\n').length <= 5, r.all);

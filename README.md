@@ -54,6 +54,47 @@ remove dima from the bus
 
 The commands themselves are listed in [SKILL.md](skills/bus/SKILL.md) and [references/](skills/bus/references). This README only covers what you can do with them.
 
+## Run it by hand
+
+Everything the skill does goes through one script, `bus.js`, so you can run it yourself too. Run it from the project directory. `init` connects the project to the bus under the name you give it: it registers the directory and adds the hook that reads the inbox. `ui` starts the web UI on `http://127.0.0.1:4780` and opens the browser.
+
+Windows, cmd:
+
+```bat
+node "%USERPROFILE%\.claude\skills\bus\scripts\bus.js" init shop
+node "%USERPROFILE%\.claude\skills\bus\scripts\bus.js" ui
+```
+
+Windows, PowerShell:
+
+```powershell
+node "$env:USERPROFILE\.claude\skills\bus\scripts\bus.js" init shop
+node "$env:USERPROFILE\.claude\skills\bus\scripts\bus.js" ui
+```
+
+macOS and Linux:
+
+```bash
+node ~/.claude/skills/bus/scripts/bus.js init shop
+node ~/.claude/skills/bus/scripts/bus.js ui
+```
+
+A few more commands, with the same `node …/bus.js` prefix:
+
+| Command | What it does |
+|---|---|
+| `ui --port 4781 --no-open` | UI on another port, without opening a browser tab |
+| `add dima` · `add qa --global` | put an existing agent definition on the bus: local to this project or global |
+| `agents` | who is on the bus, their state and the weight of their conversation |
+| `inbox` | read your unread messages |
+| `send dima TASK "Add a stock check to POST /orders"` | write to an agent (`TASK`, `QUESTION` or `DONE`) |
+| `history dima 20` | the last 20 messages with dima |
+| `tokens` | how many tokens each dialog weighs |
+| `stop dima` · `resume dima` | stop an agent working in the background, then continue the same session |
+| `settings` | this project's limits: wake-ups per hour, timeout, message length, attachments |
+| `autowake off` | switch background wake-ups off on this machine |
+| `schedule list` | scheduled tasks |
+
 ## What you can do
 
 ### See every agent on the machine
@@ -64,13 +105,21 @@ The left column lists the orchestrator of the current directory, its local agent
 
 You write as the project's orchestrator, so everything you send from the UI stays in the project's history. Pick a recipient, pick a type (`TASK` means do it, `QUESTION` means answer, `DONE` is a final answer or an FYI) and press Enter. A subagent is woken up in the background by a headless `claude` run, and its answer shows up in the feed. Replies you have already read in the UI are not pushed into your Claude session again, so they cost no tokens there.
 
+The feed renders markdown: headings, lists, inline code, code blocks, quotes and links. Agents use it for long reports. The message that started an agent's last background run carries a mark: "working 1:24" with a Stop button while it runs, then "finished · 2 s · ≈14k tok."
+
 ![A task sent from the UI and the agent's reply](docs/img/wake.png)
+
+### Stop, resume or interrupt an agent
+
+An agent went the wrong way or got stuck? Press Stop under its message (or run `bus.js stop <name>`). The runner and everything it started are killed, and the Claude session is kept. Resume (`bus.js resume <name>`) continues that same session, so the agent remembers what it already did. This also works for an agent that failed or ran out of time.
+
+While an agent is working, a regular message waits until it finishes. If the answer can't wait, tick "btw — inject now" in the form (or use `send --btw`). The message is delivered mid-turn, between tool calls, and the agent replies without dropping its current task.
 
 ### Attach screenshots and files
 
-Use the paperclip, drag and drop, or paste a screenshot with Ctrl+V. The agent receives a file path and opens the image only when the task needs it. A path costs about 25 tokens, an image more than a thousand. Up to 5 files of 10 MB each; `.env`, `*.pem` and `id_rsa*` are refused.
+Use the paperclip, drag and drop, or paste a screenshot with Ctrl+V. Images show up in the feed as previews, other files as chips you can download. The agent receives a file path and opens the image only when the task needs it. A path costs about 25 tokens, an image more than a thousand. By default a message takes up to 10 files of 30 MB each (the project settings change that); `.env`, `*.pem` and `id_rsa*` are refused.
 
-![Message with an attached screenshot](docs/img/attach.png)
+![A markdown report and a message with an attached screenshot](docs/img/attach.png)
 
 ### Keep long dialogs cheap
 
@@ -88,11 +137,23 @@ The same numbers are available without the UI. `bus.js tokens` prints one line p
 
 ### Create and edit agents
 
-"New agent" creates a local subagent: name, description, model, effort, fast mode and the role text. The pencil next to an agent opens its role. Describe what to change in plain words, press "Rewrite with AI", compare before and after, and save only if you like the result. Nothing touches the disk until you press Save.
+"New agent" creates a local subagent: name, description, model, effort, fast mode, access and the role text. The pencil next to an agent opens its role. Describe what to change in plain words, press "Rewrite with AI", compare before and after, and save only if you like the result. Nothing touches the disk until you press Save.
 
-![New agent form](docs/img/new-agent.png)
+The Access section limits what the agent can use. Pick a preset (Everything, Code, Read-only, Messaging) or tick tool groups by hand: reading files, editing files, web, subagents, housekeeping, skills, MCP servers. Every checkbox shows how many tokens it adds to or saves on each wake-up. The numbers come from real `claude` runs, not a formula. A read-only agent, for example, starts about 10k tokens lighter.
+
+![New agent form with the Access section](docs/img/new-agent.png)
 
 ![Editing a role with the AI rewrite](docs/img/edit-agent.png)
+
+### Let an agent improve its own role
+
+Tick "role self-edit" when you send a task (or use `send --evolve`). The agent does the task as usual. After it reports `DONE`, it looks back at the work in the same session and proposes an edit to its role, for example a rule it had to learn the hard way. The agent never writes the role file itself. The proposal waits as a draft: the agent's row says "proposes a role edit", and the editor opens with a diff and the agent's reason. You save it or reject it.
+
+### Tune the project
+
+The gear in the header opens the settings of the current project: whether agents are woken up in the background, wake-ups per hour, time per wake-up, message length, attachment limits, how much `history` prints, schedule thresholds and the models used for compression and role rewrites. There is also a prompt that gets added to every agent: for this project, or for all projects on the machine. Every field explains what it changes. The same settings are available as `bus.js settings`.
+
+![Project settings](docs/img/settings.png)
 
 ### Run things on a schedule
 
@@ -105,12 +166,12 @@ Cron tasks per project: either a `TASK` to an agent or a headless Claude session
 - Filters by agent, message type and text, with search hits highlighted.
 - Delete selected messages, clear one dialog or the whole history.
 - Voice input: hold Space to dictate into the focused field (Chrome and Edge).
-- English and Russian interface, light and dark theme, works on a phone.
+- English and Russian interface, dark and light theme, works on a phone.
 - The feed updates live, no page reloads.
 
-| Dark theme | Phone |
+| Light theme | Phone |
 |---|---|
-| ![Dark theme](docs/img/dark.png) | ![Phone layout, 390px](docs/img/mobile.png) |
+| ![Light theme](docs/img/light.png) | ![Phone layout, 390px](docs/img/mobile.png) |
 
 ## How it works
 
@@ -124,14 +185,14 @@ Cron tasks per project: either a `TASK` to an agent or a headless Claude session
 - The UI listens on `127.0.0.1` only, checks the `Host` header and sends no CORS headers. Every write needs a token embedded in the page, so another browser tab can't send tasks to your agents.
 - Incoming messages are treated as data. The hook tells the session they are not your instructions, and the agent role forbids deleting, deploying, `git push`, installing dependencies or editing configs and secrets on the word of a message. The agent asks for your permission instead.
 - Message text passes through a redactor: values of environment variables that look like secrets, known key formats and credentials in URLs are replaced with `[REDACTED]`. It does not look inside attached files, so a screenshot with a key in it goes through as is.
-- Background wake-ups run `claude -p` with `bypassPermissions`. Any process that can write to an inbox file can therefore start an agent. The brakes: one run per agent at a time, 6 agent-triggered wake-ups per hour, a 10-minute timeout, and the `tools` list in the agent definition. For a project with secrets, remove `Bash` from the agent's tools or switch background wake-ups off with `bus.js autowake off`.
+- Background wake-ups run `claude -p` with `bypassPermissions`. Any process that can write to an inbox file can therefore start an agent. The brakes: one run per agent at a time, 6 agent-triggered wake-ups per hour and a 60-minute timeout (both are project settings), Stop in the UI, and the agent's access list. For a project with secrets, take `Bash` and file editing away from the agent in its Access section, or switch background wake-ups off with `bus.js autowake off` (or for one project, in its settings).
 
 ## Development
 
 ```bash
 node test/run-tests.js        # CLI, UI server, page logic, schedule, i18n — no real claude or pm2 is called
 node test/bus-ui-browser.js   # the page in Chromium; skipped when playwright-core is missing
-node tools/demo.js            # sandbox with demo agents and the UI on :4790 — the screenshots above were taken there
+node tools/demo.js            # sandbox with demo agents and the UI on :4790 — the screenshots above were taken there, in the dark theme
 ```
 
 ## License

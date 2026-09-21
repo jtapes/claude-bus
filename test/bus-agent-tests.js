@@ -5,6 +5,7 @@
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const http = require('http');
 const { spawn, spawnSync } = require('child_process');
@@ -34,6 +35,14 @@ module.exports = async function busAgentTests({ sandbox, configDir, baseEnv, che
   const quotedFile = path.join(sandbox, 'roles', 'q.md');
   fs.writeFileSync(quotedFile, busLib.joinDefinition(quoted));
   check('A17 bus определение: значение в одинарных кавычках YAML читается с разэкранированным апострофом, в двойных — без кавычек', busLib.readRole(quotedFile).description === "It's fine: да" && busLib.readRole(quotedFile).model === 'opus', JSON.stringify(busLib.readRole(quotedFile)));
+
+  const listed = path.join(sandbox, 'roles', 'listed.md');
+  fs.writeFileSync(listed, '---\nname: listed\ndescription: d\ndisallowedTools:\n  - Agent\n  - Workflow\n  - SendMessage\n  - ListAgents\n  - "Bash(git push *, rm *)"\n  - mcp__plane\n  - Read\n---\n\nРоль.\n');
+  const listedRole = busLib.readRole(listed);
+  busLib.updateAgent({ file: listed, description: 'd', model: '', effort: '', body: 'Роль.', denied: ['skills'] });
+  check('A24 bus доступ: disallowedTools YAML-списком в столбик читается как строка через запятую; группа узнаётся только целиком (один Read — рукописное), запятая в скобках правило не рвёт; при сохранении рукописное цело, группы — из формы',
+    listedRole.denied.join() === 'agents,mcp:plane' && listedRole.extra.join('|') === 'Bash(git push *, rm *)|Read' && read(listed).includes('\ndisallowedTools: Skill, Bash(git push *, rm *), Read\n---') && !read(listed).includes('  - Agent')
+    && busLib.deniedLine([]) === '' && busLib.parseDenied('mcp__*, mcp__plane, ListMcpResourcesTool').denied.join() === 'mcp:*', JSON.stringify(listedRole) + read(listed).slice(0, 200));
 
   // ---------- логика страницы ----------
   const L = require(path.join(SCRIPTS, 'ui-logic.js'));
@@ -75,8 +84,19 @@ module.exports = async function busAgentTests({ sandbox, configDir, baseEnv, che
   const fakeClaude = path.join(sandbox, 'fake-claude-agent.js');
   const fakeSeen = path.join(sandbox, 'fake-claude-agent-seen.json');
   const wakeSeen = path.join(sandbox, 'fake-claude-agent-wakes.jsonl');
+  // Подъём агента потоковый (--input-format stream-json): stdin остаётся открытым, промпт — первая строка
   fs.writeFileSync(fakeClaude, `let s = '';
-process.stdin.on('data', (c) => (s += c)).on('end', () => {
+let fired = false;
+const go = () => {
+  if (fired) return;
+  fired = true;
+  main();
+};
+process.stdin.on('data', (c) => {
+  s += c;
+  if (process.argv.includes('--input-format') && s.includes('\\n')) go();
+}).on('end', go);
+function main() {
   const argv = process.argv.slice(2);
   if (argv.includes('--agent')) {
     const name = argv[argv.indexOf('--agent') + 1];
@@ -90,7 +110,7 @@ process.stdin.on('data', (c) => (s += c)).on('end', () => {
   if (s.includes('ПРО-ШИНУ')) return say(JSON.stringify({ description: 'x', body: 'Роль.\\n\\n## Шина\\n\\nсвои правила' }));
   const answer = '\`\`\`json\\n' + JSON.stringify({ description: 'переписано: когда поднимать', body: '# Роль\\n\\nПереписано ИИ.' }) + '\\n\`\`\`';
   return s.includes('МЕДЛЕННО') ? setTimeout(() => say(answer), 1500) : say(answer);
-});
+}
 `);
 
   const port = 20000 + Math.floor(Math.random() * 20000);
@@ -168,6 +188,17 @@ process.stdin.on('data', (c) => (s += c)).on('end', () => {
       saved.status === 200 && afterSave.startsWith('---\nname: newbie\ndescription: новое описание\ntools: Read, Grep, Bash\neffort: max\nmemory: project\n---\n\n# Новичок\n\nТеперь ещё и правит.\n\n## Шина') && afterSave.includes('--as newbie') && !afterSave.includes('model:')
       && noBash.status === 400 && noBash.json().error.includes('Effort') && ownBus.status === 400 && emptyBody.status === 400 && ghost.status === 400 && pathKey.status === 400 && read(localDef('newbie')) === afterSave && !fs.existsSync(path.join(sandbox, 'x.md')), saved.text + afterSave.slice(0, 160) + noBash.text);
 
+    // ---------- описание необязательно ----------
+    const noAbout = await post('/api/agent/create', { name: 'silent', ...fields, description: '  ', body: '# Молчун\n\n- **Гоняет** `тесты` и молчит.\n\nОстальное.' });
+    const silent = read(localDef('silent'));
+    const onlyHeading = await post('/api/agent/save', { key: `silent@${proj}`, ...fields, description: '', body: '## Только заголовок' });
+    const headingAbout = read(localDef('silent')).includes('\ndescription: Только заголовок\n');
+    const longLine = await post('/api/agent/save', { key: `silent@${proj}`, ...fields, description: '', body: 'я'.repeat(400) });
+    const cutAbout = /^description: (.*)$/m.exec(read(localDef('silent')))[1];
+    await post('/api/agent/delete', { key: `silent@${proj}` });
+    check('A6a bus ui пустое описание: берётся первая строка роли с текстом — заголовок пропущен, маркер списка и выделение сняты; роль из одних заголовков — текст заголовка; длинная строка режется до 160 с многоточием',
+      noAbout.status === 200 && silent.includes('\ndescription: Гоняет тесты и молчит.\n') && onlyHeading.status === 200 && headingAbout && longLine.status === 200 && cutAbout.length === 160 && cutAbout.endsWith('…'), noAbout.text + silent.slice(0, 120) + onlyHeading.text + cutAbout.length);
+
     // ---------- глобальный и обёртка ----------
     const globalOpened = (await role('ghelper')).json();
     const globalSaved = await post('/api/agent/save', { key: 'ghelper', description: 'глобальный помощник', model: 'haiku', effort: '', fast: false, body: 'Глобальная роль, правка из UI.' });
@@ -182,6 +213,15 @@ process.stdin.on('data', (c) => (s += c)).on('end', () => {
     const wrapSaved = await post('/api/agent/save', { key: wrapKey, description: 'роль под обёрткой', model: 'opus', effort: 'high', fast: true, body: 'Роль под обёрткой, поправлена.' });
     const wrapperText = read(localDef('gwrap'));
     const wrapFast = read(box('gwrap', 'claude-settings.json'));
+    const wrapFields = { key: wrapKey, description: 'роль под обёрткой', model: 'opus', effort: 'high', fast: true, body: 'Роль под обёрткой, поправлена.' };
+    const manualRefused = await post('/api/agent/save', { ...wrapFields, denied: ['agents'] });
+    const manualKept = read(wrappedRole);
+    const converted = await post('/api/agent/save', { ...wrapFields, denied: ['agents', 'mcp:plane'], convertTools: true });
+    const convertedOpened = (await role(wrapKey)).json();
+    check('A21 bus ui доступ, рукописная tools: роль отдаёт строку как есть (toolsLine); галочки без «Перевести» — 400, файл цел; с convertTools строка tools уходит, встаёт disallowedTools — и в роли, и в обёртке, по которой агента поднимают',
+      wrapOpened.toolsLine === 'Read, Bash' && manualRefused.status === 400 && manualRefused.json().error.includes('Перевести') && manualKept.includes('tools: Read, Bash') && !manualKept.includes('disallowedTools')
+      && converted.status === 200 && !/^tools:/m.test(read(wrappedRole)) && read(wrappedRole).includes('disallowedTools: Agent, Workflow, SendMessage, ListAgents, mcp__plane') && !/^tools:/m.test(read(localDef('gwrap'))) && read(localDef('gwrap')).includes('disallowedTools: Agent, Workflow, SendMessage, ListAgents, mcp__plane')
+      && convertedOpened.toolsLine === '' && convertedOpened.denied.join() === 'agents,mcp:plane', manualRefused.text + converted.text + read(localDef('gwrap')).slice(0, 300));
     const wrapDeleted = await post('/api/agent/delete', { key: wrapKey });
     check('A8 bus ui обёртка над глобальной ролью: редактор открывает и правит саму глобальную роль; в обёртку едут только модель и effort (агента поднимают по её frontmatter), fast mode — в её ящик; удаление сносит обёртку, регистрацию и ящик, роль в ~/.claude/agents остаётся',
       wrapOpened.where === wrappedRole && wrapOpened.body === 'Роль под обёрткой.' && wrapOpened.warning.includes('все проекты') && wrapOpened.deletable === true && wrapSaved.status === 200 && read(wrappedRole).includes('поправлена')
@@ -205,6 +245,23 @@ process.stdin.on('data', (c) => (s += c)).on('end', () => {
       lonerFast.status === 400 && lonerFast.json().error.includes('не заведён') && fastOn.status === 200 && fastShown === true && woken && wakeArgv[wakeArgv.indexOf('--settings') + 1] === '.claude/bus/newbie/wake-settings.json' && wakeSettings.fastMode === true && wakeSettings.claudeMdExcludes.length === 2 && wakeSettings.claudeMdExcludes[0].endsWith('/CLAUDE.md') && wakeSettings.claudeMdExcludes[1].endsWith('/rules/**')
       && fastOff.status === 200 && !fs.existsSync(box('newbie', 'claude-settings.json')) && (await role(key)).json().fast === false, lonerFast.text + JSON.stringify(wakeArgv));
 
+    // ---------- глобальные правила: галочка снимает claudeMdExcludes с фонового подъёма ----------
+    const roleBody = { key, description: 'новое описание', model: 'opus', effort: 'max', body: '# Новичок\n\nТеперь ещё и правит.' };
+    const rulesText = await post('/api/agent/save', { ...roleBody, fast: false, rules: 'true' });
+    const rulesOn = await post('/api/agent/save', { ...roleBody, fast: true, rules: true });
+    const bothFlags = JSON.parse(read(box('newbie', 'claude-settings.json')) || '{}');
+    const rulesShown = (await role(key)).json().rules;
+    const wakesBefore = read(wakeSeen).split('\n').filter((line) => line.includes('"newbie"')).length;
+    spawnSync(process.execPath, [BUS_JS, '--as', 'ghelper', 'send', 'newbie', 'TASK', 'проверь правила'], { cwd: proj, encoding: 'utf8', env: wakeEnv });
+    const wokenRules = await until(() => read(wakeSeen).split('\n').filter((line) => line.includes('"newbie"')).length > wakesBefore && !fs.existsSync(box('newbie', 'wake.lock')), 20000);
+    const rulesSettings = JSON.parse(read(box('newbie', 'wake-settings.json')) || '{"claudeMdExcludes":[]}');
+    const fastOnly = await post('/api/agent/save', { ...roleBody, fast: true, rules: false });
+    const fastOnlyFlags = JSON.parse(read(box('newbie', 'claude-settings.json')) || '{}');
+    const rulesOff = await post('/api/agent/save', { ...roleBody, fast: false, rules: false });
+    check('A16a bus ui глобальные правила: rules строкой — 400; галочка кладёт globalRules рядом с fastMode, роль её показывает; фоновый подъём идёт без claudeMdExcludes, fastMode на месте; снята одна галочка — вторая цела, сняты обе — файла нет',
+      rulesText.status === 400 && rulesOn.status === 200 && bothFlags.fastMode === true && bothFlags.globalRules === true && rulesShown === true && wokenRules && !('claudeMdExcludes' in rulesSettings) && rulesSettings.fastMode === true
+      && fastOnly.status === 200 && fastOnlyFlags.fastMode === true && !('globalRules' in fastOnlyFlags) && rulesOff.status === 200 && !fs.existsSync(box('newbie', 'claude-settings.json')) && (await role(key)).json().rules === false, rulesText.text + rulesOn.text + JSON.stringify(bothFlags) + JSON.stringify(rulesSettings));
+
     // ---------- ИИ ----------
     const onDisk = read(localDef('newbie'));
     const rewritten = await post('/api/agent/rewrite', { key, name: 'newbie', instruction: 'добавь правило про тесты', description: 'новое описание', body: '# Новичок\n\nТеперь ещё и правит.' });
@@ -225,6 +282,51 @@ process.stdin.on('data', (c) => (s += c)).on('end', () => {
     const longAsk = await post('/api/agent/rewrite', { key, name: 'newbie', instruction: `добавь правило про тесты ${'и ещё деталь '.repeat(400)}`, description: 'о'.repeat(3000), body: 'Роль.' });
     const longAbout = await post('/api/agent/save', { key, description: `длинное описание ${'я'.repeat(3000)}`, model: 'opus', effort: 'max', fast: false, body: '# Новичок\n\nТеперь ещё и правит.' });
     check('A19 bus ui агенты: длину просьбы к ИИ и описания форма и сервер не режут — просьба на 5к символов и описание на 3к проходят целиком', longAsk.status === 200 && JSON.parse(read(fakeSeen)).stdin.includes('о'.repeat(3000)) && longAbout.status === 200 && read(localDef('newbie')).includes('я'.repeat(3000)), longAsk.text + longAbout.text);
+
+    // ---------- доступ ----------
+    fs.writeFileSync(path.join(proj, '.mcp.json'), JSON.stringify({ mcpServers: { plane: { command: 'x', env: { KEY: 'MCP-KEY-NE-DOLZHEN-UEHAT' } }, 'плохое имя': {} } }));
+    const limited = await post('/api/agent/create', { name: 'limited', description: 'агент с урезанным доступом', model: 'haiku', effort: '', fast: false, body: 'Роль.', denied: ['agents', 'service', 'mcp:plane'] });
+    const limitedKey = `limited@${proj}`;
+    const limitedText = read(localDef('limited'));
+    const limitedOpened = (await role(limitedKey)).json();
+    const limitedFields = { key: limitedKey, description: 'агент с урезанным доступом', model: 'haiku', effort: '', fast: false, body: 'Роль.' };
+    const wideOpen = await post('/api/agent/save', { ...limitedFields, denied: [] });
+    const wideOpenText = read(localDef('limited'));
+    fs.writeFileSync(localDef('limited'), wideOpenText.replace('model: haiku', 'model: haiku\ndisallowedTools: mcp__plane, Bash(rm *), mcp__plane__get_user'));
+    const reopened = await post('/api/agent/save', { ...limitedFields, denied: ['skills', 'mcp:*'] });
+    const withExtra = read(localDef('limited'));
+    const untouched = await post('/api/agent/save', limitedFields);
+    const afterUntouched = read(localDef('limited'));
+    const extraOnly = await post('/api/agent/save', { ...limitedFields, denied: [] });
+    const extraOnlyText = read(localDef('limited'));
+    const junk = await post('/api/agent/save', { ...limitedFields, denied: ['agents', 'mcp:../x'] });
+    const notList = await post('/api/agent/create', { name: 'limited2', description: 'x', model: '', effort: '', fast: false, body: 'Роль.', denied: 'agents' });
+    const stateAccess = (await request('GET', `/api/state?k=${token}`)).json().access;
+    check('A22 bus ui доступ: снятые группы ложатся строкой disallowedTools (Bash в неё не попадает), роль отдаёт их обратно ключами и имена MCP-серверов каталога — только имена; дописанное руками сохраняется; без denied строка не трогается; пустой denied строку убирает, рукописное оставляет; мусор — 400',
+      limited.status === 200 && limitedText.includes('disallowedTools: Agent, Workflow, SendMessage, ListAgents, CronCreate') && limitedText.includes('DesignSync, mcp__plane\n') && !/disallowedTools:.*\bBash\b/.test(limitedText) && !/^tools:/m.test(limitedText)
+      && limitedOpened.denied.join() === 'agents,service,mcp:plane' && limitedOpened.extra.length === 0 && limitedOpened.servers.join() === 'plane' && !JSON.stringify(limitedOpened).includes('MCP-KEY') && !JSON.stringify(stateAccess).includes('MCP-KEY')
+      && reopened.status === 200 && withExtra.includes('disallowedTools: Skill, mcp__*, ListMcpResourcesTool, ReadMcpResourceTool, ReadMcpResourceDirTool, Bash(rm *), mcp__plane__get_user') && untouched.status === 200 && afterUntouched === withExtra
+      && wideOpen.status === 200 && !wideOpenText.includes('disallowedTools') && extraOnly.status === 200 && extraOnlyText.includes('disallowedTools: Bash(rm *), mcp__plane__get_user\n')
+      && junk.status === 400 && junk.json().error.includes('Доступ') && notList.status === 400 && !fs.existsSync(localDef('limited2'))
+      && !('groups' in stateAccess) && stateAccess.servers.join() === 'plane' && 'weights' in stateAccess, limited.text + limitedText.slice(0, 400) + reopened.text + junk.text);
+    await post('/api/agent/delete', { key: limitedKey });
+    fs.rmSync(path.join(proj, '.mcp.json'), { force: true });
+
+    // Замер доступа: настоящий claude не зовём — подмена «весит» 20000 минус сотня за каждый запрещённый тул и видит только своего агента
+    const fakeMeter = path.join(sandbox, 'fake-claude-meter.js');
+    fs.writeFileSync(fakeMeter, `if (process.argv.includes('--version')) { console.log('9.9.9 (Claude Code)'); process.exit(0); }
+const fs = require('fs');
+const defs = fs.readdirSync('.claude/agents');
+const line = (/^disallowedTools: (.*)$/m.exec(fs.readFileSync('.claude/agents/access.md', 'utf8')) || [0, ''])[1];
+const denied = line ? line.split(',').length : 0;
+console.log(JSON.stringify({ type: 'result', is_error: false, result: 'ок', usage: { input_tokens: 10, cache_creation_input_tokens: 9990 - denied * 100, cache_read_input_tokens: 10000 * defs.length, output_tokens: 1 } }));
+`);
+    const weightsOut = path.join(sandbox, 'access-weights-test.json');
+    const measured = spawnSync(process.execPath, [path.join(path.dirname(BUS_JS), 'access-measure.js'), '--out', weightsOut, '--parallel', '16'], { cwd: sandbox, encoding: 'utf8', env: env(proj, { BUS_CLAUDE_CMD: `"${process.execPath}" "${fakeMeter}"` }) });
+    const table = JSON.parse(read(weightsOut) || '{"contexts":{},"order":[]}');
+    check('A23 access-measure: 128 сочетаний групп, у каждого свой каталог с одним определением (соседи не раздувают тул Agent); ключ — снятые группы через «+» в порядке order; в таблице дата, версия CLI и модель; временный каталог убран',
+      measured.status === 0 && Object.keys(table.contexts).length === 128 && table.order.join() === 'read,edit,web,agents,service,skills,mcp' && table.contexts[''] === 20000 && table.contexts.skills === 19900 && table.contexts['read+edit'] === 19400
+      && table.contexts['skills+mcp'] === 19500 && table.cli === '9.9.9' && table.model === 'haiku' && /^\d{4}-\d{2}-\d{2}$/.test(table.measured) && !fs.readdirSync(require('os').tmpdir()).some((name) => name.startsWith('bus-access-')), measured.stdout.slice(-200) + measured.stderr.slice(-300));
 
     // ---------- очистка диалога с одним агентом ----------
     await post('/api/send', { to: key, type: 'DONE', text: 'первое новичку' });
@@ -267,5 +369,10 @@ process.stdin.on('data', (c) => (s += c)).on('end', () => {
     check('A15 bus ui агенты: создание, правка, удаление и ИИ-правка видны в audit.log', ['ui agent create | newbie', 'ui agent save | newbie@', 'ui agent delete | newbie@', 'ui agent rewrite | newbie@'].every((mark) => audit.includes(mark)), audit.slice(-600));
   } finally {
     server.kill();
+    try {
+      fs.rmSync(path.join(os.tmpdir(), `bus-ui-${server.pid}`), { recursive: true, force: true }); // kill не даёт серверу убрать загрузки самому
+    } catch {
+      // подметёт следующий сервер на старте
+    }
   }
 };

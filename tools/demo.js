@@ -31,7 +31,7 @@ const TEXT = {
       ['masha', 'dima', 'DONE', 'Checkout reads `error` from any non-2xx answer, 409 works as is. I will show "Out of stock" next to the item by itemId — web/pages/checkout.vue:88.'],
       ['masha', 'dima', 'QUESTION', 'One more thing: can the 409 list every missing item at once? The cart may hold several, and I would rather mark them all in one pass.'],
       ['dima', 'masha', 'DONE', 'Yes: the body is now { error: "out_of_stock", items: [{ itemId, left }] }. itemId on the top level stays for a week so the current page does not break.'],
-      ['dima', 'shop', 'DONE', 'Stock check added: server/orders/create.js:41, returns 409 { error, itemId }. Tests: server/orders/create.test.js, 6 passed. masha confirmed the checkout page handles it.'],
+      ['dima', 'shop', 'DONE', '**Stock check added**\n\n- `server/orders/create.js:41` returns `409` when an item is out of stock\n- tests: `server/orders/create.test.js`, 6 passed\n- masha confirmed the checkout page handles it\n\n```json\n{ "error": "out_of_stock", "items": [{ "itemId": 17, "left": 0 }] }\n```'],
       ['shop', 'masha', 'TASK', 'The cart badge is cut off on a 390px screen — see the screenshot. Fix the header layout in web/components/AppHeader.vue.', true],
       ['masha', 'shop', 'DONE', 'Fixed: the badge moved inside the icon button, header no longer wraps. web/components/AppHeader.vue:23, checked at 390px and 768px.'],
       ['landing', 'shop', 'QUESTION', 'Landing needs the public price list. Is GET /api/prices stable, or should we wait for v2?'],
@@ -55,7 +55,7 @@ const TEXT = {
       ['masha', 'dima', 'DONE', 'Оформление читает `error` из любого не-2xx, 409 заработает как есть. «Нет в наличии» покажу у товара по itemId — web/pages/checkout.vue:88.'],
       ['masha', 'dima', 'QUESTION', 'И ещё: может 409 отдавать сразу все закончившиеся товары? В корзине их бывает несколько, хочу подсветить все за один проход.'],
       ['dima', 'masha', 'DONE', 'Да: тело теперь { error: "out_of_stock", items: [{ itemId, left }] }. itemId на верхнем уровне оставлю на неделю, чтобы текущая страница не сломалась.'],
-      ['dima', 'shop', 'DONE', 'Проверка остатка добавлена: server/orders/create.js:41, отдаёт 409 { error, itemId }. Тесты: server/orders/create.test.js, 6 прошли. masha подтвердила, что страница оформления это обрабатывает.'],
+      ['dima', 'shop', 'DONE', '**Проверка остатка добавлена**\n\n- `server/orders/create.js:41` отдаёт `409`, когда товара нет на складе\n- тесты: `server/orders/create.test.js`, 6 прошли\n- masha подтвердила, что страница оформления это обрабатывает\n\n```json\n{ "error": "out_of_stock", "items": [{ "itemId": 17, "left": 0 }] }\n```'],
       ['shop', 'masha', 'TASK', 'Бейдж корзины обрезается на экране 390px — см. скрин. Поправь раскладку шапки в web/components/AppHeader.vue.', true],
       ['masha', 'shop', 'DONE', 'Поправила: бейдж переехал внутрь кнопки-иконки, шапка больше не переносится. web/components/AppHeader.vue:23, проверено на 390px и 768px.'],
       ['landing', 'shop', 'QUESTION', 'Лендингу нужен публичный прайс. GET /api/prices стабилен или ждать v2?'],
@@ -78,21 +78,33 @@ const home = path.join(sandbox, 'home');
 const configDir = path.join(home, '.claude');
 fs.mkdirSync(configDir, { recursive: true });
 
-// Подставной claude: «поднятый агент» забирает inbox и отвечает DONE, сводка и правка роли — заготовки
+// Подставной claude: «поднятый агент» забирает inbox и отвечает DONE последнему написавшему, сводка и правка роли — заготовки.
+// Подъём агента потоковый (--input-format stream-json): stdin остаётся открытым, промпт — первая строка, поэтому ответ — по ней, а не по end
 const fakeClaude = path.join(sandbox, 'fake-claude.js');
 fs.writeFileSync(fakeClaude, `let s = '';
-process.stdin.on('data', (c) => (s += c)).on('end', () => {
+let fired = false;
+const go = () => {
+  if (fired) return;
+  fired = true;
+  main();
+};
+process.stdin.on('data', (c) => {
+  s += c;
+  if (process.argv.includes('--input-format') && s.includes('\\n')) go();
+}).on('end', go);
+function main() {
   const argv = process.argv.slice(2);
   const run = (args) => require('child_process').spawnSync(process.execPath, [${JSON.stringify(BUS_JS)}, ...args], { cwd: process.cwd(), env: process.env, encoding: 'utf8' });
+  if (argv.includes('--input-format')) console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'demo-session' }));
   let result = ${JSON.stringify(TEXT.summary)};
   if (argv.includes('--agent')) {
     const name = argv[argv.indexOf('--agent') + 1];
-    const from = (/from:([a-z0-9-]+)/.exec(run(['--as', name, 'inbox']).stdout) || [])[1];
+    const from = ([...run(['--as', name, 'inbox']).stdout.matchAll(/from:([a-z0-9-]+)/g)].pop() || [])[1];
     if (from) run(['--as', name, 'send', from, 'DONE', ${JSON.stringify(TEXT.reply)}]);
     result = ${JSON.stringify(TEXT.reply)};
-  } else if (argv.includes('sonnet')) result = ${JSON.stringify(JSON.stringify({ description: TEXT.rewrite[0], body: TEXT.rewrite[1] }))};
+  } else if (argv.includes('sonnet') || argv.includes('opus')) result = ${JSON.stringify(JSON.stringify({ description: TEXT.rewrite[0], body: TEXT.rewrite[1] }))};
   setTimeout(() => console.log(JSON.stringify({ type: 'result', is_error: false, result, total_cost_usd: 0.04, usage: argv.includes('--agent') ? { input_tokens: 9200, cache_creation_input_tokens: 4100, output_tokens: 700 } : { input_tokens: 2900, output_tokens: 400 } })), 1500);
-});
+}
 `);
 
 const env = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: configDir, BUS_CLAUDE_CMD: `"${process.execPath}" "${fakeClaude}"`, BUS_PM2_CMD: `"${process.execPath}" -e ""`, BUS_STARTUP_DIR: path.join(home, 'startup'), BUS_SCHEDULER_START_WAIT_MS: '0' };
@@ -150,8 +162,17 @@ for (const [from, to, type, text, withFile] of TEXT.talk) {
 }
 for (const [name, cron, to, prompt] of TEXT.jobs) bus(shop, ['schedule', 'add', name, cron, ...(to ? ['--to', to] : []), prompt]);
 
-// Как будто dima уже поднимался фоном: строка «ответил 09:41 · ≈14к ток.» под его именем
-fs.writeFileSync(path.join(shop, '.claude', 'bus', 'dima', 'wake.json'), JSON.stringify({ state: 'ok', at: Date.now() - 12 * 60 * 1000, by: 'shop', ms: 11400, tokens: 14000, cost: 0.04, reason: '' }));
+// Как будто агенты уже поднимались фоном: dima и masha отработали, qa работает прямо сейчас.
+// trigger — id сообщения, с которого начался запуск: на нём лента рисует отметку «отработал · N с» или «работает 1:24 · Остановить»
+const journal = fs.readFileSync(path.join(shop, '.claude', 'bus', 'history.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+const taskTo = (name) => journal.filter((m) => m.to === name && m.type === 'TASK').pop().id;
+const box = (name) => (name === 'qa' ? path.join(configDir, 'bus', name) : path.join(shop, '.claude', 'bus', name));
+const wake = (name, state) => fs.writeFileSync(path.join(box(name), 'wake.json'), JSON.stringify({ by: 'shop', cost: 0.04, reason: '', times: [state.at], trigger: [taskTo(name)], ...state }));
+wake('dima', { state: 'ok', at: Date.now() - 12 * 60 * 1000, ms: 11400, tokens: 14000 });
+wake('masha', { state: 'ok', at: Date.now() - 6 * 60 * 1000, ms: 23800, tokens: 21000 });
+wake('qa', { state: 'running', at: Date.now() - 84 * 1000, startedAt: Date.now() - 84 * 1000, ms: 0, tokens: 0 });
+// Лок с живым pid — иначе шина решит, шо фоновый процесс пропал, и покажет «упал». pid стенда: «Остановить» погасит стенд, не жми
+fs.writeFileSync(path.join(box('qa'), 'wake.lock'), JSON.stringify({ pid: process.pid, at: Date.now() - 84 * 1000 }));
 
 // Настоящего демона расписания в песочнице нет (pm2 — заглушка): heartbeat пишет сам стенд, иначе панель ругается «демон не работает»
 const beat = () => fs.writeFileSync(path.join(configDir, 'bus', 'scheduler.json'), JSON.stringify({ pid: process.pid, at: Date.now(), lastTick: Date.now() }));

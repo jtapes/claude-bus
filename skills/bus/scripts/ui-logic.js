@@ -9,8 +9,15 @@
   else root.BusLogic = api;
 })(this, function ({ tr, N }) {
   const FILE_TOKENS = 25; // путь вложения в строке inbox и history, оценка
-  const SHOW_LOAD_FROM = 1000; // с этого веса переписка агента показывается в списке
-  const HEAVY_TOKENS = 3000; // с этого веса диалог подсвечивается: пора сжимать
+  const SHOW_LOAD_FROM = 1000; // стартовый порог, пока не пришли настройки: с этого веса переписка агента показывается в списке
+  const HEAVY_TOKENS = 3000; // стартовый порог: с этого веса диалог подсвечивается — пора сжимать
+  let showLoadFrom = SHOW_LOAD_FROM; // текущие пороги — их двигает шестерёнка (ui.showLoadFrom/ui.heavyTokens) через setThresholds
+  let heavyTokens = HEAVY_TOKENS;
+  /** Пороги веса переписки из настроек проекта — по образцу setLang в ui-i18n.js. Мусор или не число — игнор, остаётся прежнее значение. */
+  function setThresholds({ showLoadFrom: show, heavyTokens: heavy } = {}) {
+    if (Number.isFinite(show)) showLoadFrom = show;
+    if (Number.isFinite(heavy)) heavyTokens = heavy;
+  }
   const KIND_LABEL = { project: N('проект'), local: N('локальный'), global: N('глобальный') };
 
   // Медь (оттенки 15–45) занята самой шиной — провода агентов её обходят
@@ -57,12 +64,14 @@
   }
 
   /** Оценка, а не счёт: кириллица — около трёх символов на токен, плюс служебная часть строки history. */
-  const tokensOf = (list) => Math.round(list.reduce((sum, m) => sum + m.text.length / 3 + 10 + (m.files || []).length * FILE_TOKENS, 0));
+  // Журнал может дописать любой процесс: запись без text или с files не списком не должна ронять history, tokens и agents
+  const tokensOf = (list) => Math.round(list.reduce((sum, m) => sum + String(m.text || '').length / 3 + 10 + (Array.isArray(m.files) ? m.files.length : 0) * FILE_TOKENS, 0));
   /** Сводку агент читает целиком строкой «# сводка с …» — она тоже весит; 15 — служебная часть этой строки. */
   const summaryTokens = (summary) => (summary && typeof summary.text === 'string' ? Math.round(summary.text.length / 3) + 15 : 0);
   const sizeOf = (bytes) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} ${tr('МБ')}` : `${Math.max(1, Math.round(bytes / 1024))} ${tr('КБ')}`);
   const short = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, '')}${tr('к')}` : String(n));
-  const clock = (ms) => new Date(ms).toTimeString().slice(0, 5);
+  /** «09:41»; времени нет (состояние правили руками, старая запись) — «—», а не «Inval» от Invalid Date. */
+  const clock = (ms) => (Number.isFinite(new Date(ms).getTime()) ? new Date(ms).toTimeString().slice(0, 5) : '—');
 
   function passes(m, filters, hereRoot) {
     const pair = selectedPair(filters);
@@ -95,6 +104,89 @@
     }
     if (from < s.length || !parts.length) parts.push({ text: s.slice(from), hit: false });
     return parts;
+  }
+
+  // `код` | **жирный** | [текст](http…) | голая ссылка | *курсив*. Подчёркивания не трогаем: snake_case в ответах агентов чаще курсива
+  const MD_INLINE = /`([^`\n]+)`|\*\*(?!\s)([^\n]+?)(?<!\s)\*\*|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>()]+)|(?<![\w*])\*(?![\s*])([^*\n]+?)(?<![\s*])\*(?![\w*])/g;
+  const MD_ITEM = /^(\s*)(?:[-*+]|(\d+)[.)])\s+(.*)$/;
+
+  /** Строка → [{ kind: text|code|bold|italic|link, text, href? }]. Ссылки — только http(s): javascript: и прочее остаётся текстом. */
+  function markdownInline(text) {
+    const s = String(text);
+    const out = [];
+    const plain = (t) => {
+      if (!t) return;
+      const last = out[out.length - 1];
+      if (last && last.kind === 'text') last.text += t;
+      else out.push({ kind: 'text', text: t });
+    };
+    let from = 0;
+    for (const m of s.matchAll(MD_INLINE)) {
+      plain(s.slice(from, m.index));
+      from = m.index + m[0].length;
+      if (m[1] !== undefined) out.push({ kind: 'code', text: m[1] });
+      else if (m[2] !== undefined) out.push({ kind: 'bold', text: m[2] });
+      else if (m[3] !== undefined) out.push({ kind: 'link', text: m[3], href: m[4] });
+      else if (m[5] !== undefined) {
+        const href = m[5].replace(/[.,;:!?]+$/, ''); // точка в конце фразы — не часть адреса
+        out.push({ kind: 'link', text: href, href });
+        plain(m[5].slice(href.length));
+      } else out.push({ kind: 'italic', text: m[6] });
+    }
+    plain(s.slice(from));
+    return out;
+  }
+
+  /**
+   * Текст сообщения → блоки для ленты: heading{level,inline} | para{inline} | list{items:[{depth,marker,inline}]} | quote{inline} | code{text} | hr.
+   * Подмножество markdown, которым пишут агенты; всё непонятное — обычный абзац, перенос внутри абзаца остаётся переносом.
+   * Без DOM: узлы строит страница через el(), так шо HTML из текста не исполняется по построению.
+   */
+  function markdown(text) {
+    const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+    const blocks = [];
+    let para = [];
+    const flush = () => {
+      if (para.length) blocks.push({ kind: 'para', inline: markdownInline(para.join('\n')) });
+      para = [];
+    };
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const bare = line.trim();
+      const last = para.length ? null : blocks[blocks.length - 1]; // начатый абзац ещё не в blocks — сосед сверху уже не тот блок
+      let m;
+      if (bare.startsWith('```')) {
+        flush();
+        const body = [];
+        for (i++; i < lines.length && !lines[i].trim().startsWith('```'); i++) body.push(lines[i]);
+        blocks.push({ kind: 'code', text: body.join('\n') });
+      } else if (!bare) flush();
+      else if ((m = /^(#{1,6})\s+(.+?)\s*#*$/.exec(bare))) {
+        flush();
+        blocks.push({ kind: 'heading', level: m[1].length, inline: markdownInline(m[2]) });
+      } else if (/^(-{3,}|\*{3,}|_{3,})$/.test(bare)) {
+        flush();
+        blocks.push({ kind: 'hr' });
+      } else if ((m = /^>\s?(.*)$/.exec(bare))) {
+        flush();
+        if (last && last.kind === 'quote') {
+          last.text += `\n${m[1]}`;
+          last.inline = markdownInline(last.text);
+        } else blocks.push({ kind: 'quote', text: m[1], inline: markdownInline(m[1]) });
+      } else if ((m = MD_ITEM.exec(line))) {
+        flush();
+        // marker — как написал агент: страница рисует его сама, поэтому вложенный «- » внутри нумерованного списка не получает чужой номер
+        const item = { depth: Math.min(Math.floor(m[1].length / 2), 3), marker: m[2] === undefined ? '•' : `${m[2]}.`, text: m[3], inline: markdownInline(m[3]) };
+        if (last && last.kind === 'list') last.items.push(item);
+        else blocks.push({ kind: 'list', items: [item] });
+      } else if (last && last.kind === 'list' && /^\s+\S/.test(line) && lines[i - 1].trim()) {
+        const item = last.items[last.items.length - 1]; // строка с отступом сразу под пунктом — его продолжение
+        item.text += `\n${bare}`;
+        item.inline = markdownInline(item.text);
+      } else para.push(bare);
+    }
+    flush();
+    return blocks;
   }
 
   /**
@@ -181,7 +273,7 @@
   function pairInfo(matched, summaries) {
     const tail = matched.filter((m) => !covered(m, summaries));
     const weight = tokensOf(tail);
-    return { total: matched.length, tail: tail.length, weight, heavy: weight >= HEAVY_TOKENS, early: tail.length >= 2 && weight < SHOW_LOAD_FROM, canSqueeze: tail.length >= 2 };
+    return { total: matched.length, tail: tail.length, weight, heavy: weight >= heavyTokens, early: tail.length >= 2 && weight < showLoadFrom, canSqueeze: tail.length >= 2 };
   }
 
   /**
@@ -204,7 +296,7 @@
     const rows = [...pairs.values()].map(({ list, ...row }) => {
       const fresh = list.filter((m) => !covered(m, summaries));
       const tokens = tokensOf(fresh);
-      return { ...row, total: list.length, fresh: fresh.length, tokens, summary: summaryTokens(summaries.get(row.pair)), heavy: tokens >= HEAVY_TOKENS };
+      return { ...row, total: list.length, fresh: fresh.length, tokens, summary: summaryTokens(summaries.get(row.pair)), heavy: tokens >= heavyTokens };
     }).sort((a, b) => Number(b.here) - Number(a.here) || b.tokens + b.summary - (a.tokens + a.summary) || a.pair.localeCompare(b.pair));
     const mine = rows.filter((row) => row.here);
     const sum = (key) => mine.reduce((n, row) => n + row[key], 0);
@@ -236,10 +328,54 @@
     const notes = [];
     if (agent.unread && !busy && !mine) notes.push({ tone: 'wait', text: sub ? tr('ждёт подъёма: {n}', { n: agent.unread }) : tr('увидит на следующем промпте: {n}', { n: agent.unread }) });
     if (busy) notes.push({ tone: 'run', text: tr('работает…') });
+    else if (w && w.state === 'stopped') notes.push({ tone: 'wait', text: tr('остановлен {at}', { at: clock(w.at) }), title: tr('Остановил {by}. Продолжить — кнопкой на сообщении, с которого он начал', { by: w.stoppedBy || '?' }) });
     else if (w && w.state === 'ok') notes.push({ tone: 'ok', text: tr('ответил {at}', { at: clock(w.at) }) + (w.tokens ? tr(' · ≈{n} ток.', { n: short(w.tokens) }) : ''), title: tr('Фоновый подъём: {sec} с, разбудил {by}. За час подъёмов: {wakes}', { sec: Math.round((w.ms || 0) / 1000), by: w.by, wakes: w.wakes }) });
     else if (w) notes.push({ tone: 'bad', text: w.state === 'limit' ? (w.until ? tr('лимит для агентов до {until} — тебе ответит', { until: clock(w.until) }) : tr('лимит для агентов — тебе ответит')) : tr('упал {at}: {reason}', { at: clock(w.at), reason: w.reason }), title: `${w.reason}\n${tr('Подробности — wake.log в ящике агента')}` });
-    if (load >= SHOW_LOAD_FROM) notes.push({ tone: 'load', text: tr('переписка ≈{n} ток.', { n: short(load) }), title: tr('несжатая переписка агента, оценка') });
+    // Самоправка роли: идёт разбор после сданной задачи, черновик ждёт пользователя в редакторе, разбор не вышел
+    if (w && w.evolve === 'running') notes.push({ tone: 'run', text: tr('разбирает свою работу…'), title: tr('Самоправка роли: агент в той же сессии готовит правку своей роли') });
+    else if (agent.proposal) notes.push({ tone: 'wait', text: tr('предлагает правку роли'), title: tr('Открой роль карандашом: черновик агента и diff уже в форме. На диск пойдёт только по «Сохранить»') });
+    else if (w && w.evolve === 'failed') notes.push({ tone: 'bad', text: tr('самоправка не вышла'), title: `${w.evolveReason || ''}\n${tr('Подробности — wake.log в ящике агента')}` });
+    else if (w && w.evolve === 'same') notes.push({ tone: 'ok', text: tr('роль менять нечего'), title: tr('Самоправка роли: агент разобрал свою работу и правок не предложил') });
+    if (load >= showLoadFrom) notes.push({ tone: 'load', text: tr('переписка ≈{n} ток.', { n: short(load) }), title: tr('несжатая переписка агента, оценка') });
     return { label, notes, busy, mine };
+  }
+
+  /** Сколько идёт запуск: «0:07», «12:40». */
+  const elapsed = (ms) => {
+    const sec = Math.floor(Math.max(0, Number(ms) || 0) / 1000);
+    return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  };
+
+  /**
+   * Отметка последнего фонового запуска на сообщении, с которого агент начал работу. wake.trigger — id сообщений, собравшихся к началу
+   * круга; отметка одна, на последнем. since — начало запуска: страница сама тикает часы, пока агент работает.
+   * → null | { tone: run | ok | bad | wait, text, title, action: stop | resume | '', key, name, since }
+   */
+  function runMark(m, agents) {
+    const agent = (agents || []).find((a) => a.key === m.toKey && a.wake && Array.isArray(a.wake.trigger) && a.wake.trigger[a.wake.trigger.length - 1] === m.id);
+    if (!agent) return null;
+    const w = agent.wake;
+    const mark = { key: agent.key, name: agent.name, since: 0, action: '', title: '' };
+    const spent = (w.ms >= 1000 ? tr(' · {sec} с', { sec: Math.round(w.ms / 1000) }) : '') + (w.tokens ? tr(' · ≈{n} ток.', { n: short(w.tokens) }) : '');
+    if (w.state === 'running') return { ...mark, tone: 'run', text: tr('{name} работает', { name: agent.name }), since: w.startedAt || w.at, action: 'stop', title: tr('Завис или ушёл не туда — останови: сессия сохранится, её можно продолжить') };
+    if (w.state === 'stopped') return { ...mark, tone: 'wait', text: tr('{name} остановлен {at}', { name: agent.name, at: clock(w.at) }) + spent, action: 'resume', title: tr('Продолжить ту же сессию: агент помнит, шо успел сделать') };
+    if (w.state === 'failed') return { ...mark, tone: 'bad', text: tr('{name} упал {at}: {reason}', { name: agent.name, at: clock(w.at), reason: w.reason }), action: 'resume', title: tr('Продолжить ту же сессию: агент помнит, шо успел сделать') };
+    if (w.state === 'ok') return { ...mark, tone: 'ok', text: tr('{name} отработал {at}', { name: agent.name, at: clock(w.at) }) + spent };
+    return null;
+  }
+
+  /** Получатель сейчас работает в фоне — форма предлагает btw: вбросить посреди хода, а не ждать конца работы. */
+  const canBtw = (agent) => Boolean(agent && agent.wake && agent.wake.state === 'running');
+
+  /** Самоправка роли — только субагенту: у проекта роли-файла нет, его сессию шина не поднимает. */
+  const canEvolve = (agent) => Boolean(agent && (agent.kind === 'local' || agent.kind === 'global') && !agent.blocked);
+
+  /** Строка под формой после кнопки на отметке запуска. r — ответ /api/stop или /api/resume. → { text, bad } */
+  function wakeActionNote(action, name, r) {
+    if (action === 'stop') return r.state === 'stopped' ? { text: tr('{name} остановлен. Продолжить — кнопкой на том же сообщении.', { name }), bad: false } : { text: tr('{name} уже не работает — останавливать некого.', { name }), bad: false };
+    if (r.state === 'started') return { text: r.resumed === false ? tr('Сессия {name} не сохранилась — поднят заново по непрочитанному в inbox.', { name }) : tr('{name} продолжает прежнюю сессию.', { name }), bad: false };
+    if (r.state === 'busy') return { text: tr('{name} уже работает.', { name }), bad: false };
+    return { text: tr('{name} не продолжен: {why}', { name, why: r.reason || (r.state === 'off' ? tr('автоподъём выключен') : r.state) }), bad: true };
   }
 
   /**
@@ -271,7 +407,7 @@
   }
 
   const AGENT_NAME = /^[a-z0-9][a-z0-9-]{0,30}$/; // то же правило, шо NAME и RESERVED в bus.js
-  const validAgentName = (name) => AGENT_NAME.test(String(name || '')) && !['files', 'scheduler', 'schedule'].includes(name);
+  const validAgentName = (name) => AGENT_NAME.test(String(name || '')) && !['files', 'scheduler', 'schedule', 'clear'].includes(name);
 
   /** Можно ли выбрать агента в «Кому»: есть от чьего имени писать (agent.from), а сам он в шине или заведётся при первом сообщении. */
   const writable = (agent) => Boolean(!agent.blocked && agent.alive);
@@ -317,6 +453,101 @@
     return tr('Голосовой ввод не удался: {code}.', { code });
   }
 
+  // ---------- diff ИИ-правки роли ----------
+
+  const DIFF_CELLS_MAX = 4e6; // таблица LCS больше — не считаем: всё старое удалено, всё новое добавлено
+  const DIFF_WORDS_ALIKE = 0.3; // общего в паре строк меньше — слова не подсвечиваем: строка заменена целиком, пестрота только мешала бы
+
+  /** LCS двух списков → [{ kind: 'same' | 'del' | 'add', text }]. В каждой пачке правок сначала удалённое, потом добавленное — как в git. */
+  function diffOps(a, b) {
+    let head = 0;
+    while (head < a.length && head < b.length && a[head] === b[head]) head++;
+    let tail = 0;
+    while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+    // Общие начало и конец в таблицу не идут: у правки по просьбе меняется пара мест, а не вся роль
+    const x = a.slice(head, a.length - tail);
+    const y = b.slice(head, b.length - tail);
+    const same = (list) => list.map((text) => ({ kind: 'same', text }));
+    const dels = [];
+    const adds = [];
+    const middle = [];
+    const flush = () => middle.push(...dels.splice(0), ...adds.splice(0));
+    if (x.length * y.length > DIFF_CELLS_MAX) {
+      dels.push(...x.map((text) => ({ kind: 'del', text })));
+      adds.push(...y.map((text) => ({ kind: 'add', text })));
+    } else {
+      const w = y.length + 1;
+      const table = new Uint32Array((x.length + 1) * w);
+      for (let i = x.length - 1; i >= 0; i--) for (let j = y.length - 1; j >= 0; j--) table[i * w + j] = x[i] === y[j] ? table[(i + 1) * w + j + 1] + 1 : Math.max(table[(i + 1) * w + j], table[i * w + j + 1]);
+      let i = 0;
+      let j = 0;
+      while (i < x.length || j < y.length) {
+        if (i < x.length && j < y.length && x[i] === y[j]) {
+          flush();
+          middle.push({ kind: 'same', text: x[i] });
+          i++;
+          j++;
+        } else if (j >= y.length || (i < x.length && table[(i + 1) * w + j] >= table[i * w + j + 1])) dels.push({ kind: 'del', text: x[i++] });
+        else adds.push({ kind: 'add', text: y[j++] });
+      }
+    }
+    flush();
+    return [...same(a.slice(0, head)), ...middle, ...same(a.slice(a.length - tail))];
+  }
+
+  /** Пара «старая строка → новая»: куски с отметкой changed для подсветки слов. Строки почти без общего → null: подсвечивать нечего. */
+  function wordParts(before, after) {
+    const ops = diffOps(before.match(/\s+|[^\s]+/g) || [], after.match(/\s+|[^\s]+/g) || []);
+    const alike = ops.filter((op) => op.kind === 'same').reduce((sum, op) => sum + op.text.trim().length, 0);
+    if (alike < Math.max(before.trim().length, after.trim().length) * DIFF_WORDS_ALIKE) return null;
+    const side = (skip) => ops.filter((op) => op.kind !== skip).reduce((parts, op) => {
+      const last = parts[parts.length - 1];
+      const changed = op.kind !== 'same';
+      if (last && last.changed === changed) last.text += op.text;
+      else parts.push({ text: op.text, changed });
+      return parts;
+    }, []);
+    return { del: side('add'), add: side('del') };
+  }
+
+  /**
+   * Построчный diff как в git: вокруг правок остаётся context строк, остальное неизменное свёрнуто.
+   * → { hunks: [[{ kind, text, parts? }]], added, removed }; parts — у парных «−/+» строк, для подсветки слов. Хвостовые пробелы текста не сравниваем:
+   * сервер отдаёт роль обрезанной, а в поле после неё бывает пустая строка.
+   */
+  function lineDiff(before, after, context = 3) {
+    const lines = (text) => {
+      const clean = String(text || '').replace(/\r\n/g, '\n').replace(/\s+$/, '');
+      return clean ? clean.split('\n') : [];
+    };
+    const ops = diffOps(lines(before), lines(after));
+    for (let i = 0; i < ops.length; i++) {
+      if (ops[i].kind !== 'del') continue;
+      let adds = i;
+      while (adds < ops.length && ops[adds].kind === 'del') adds++;
+      // k-я удалённая строка пачки — пара k-й добавленной
+      for (let k = 0; i + k < adds && adds + k < ops.length && ops[adds + k].kind === 'add'; k++) {
+        const parts = wordParts(ops[i + k].text, ops[adds + k].text);
+        if (parts) {
+          ops[i + k].parts = parts.del;
+          ops[adds + k].parts = parts.add;
+        }
+      }
+      i = adds - 1;
+    }
+    const keep = new Set();
+    ops.forEach((op, i) => {
+      if (op.kind !== 'same') for (let k = Math.max(0, i - context); k <= Math.min(ops.length - 1, i + context); k++) keep.add(k);
+    });
+    const hunks = [];
+    ops.forEach((op, i) => {
+      if (!keep.has(i)) return;
+      if (!keep.has(i - 1)) hunks.push([]);
+      hunks[hunks.length - 1].push(op);
+    });
+    return { hunks, added: ops.filter((op) => op.kind === 'add').length, removed: ops.filter((op) => op.kind === 'del').length };
+  }
+
   /** Шо стало с подъёмом:r.auto — started | busy | limit | off | failed, r.wake — оркестратор, которому ушёл запасной звонок. */
   function raisedNote(r) {
     if (r.auto === 'started') return tr('{to} поднят в фоне — ответ придёт в ленту, статус виден у него в списке слева.', { to: r.to });
@@ -338,6 +569,7 @@
   function sentNote(r) {
     const sent = r.from ? tr('Отправлено от имени {from}.', { from: r.from }) : tr('Отправлено.');
     if (r.kind === 'project') return `${sent} ${tr('{to} увидит на своём следующем промпте.', { to: r.to })}`;
+    if (r.btw) return `${sent} ${tr('{to} работает — сообщение вброшено ему посреди хода: ответит между вызовами инструментов, задачу не бросит.', { to: r.to })}`;
     return `${enrolledNote(r)}${sent} ${raisedNote(r)}`;
   }
 
@@ -382,7 +614,8 @@
     if (parts.length !== 5) return { preset: 'custom', expr: String(expr || '') };
     const [mi, h, dom, mo, dow] = parts;
     if (dom === '*' && mo === '*') {
-      if (/^\d+$/.test(mi) && /^\d+$/.test(h)) {
+      // «99 99 * * *» — кривой cron: в поле времени формы ему не место, показываем как есть — отказ придёт при сохранении
+      if (/^\d+$/.test(mi) && /^\d+$/.test(h) && Number(mi) <= 59 && Number(h) <= 23) {
         const time = `${pad2(Number(h))}:${pad2(Number(mi))}`;
         if (dow === '*') return { preset: 'daily', time };
         if (dow === '1-5') return { preset: 'weekdays', time };
@@ -391,7 +624,7 @@
         const everyMin = /^\*\/(\d+)$/.exec(mi);
         if (everyMin && h === '*' && SCHEDULE_MINUTE_STEPS.includes(Number(everyMin[1]))) return { preset: 'minutes', n: everyMin[1] };
         const everyHour = /^\*\/(\d+)$/.exec(h);
-        if (everyHour && /^\d+$/.test(mi) && SCHEDULE_HOUR_STEPS.includes(Number(everyHour[1]))) return { preset: 'hours', n: everyHour[1], minute: mi };
+        if (everyHour && /^\d+$/.test(mi) && Number(mi) <= 59 && SCHEDULE_HOUR_STEPS.includes(Number(everyHour[1]))) return { preset: 'hours', n: everyHour[1], minute: mi };
       }
     }
     return { preset: 'custom', expr: parts.join(' ') };
@@ -444,13 +677,111 @@
     return roots.map((root) => ({ root, label: label(root), jobs: jobs.filter((j) => j.root === root).sort((a, b) => a.name.localeCompare(b.name)) }));
   }
 
+  // ---------- доступ агента ----------
+
+  // off — снятые группы формы: ключи ACCESS_GROUPS из bus.js и «mcp» (все серверы разом); serversOff — снятые по одному MCP-серверы.
+  // Пресет — просто набор снятых групп; «Свой набор» встаёт сам, когда галочки не совпали ни с одним
+  const ACCESS_PRESETS = [
+    { key: 'all', label: N('Всё'), off: [] },
+    { key: 'code', label: N('Код'), off: ['agents', 'service'] },
+    { key: 'readonly', label: N('Только чтение'), off: ['edit', 'agents', 'service'] },
+    { key: 'chat', label: N('Переписка'), off: ['edit', 'web', 'agents', 'service', 'skills', 'mcp'] },
+  ];
+
+  const sameSet = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
+
+  function accessPreset(off, serversOff = []) {
+    const hit = serversOff.length && !off.includes('mcp') ? null : ACCESS_PRESETS.find((preset) => sameSet(preset.off, off));
+    return hit ? hit.key : 'custom';
+  }
+
+  /** Форма → denied для сервера: группы, «mcp:*» или серверы по одному. */
+  function accessDenied(off, serversOff = []) {
+    const groups = off.filter((key) => key !== 'mcp');
+    return off.includes('mcp') ? [...groups, 'mcp:*'] : [...groups, ...serversOff.map((name) => `mcp:${name}`)];
+  }
+
+  /** denied с сервера → форма. */
+  function accessFromDenied(denied) {
+    const list = Array.isArray(denied) ? denied : [];
+    const all = list.includes('mcp:*');
+    return { off: [...list.filter((d) => !d.startsWith('mcp:')), ...(all ? ['mcp'] : [])], serversOff: all ? [] : list.filter((d) => d.startsWith('mcp:')).map((d) => d.slice(4)) };
+  }
+
+  /**
+   * Цена доступа по таблице замеров (access-weights.json): не формула, а ячейки — веса групп не складываются.
+   * → null, когда таблицы нет или в ней нет нужного сочетания; иначе { total, saved, delta }: delta[группа] — на сколько изменится
+   * контекст, если эту галочку переключить (у снятой — плюс, у стоящей — обычно минус, но у скиллов в одиночку выходит плюс).
+   */
+  function accessWeight(weights, off) {
+    if (!weights || !Array.isArray(weights.order) || !weights.contexts) return null;
+    const cell = (set) => weights.contexts[weights.order.filter((key) => set.includes(key)).join('+')];
+    const total = cell(off);
+    if (typeof total !== 'number' || typeof cell([]) !== 'number') return null;
+    const delta = {};
+    for (const key of weights.order) {
+      const flipped = cell(off.includes(key) ? off.filter((k) => k !== key) : [...off, key]);
+      if (typeof flipped === 'number') delta[key] = flipped - total;
+    }
+    return { total, saved: cell([]) - total, delta };
+  }
+
+  /** «−5.3к» / «+2.5к» / «≈0» — подпись дельты у галочки. */
+  function accessDeltaLabel(n) {
+    if (typeof n !== 'number') return '';
+    if (Math.abs(n) < 100) return '≈0';
+    return `${n < 0 ? '−' : '+'}${short(Math.abs(n))}`;
+  }
+
   const validScheduleName = (name) => SCHEDULE_NAME.test(String(name || ''));
 
   /** Отказ сервера «cron чаще раза в 5 минут» (saveJob в scheduler.js) — по нему показываем «Всё равно сохранить». */
   const isFrequentError = (message) => /^Слишком часто:/.test(String(message || ''));
 
+  // ---------- настройки проекта (шестерёнка) ----------
+
+  const SETTINGS_MODEL = /^[A-Za-z0-9._[\]-]{1,60}$/; // то же правило, шо MODEL в settings.js — сервер его не отдаёт, дублируем для формы
+
+  /**
+   * Патч для POST /api/settings из формы: только правки — форма против последних значений с сервера (saved).
+   * value === default → null (вернуть дефолт вместо хранения совпавшего с ним override), не изменилось — ключа нет вовсе.
+   */
+  function settingsDirty(schema, saved, form) {
+    const out = {};
+    for (const item of schema) {
+      const value = form[item.key];
+      if (value === saved[item.key]) continue;
+      out[item.key] = value === item.default ? null : value;
+    }
+    return out;
+  }
+
+  /**
+   * Клиентская проверка одного поля формы настроек — та же, шо сервер (settings.js: parse), шобы 999 не улетало впустую запросом.
+   * form — текущие значения остальных полей (для atLeast); raw — как есть из инпута, ещё не приведённое. → текст ошибки или ''.
+   */
+  function settingsFieldError(item, raw, form) {
+    if (item.type === 'bool') return '';
+    if (item.type === 'model') {
+      const model = String(raw).trim();
+      return SETTINGS_MODEL.test(model) ? '' : tr('{key}: имя модели — латиница, цифры, точка и дефис, до 60 символов.', { key: item.key });
+    }
+    if (item.type === 'text') {
+      const n = String(raw).trim().length;
+      return n > item.max ? tr('{key}: не длиннее {max} символов, сейчас {n}.', { key: item.key, max: item.max, n }) : '';
+    }
+    const s = String(raw).trim();
+    if (!/^-?\d+$/.test(s)) return tr('{key}: нужно целое число.', { key: item.key });
+    const n = Number(s);
+    if (n < item.min || n > item.max) return tr('{key}: от {min} до {max}.', { key: item.key, min: item.min, max: item.max });
+    if (item.atLeast && form && form[item.atLeast] !== undefined && n < form[item.atLeast]) return tr('{key} не может быть меньше {other} ({value}).', { key: item.key, other: item.atLeast, value: form[item.atLeast] });
+    return '';
+  }
+
   return {
-    hue, assignHues, pairKey, pairOf, selectedPair, covered, tokensOf, summaryTokens, HEAVY_TOKENS, weightReport, sizeOf, short, passes, splitByQuery, unreadIds, readTarget, nextSelection, feedItems, pairInfo, groupAgents, agentStatus, blockedNote, writable, nameOf, dictated, spaceTap, voiceNote, raisedNote, sentNote, clearTarget, validAgentName,
+    hue, assignHues, pairKey, pairOf, selectedPair, covered, tokensOf, summaryTokens, weightReport, sizeOf, short, passes, splitByQuery, markdown, markdownInline, unreadIds, readTarget, nextSelection, feedItems, pairInfo, groupAgents, agentStatus, clock, elapsed, runMark, canBtw, canEvolve, wakeActionNote, blockedNote, writable, nameOf, dictated, spaceTap, voiceNote, lineDiff, raisedNote, sentNote, clearTarget, validAgentName,
     SCHEDULE_MINUTE_STEPS, SCHEDULE_HOUR_STEPS, buildScheduleCron, scheduleCronPreset, scheduleTarget, scheduleNextLabel, scheduleLastNote, scheduleDaemonNote, scheduleBadge, scheduleGroups, validScheduleName, isFrequentError,
+    ACCESS_PRESETS, accessPreset, accessDenied, accessFromDenied, accessWeight, accessDeltaLabel,
+    setThresholds, settingsDirty, settingsFieldError,
   };
 });
