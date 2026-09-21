@@ -25,8 +25,10 @@ const LOG_ROTATE_BYTES = 256 * 1024;
 const REPORT_LENGTH = 2000;
 // Будит любое сообщение; старые FYI/STATUS/ACK, долежавшие в ящике, — нет
 const WAKE_LINE = /^\[(?:TASK|QUESTION|DONE) /;
-// Замер 19.09.2026: с этими флагами подъём на «привет» — 11 с и ≈14к токенов записи в кэш. MCP и скиллы агентам шины не нужны
-const CLAUDE_ARGS = ['-p', '--permission-mode', 'bypassPermissions', '--output-format', 'json', '--no-session-persistence', '--strict-mcp-config', '--no-chrome', '--disable-slash-commands'];
+// Решение пользователя 21.09.2026: фоновая сессия ничем не урезана — MCP, скиллы и плагины те же, шо в обычной сессии пользователя.
+// Раньше стояли --strict-mcp-config --no-chrome --disable-slash-commands (замер 19.09.2026: подъём на «привет» — 11 с и ≈14к токенов записи в кэш);
+// замер 21.09.2026 без них: те же 11 с, но ≈29к токенов контекста на первый ход. Сузить конкретного агента — строкой tools в его определении
+const CLAUDE_ARGS = ['-p', '--permission-mode', 'bypassPermissions', '--output-format', 'json', '--no-session-persistence'];
 
 const lockFile = (box) => path.join(box, 'wake.lock');
 const stateFile = (box) => path.join(box, 'wake.json');

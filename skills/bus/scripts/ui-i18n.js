@@ -414,7 +414,6 @@
     'ИИ уже переписывает роль — дождись ответа.': 'The AI is already rewriting a role — wait for the reply.',
     'Поля запроса — строки: name, instruction, description, body.': 'Request fields must be strings: name, instruction, description, body.',
     'Напиши, шо поменять в роли.': 'Write what to change in the role.',
-    'Просьба — до {max} символов, тут {n}.': 'The request is limited to {max} characters, this one has {n}.',
     'Роль — до 20 КБ.': 'The role is limited to 20 KB.',
     'Роль в форме не тронута.': 'The role in the form is untouched.',
     'Слишком длинный запрос: больше {kb} КБ.': 'The request is too long: over {kb} KB.',

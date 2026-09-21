@@ -213,15 +213,18 @@ process.stdin.on('data', (c) => (s += c)).on('end', () => {
     const intoBus = await post('/api/agent/rewrite', { key, name: 'newbie', instruction: 'ПРО-ШИНУ напиши', description: 'x', body: 'Роль.' });
     const noAsk = await post('/api/agent/rewrite', { key, name: 'newbie', instruction: '  ', description: 'x', body: 'Роль.' });
     const fromScratch = await post('/api/agent/rewrite', { key: null, name: 'новый агент', instruction: 'фронтенд на Vue', description: '', body: '' });
-    check('A9 bus ui правка роли через ИИ: ответ в ограде ```json разобран, в форму едут описание, тело и токены; на диск ничего не пишется; claude — sonnet без инструментов, из временной папки, блок «Шина» в промпт не идёт; роль с нуля — тоже',
+    check('A9 bus ui правка роли через ИИ: ответ в ограде ```json разобран, в форму едут описание, тело и токены; на диск ничего не пишется; claude — opus (не слабая модель) без инструментов, из временной папки, блок «Шина» в промпт не идёт; роль с нуля — тоже',
       rewritten.status === 200 && rewritten.json().body === '# Роль\n\nПереписано ИИ.' && rewritten.json().description === 'переписано: когда поднимать' && rewritten.json().tokens === 2400 && read(localDef('newbie')) === onDisk
-      && seen.argv.join(' ').includes('--model sonnet') && seen.argv.includes('--tools') && seen.argv.includes('--no-session-persistence') && !seen.cwd.includes('agent-a') && seen.stdin.includes('Просьба пользователя: добавь правило про тесты') && !seen.stdin.includes('--as newbie')
+      && seen.argv.join(' ').includes('--model opus') && seen.argv.includes('--tools') && seen.argv.includes('--no-session-persistence') && !seen.cwd.includes('agent-a') && seen.stdin.includes('Просьба пользователя: добавь правило про тесты') && !seen.stdin.includes('--as newbie')
       && fromScratch.status === 200 && fromScratch.json().body.includes('Переписано'), rewritten.text + JSON.stringify(seen.argv));
     check('A10 bus ui правка роли через ИИ: ответ не по форме, ответ с разделом «## Шина» и пустая просьба — 400 с причиной', notJson.status === 400 && notJson.json().error.includes('не по форме') && intoBus.status === 400 && intoBus.json().error.includes('Шина') && noAsk.status === 400, notJson.text + intoBus.text + noAsk.text);
     const slow = post('/api/agent/rewrite', { key, name: 'newbie', instruction: 'МЕДЛЕННО подумай', description: 'x', body: 'Роль.' });
     await wait(400);
     const second = await post('/api/agent/rewrite', { key, name: 'newbie', instruction: 'ещё одна', description: 'x', body: 'Роль.' });
     check('A11 bus ui правка роли через ИИ: одна за раз — вторая просьба во время первой получает отказ, первая доходит', second.status === 400 && second.json().error.includes('уже') && (await slow).status === 200, second.text);
+    const longAsk = await post('/api/agent/rewrite', { key, name: 'newbie', instruction: `добавь правило про тесты ${'и ещё деталь '.repeat(400)}`, description: 'о'.repeat(3000), body: 'Роль.' });
+    const longAbout = await post('/api/agent/save', { key, description: `длинное описание ${'я'.repeat(3000)}`, model: 'opus', effort: 'max', fast: false, body: '# Новичок\n\nТеперь ещё и правит.' });
+    check('A19 bus ui агенты: длину просьбы к ИИ и описания форма и сервер не режут — просьба на 5к символов и описание на 3к проходят целиком', longAsk.status === 200 && JSON.parse(read(fakeSeen)).stdin.includes('о'.repeat(3000)) && longAbout.status === 200 && read(localDef('newbie')).includes('я'.repeat(3000)), longAsk.text + longAbout.text);
 
     // ---------- очистка диалога с одним агентом ----------
     await post('/api/send', { to: key, type: 'DONE', text: 'первое новичку' });
@@ -229,6 +232,14 @@ process.stdin.on('data', (c) => (s += c)).on('end', () => {
     const journal = path.join(proj, '.claude', 'bus', 'history.jsonl');
     const cleared = await post('/api/clear', { a: key, b: 'aga' });
     check('A12 bus ui очистка: пара «оркестратор ↔ выбранный агент» чистит только их диалог, остальная переписка каталога цела', cleared.status === 200 && cleared.json().removed === 1 && !read(journal).includes('первое новичку') && read(journal).includes('глобальному — остаётся'), cleared.text);
+
+    // ---------- длинное сообщение ----------
+    const longText = `Первая строка задачи.\n\n${'Дальше идёт длинное описание. '.repeat(200)}\nхвост сообщения`;
+    const longSent = await post('/api/send', { to: 'ghelper', type: 'DONE', text: longText });
+    const longMsg = read(path.join(proj, '.claude', 'bus', 'history.jsonl')).split('\n').filter(Boolean).map((line) => JSON.parse(line)).filter((m) => m.to === 'ghelper' && m.type === 'DONE').pop() || {};
+    const longFile = (longMsg.files || [])[0] || {};
+    check('A20 bus ui длинное сообщение: текст длиннее лимита строки шины не обрезается — уходит вложением message.md целиком и с абзацами, в строке первая фраза и отсылка к файлу',
+      longSent.status === 200 && longMsg.text.includes('Первая строка задачи.') && longMsg.text.includes('во вложении message.md') && longFile.name === 'message.md' && read(longFile.path).includes('хвост сообщения') && read(longFile.path).includes('задачи.\n\nДальше'), longSent.text + JSON.stringify(longMsg).slice(0, 300));
 
     // ---------- удалить ----------
     await post('/api/send', { to: key, type: 'DONE', text: 'останется в журнале' });

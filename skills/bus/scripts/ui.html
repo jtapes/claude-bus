@@ -580,13 +580,13 @@
   <form id="agentForm">
     <label><span class="label">Имя<small>латиница, цифры, дефис</small></span><input id="agentName" type="text" maxlength="31" pattern="[a-z0-9][a-z0-9\-]{0,30}" required autocomplete="off" spellcheck="false"></label>
     <label><span class="label">Модель</span><select id="agentModel"></select></label>
-    <label class="wide"><span class="label">Описание<small>когда этого агента поднимать</small></span><input id="agentAbout" type="text" maxlength="1000" required autocomplete="off"></label>
+    <label class="wide"><span class="label">Описание<small>когда этого агента поднимать</small></span><input id="agentAbout" type="text" required autocomplete="off"></label>
     <label><span class="label">Effort<small>сколько модель думает</small></span><select id="agentEffort"></select></label>
     <label class="check" id="agentFastLabel"><input type="checkbox" id="agentFast"> fast mode<small>только Opus; при фоновом подъёме шиной</small></label>
 
     <fieldset class="role-ai">
       <legend class="label">Переписать с ИИ</legend>
-      <textarea id="agentAsk" maxlength="2000" aria-label="Шо поменять в роли" placeholder="Шо поменять: «добавь правило — перед правкой схемы спрашивать пользователя»"></textarea>
+      <textarea id="agentAsk" aria-label="Шо поменять в роли" placeholder="Шо поменять: «добавь правило — перед правкой схемы спрашивать пользователя»"></textarea>
       <div class="role-ai-row">
         <button class="squeeze" id="agentRewrite" type="button"><svg class="icon"><use href="#i-squeeze"/></svg><span>Переписать с ИИ</span></button>
         <button class="ghost" id="agentAiSwap" type="button" hidden>Показать, как было</button>
@@ -1110,7 +1110,6 @@ async function load() {
     say(tr('Шина обновилась, а эта вкладка — старая: отправка из неё не пройдёт. Скопируй текст и обнови страницу (F5).'), true);
   }
   Object.assign(state, { types: data.types, maxFiles: data.maxFiles || state.maxFiles, maxFileBytes: data.maxFileBytes || state.maxFileBytes });
-  $('text').maxLength = data.maxLength;
   renderTypes();
   applyAgents(data);
   // Ленту заменяем, а не доливаем: удалённое из журнала иначе жило бы во вкладке до F5. Пришедшее по SSE, пока шёл запрос, кладём поверх

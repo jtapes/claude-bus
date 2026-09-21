@@ -371,7 +371,6 @@ function wrapGlobal(root, name) {
 
 // ---------- правка определения (UI) ----------
 
-const DESCRIPTION_MAX = 1000;
 const ROLE_MAX_BYTES = 20 * 1024;
 const MODEL = /^[A-Za-z0-9._[\]-]{1,60}$/;
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']; // поле effort во frontmatter субагента; пусто — уровень по умолчанию у модели
@@ -437,7 +436,6 @@ function checkRole({ description, model, effort = '', body }) {
   if (![description, model, effort, body].every(isText)) throw new BusError('Поля роли — строки: description, model, effort, body.');
   const about = description.replace(/\s+/g, ' ').trim();
   if (!about) throw new BusError('Пустое описание: по нему Claude решает, когда поднимать агента.');
-  if (about.length > DESCRIPTION_MAX) throw new BusError(`Описание — до ${DESCRIPTION_MAX} символов, тут ${about.length}.`);
   if (model.trim() && !MODEL.test(model.trim())) throw new BusError('Модель: sonnet, haiku, opus или id модели — латиница, цифры, точка и дефис.');
   if (effort && !EFFORTS.includes(effort)) throw new BusError(`Effort: ${EFFORTS.join(', ')} или пусто — по умолчанию у модели.`);
   const role = body.replace(/\r\n/g, '\n').trim();
