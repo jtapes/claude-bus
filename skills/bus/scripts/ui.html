@@ -98,6 +98,12 @@
   .ghost { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: var(--h); background: none; border: 1px solid var(--line); border-radius: var(--r); padding: 0 12px; font-size: 13px; line-height: 1.2; transition: border-color .15s, color .15s, background-color .15s; }
   .ghost:hover:not(:disabled) { border-color: var(--copper); color: var(--copper); }
   .iconbtn { width: var(--h); padding: 0; }
+  .ghost.update-btn { background: var(--copper); border-color: var(--copper); color: var(--on-copper); font-weight: 600; }
+  .ghost.update-btn:hover:not(:disabled) { color: var(--on-copper); filter: brightness(1.08); }
+  .ghost.update-btn:disabled { opacity: .7; cursor: progress; }
+  .update-news { font-size: 13px; color: var(--copper); text-underline-offset: 2px; }
+  .update-note { display: flex; align-items: center; gap: 8px; padding: 8px var(--gutter); font-size: 13px; background: var(--copper-soft); color: var(--copper); font-weight: 600; border-bottom: 1px solid var(--line); }
+  .update-note.bad { background: var(--danger); color: var(--on-danger); }
   #toggleAgents { display: none; }
   /* Пока связь есть, молчим: индикатор «всё хорошо» — шум. Полоса появляется, только когда лента перестала быть живой */
   .link { display: none; align-items: center; gap: 8px; padding: 8px var(--gutter); font-size: 13px; background: var(--danger); color: var(--on-danger); }
@@ -533,6 +539,7 @@
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
   <symbol id="i-edit" viewBox="0 0 24 24"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></symbol>
   <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
 </svg>
 
@@ -541,12 +548,15 @@
   <div class="mine" id="mine" title="Открой диалог ответившего агента — его ответы прочитаны: сессия проекта их уже не получит и токены на них не потратит. Не откроешь — сессия увидит счётчик ответов на следующем промпте"><span id="mineText"></span></div>
   <button class="ghost" id="scheduleBtn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="schedule" title="Расписание: задачи по cron"><svg class="icon"><use href="#i-clock"/></svg>Расписание<span class="sched-badge" id="scheduleBadge" hidden>0</span></button>
   <button class="ghost" id="weightBtn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="weightPanel" title="Вес переписки этой директории: столько токенов агенты затянут в контекст, прочитав несжатое. Оценка: символы / 3"><svg class="icon"><use href="#i-squeeze"/></svg><span id="weightSum"></span></button>
+  <button class="ghost update-btn" id="updateBtn" type="button" hidden><svg class="icon"><use href="#i-download"/></svg><span id="updateLabel"></span></button>
+  <a class="update-news" id="updateNews" target="_blank" rel="noopener noreferrer" hidden>шо нового</a>
   <button class="ghost" id="toggleAgents" type="button" aria-expanded="false" aria-controls="agents"><svg class="icon"><use href="#i-users"/></svg>Агенты</button>
   <button class="ghost iconbtn" id="settingsBtn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="settings" aria-label="Настройки проекта" title="Настройки проекта"><svg class="icon"><use href="#i-gear"/></svg></button>
   <button class="ghost" id="lang" type="button"></button>
   <button class="ghost iconbtn" id="theme" type="button" aria-label="Сменить тему: светлая или тёмная" title="Сменить тему"><svg class="icon"><use href="#i-theme"/></svg></button>
 </header>
 <div class="link" id="link" role="alert"><i></i><span></span></div>
+<p class="update-note" id="updateNote" role="status" hidden></p>
 
 <div class="layout">
   <aside id="agents" aria-label="Агенты"></aside>
@@ -1403,6 +1413,7 @@ async function load() {
   replaceFeed(data, late);
   renderAgents(); // после ленты: вес переписки у агентов в списке считается по ней
   if (data.error) say(data.error, true);
+  if (data.update) applyUpdate(data.update);
 }
 
 let feedLoaded = false; // в конец ленту ставит только первая загрузка: реконнект SSE и reset после удаления место чтения не трогают
@@ -1455,7 +1466,51 @@ function connect() {
   source.addEventListener('live', (e) => applyLive(JSON.parse(e.data)));
   // Задачи или итог запуска поменялись на диске — панель, если открыта, перерисовывается; форму, которую сейчас правят, не трогаем
   source.addEventListener('schedule', (e) => applySchedule(JSON.parse(e.data)));
+  source.addEventListener('update', (e) => applyUpdate(JSON.parse(e.data)));
 }
+
+// ---------- обновление шины ----------
+
+// state с сервера: off | none | error — кнопки нет; available — кнопка; installed — плашка «перезапусти». note — итог клика в этой вкладке
+const updateView = { data: { state: 'off' }, busy: false, note: '', bad: false };
+
+function applyUpdate(data) {
+  updateView.data = data || { state: 'off' };
+  renderUpdate();
+}
+
+function renderUpdate() {
+  const { data, busy } = updateView;
+  const available = data.state === 'available';
+  $('updateBtn').hidden = !available;
+  $('updateBtn').disabled = busy;
+  $('updateLabel').textContent = busy ? tr('Обновляю…') : tr('Обновить до v{version}', { version: data.latest });
+  $('updateBtn').title = available ? `v${data.current} → v${data.latest}${data.notes ? `\n\n${data.notes}` : ''}` : '';
+  $('updateNews').hidden = !available || !data.url;
+  if (data.url) $('updateNews').href = data.url;
+  const note = data.state === 'installed' ? restartNote(data.latest) : updateView.note;
+  $('updateNote').hidden = !note;
+  $('updateNote').textContent = note;
+  $('updateNote').className = `update-note${updateView.bad && data.state !== 'installed' ? ' bad' : ''}`;
+}
+
+const restartNote = (version) => tr('Обновлено до v{version}. Перезапусти интерфейс: bus.js ui. Демон расписания — pm2 restart bus-scheduler', { version });
+
+$('updateBtn').addEventListener('click', async () => {
+  const { latest } = updateView.data;
+  if (updateView.busy || !confirm(tr('Шина обновится до v{version}. Файлы скилла заменятся, копия старых — в skills/bus.backup', { version: latest }))) return;
+  Object.assign(updateView, { busy: true, note: '', bad: false });
+  renderUpdate();
+  try {
+    await post('/api/update', {});
+    updateView.data = { ...updateView.data, state: 'installed' }; // SSE принесёт то же — плашка не зависит от того, кто первый
+  } catch (err) {
+    Object.assign(updateView, { note: tr('Не обновилось: {why}', { why: err.message }), bad: true });
+  } finally {
+    updateView.busy = false;
+    renderUpdate();
+  }
+});
 
 // ---------- панель агента: создать, править, удалить ----------
 
@@ -2673,6 +2728,7 @@ function setLanguage(lang) {
   renderTypes(true);
   applyAgents({ agents: state.agents, here: state.here });
   renderFeed(new Set(), false);
+  renderUpdate();
   say('');
 }
 $('lang').addEventListener('click', () => setLanguage(I.lang() === 'en' ? 'ru' : 'en'));

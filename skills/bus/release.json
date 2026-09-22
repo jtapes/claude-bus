@@ -1,0 +1,28 @@
+{
+  "version": "1.0.0",
+  "repo": "jtapes/claude-bus",
+  "files": [
+    "SKILL.md",
+    "references/admin.md",
+    "references/agents.md",
+    "references/schedule.md",
+    "references/ui.md",
+    "release.json",
+    "scripts/access-measure.js",
+    "scripts/access-weights.json",
+    "scripts/agent-prompt.md",
+    "scripts/bus-block.md",
+    "scripts/bus.js",
+    "scripts/cron.js",
+    "scripts/lib/project.js",
+    "scripts/lib/redact.js",
+    "scripts/scheduler.js",
+    "scripts/settings.js",
+    "scripts/ui-i18n.js",
+    "scripts/ui-logic.js",
+    "scripts/ui.html",
+    "scripts/ui.js",
+    "scripts/update.js",
+    "scripts/wake.js"
+  ]
+}

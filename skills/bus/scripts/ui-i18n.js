@@ -581,6 +581,28 @@
     'Сбросить все настройки проекта {root} к значениям по умолчанию? Вернуть нельзя.': 'Reset all settings of project {root} to defaults? Cannot be undone.',
     'Есть несохранённые изменения. Закрыть без сохранения?': 'There are unsaved changes. Close without saving?',
     'Закрыть': 'Close',
+
+    // ---------- обновление шины: кнопка, плашка, ошибки сервера и update.js ----------
+    'шо нового': 'what’s new',
+    'Обновляю…': 'Updating…',
+    'Обновить до v{version}': 'Update to v{version}',
+    'Обновлено до v{version}. Перезапусти интерфейс: bus.js ui. Демон расписания — pm2 restart bus-scheduler': 'Updated to v{version}. Restart the UI: bus.js ui. Schedule daemon: pm2 restart bus-scheduler',
+    'Шина обновится до v{version}. Файлы скилла заменятся, копия старых — в skills/bus.backup': 'The bus will be updated to v{version}. Skill files will be replaced, a copy of the old ones goes to skills/bus.backup',
+    'Не обновилось: {why}': 'Update failed: {why}',
+    'Обновление уже идёт.': 'An update is already in progress.',
+    '{names} работает в фоне — дождись конца или останови, потом обновляй.': '{names} is working in the background — wait for it to finish or stop it, then update.',
+    'Обновлять нечего: новой версии шины нет.': 'Nothing to update: there is no newer bus version.',
+    'GitHub вернул не дерево файлов релиза.': 'GitHub did not return the release file tree.',
+    'Дерево релиза пришло не целиком — не ставлю.': 'The release tree came truncated — not installing.',
+    'В релизе подозрительный путь: {path}. Не ставлю.': 'Suspicious path in the release: {path}. Not installing.',
+    'В релизе нет release.json — после такой установки обновления бы кончились. Не ставлю.': 'The release has no release.json — after installing it updates would stop. Not installing.',
+    'Обновление тут выключено: нет release.json или папка скилла — git-клон.': 'Updates are off here: no release.json, or the skill folder is a git clone.',
+    'Не знаю, до какой версии обновлять: проверка обновлений не прошла.': 'Unknown target version: the update check did not succeed.',
+    'Не скачался {path}: {why}': 'Failed to download {path}: {why}',
+    'таймаут': 'timeout',
+    '{path} скачался битым: хеш не сходится с релизом. Ничего не поменял.': '{path} arrived corrupted: its hash does not match the release. Nothing was changed.',
+    'Обновление сорвалось ({why}), и откат тоже: верни папку руками из {backup}.': 'The update failed ({why}) and so did the rollback: restore the folder by hand from {backup}.',
+    'Обновление сорвалось, вернул прежние файлы: {why}': 'The update failed, the previous files are restored: {why}',
   };
 
   return { LANGS, EN, pick, setLang, provide, lang, locale, tr, N };

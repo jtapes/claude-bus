@@ -77,7 +77,7 @@ function main() {
 }
 `);
 
-const baseEnv = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: configDir, BUS_CLAUDE_CMD: `"${process.execPath}" "${fakeClaude}"`, TG_NOTIFY_DRY_RUN: '1', BUS_PM2_CMD: 'rem', BUS_STARTUP_DIR: path.join(home, 'startup'), BUS_SCHEDULER_START_WAIT_MS: '0' }; // расписание: ни настоящего pm2, ни автозагрузки Windows
+const baseEnv = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: configDir, BUS_CLAUDE_CMD: `"${process.execPath}" "${fakeClaude}"`, TG_NOTIFY_DRY_RUN: '1', BUS_PM2_CMD: 'rem', BUS_STARTUP_DIR: path.join(home, 'startup'), BUS_SCHEDULER_START_WAIT_MS: '0', BUS_UPDATE_CHECK: '0' }; // расписание: ни настоящего pm2, ни автозагрузки Windows; обновление на GitHub не проверяется
 for (const key of ['BUS_WAKE', 'BUS_AUTOWAKE', 'CLAUDE_PROJECT_DIR']) delete baseEnv[key];
 
 const mkProject = (name) => {
@@ -1193,6 +1193,41 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       await page.unroute('**/api/state');
       const after = await page.locator('.msg').count();
       return [cards > 0 && after === cards, JSON.stringify({ cards, after })];
+    });
+
+    await scenario('E46 обновление: при available в шапке медная кнопка «Обновить до v…» и ссылка «шо нового», после подтверждения — плашка «Обновлено… перезапусти», кнопки нет; при off кнопки нет', async () => {
+      const offline = await page.locator('#updateBtn').isVisible();
+      const offer = { state: 'available', current: '1.0.0', latest: '1.1.0', notes: 'кнопка обновления', url: 'https://github.com/o/r/releases/tag/v1.1.0' };
+      let posted = 0;
+      await page.route('**/api/state', async (route) => {
+        const response = await route.fetch();
+        return route.fulfill({ response, json: { ...(await response.json()), update: offer } });
+      });
+      await page.route('**/api/update', (route) => {
+        posted++;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, from: '1.0.0', version: '1.1.0' }) });
+      });
+      await page.evaluate(() => load());
+      await page.locator('#updateBtn').waitFor();
+      const label = (await page.locator('#updateBtn').textContent()).trim();
+      const title = await page.locator('#updateBtn').getAttribute('title');
+      const news = await page.locator('#updateNews').getAttribute('href');
+      page.once('dialog', (d) => d.dismiss());
+      await page.click('#updateBtn');
+      await wait(200);
+      const afterDismiss = posted;
+      page.once('dialog', (d) => d.accept());
+      await page.click('#updateBtn');
+      await page.locator('#updateNote').waitFor();
+      const note = await page.locator('#updateNote').textContent();
+      const hidden = !(await page.locator('#updateBtn').isVisible());
+      await page.unroute('**/api/state');
+      await page.unroute('**/api/update');
+      await page.evaluate(() => load());
+      await wait(300);
+      const offAgain = !(await page.locator('#updateBtn').isVisible()) && !(await page.locator('#updateNote').isVisible());
+      return [!offline && label === 'Обновить до v1.1.0' && title.includes('v1.0.0 → v1.1.0') && title.includes('кнопка обновления') && news === offer.url && afterDismiss === 0 && posted === 1
+        && note.includes('Обновлено до v1.1.0') && note.includes('bus.js ui') && hidden && offAgain, JSON.stringify({ offline, label, title, news, afterDismiss, posted, note, hidden, offAgain })];
     });
 
     await scenario('E45 «Кому» не пересобирается на каждое событие agents: опция с фокусом в раскрытом списке остаётся на месте, сменился состав — список новый', async () => {

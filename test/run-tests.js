@@ -34,6 +34,7 @@ const baseEnv = {
   BUS_STARTUP_DIR: path.join(sandbox, 'startup'), // и не должно писать в автозагрузку Windows
   BUS_SCHEDULER_START_WAIT_MS: '0', // подставной pm2 heartbeat не пишет — ждать его незачем
   BUS_AUTOWAKE: '0', // иначе send от субагента запустил бы в фоне настоящий claude; тесты автоподъёма включают его сами
+  BUS_UPDATE_CHECK: '0', // UI не проверяет обновление: у публичной копии есть release.json, и сервер полез бы на GitHub
 };
 delete baseEnv.pm_id; // тесты запущены из-под pm2 — демон расписания в тестах решил бы, шо pm2 держит и его
 delete baseEnv.BUS_WAKE; // тесты мог запустить агент, поднятый шиной, — с этой переменной хук inbox молчит
@@ -1533,6 +1534,11 @@ function main() {
     const runnerPid = JSON.parse(read(box(projU, 'masha', 'wake.lock')) || '{}').pid;
     const foreign = wbus(['--as', 'dima', 'stop', 'masha']);
     const stillRunning = wakeState('masha').state === 'running' && fs.existsSync(box(projU, 'masha', 'wake.lock'));
+    const updateBusy = await request('POST', '/api/update', { headers: auth, body: {} });
+    const updateNoToken = await request('POST', '/api/update', { body: {} });
+    const updateState = (await request('GET', '/api/state')).json().update;
+    check('W11 bus ui /api/update: без токена — 403; пока агент работает в фоне — отказ с его именем; обновление выключено (BUS_UPDATE_CHECK=0) — на странице state off',
+      updateNoToken.status === 403 && updateBusy.status === 400 && updateBusy.json().error.includes('masha') && updateBusy.json().error.includes('работает') && updateState && updateState.state === 'off', `${updateNoToken.status} ${updateBusy.text} ${JSON.stringify(updateState)}`);
     r = wbus(['stop', 'masha']);
     const dead = await until(() => !pidAlive(runnerPid), 10000);
     const again = wbus(['stop', 'masha']);
@@ -1772,6 +1778,8 @@ busUiTests()
   .catch((e) => check('bus agents: тесты не упали с исключением', false, e.stack))
   .then(() => require('./bus-evolve-tests.js')({ sandbox, configDir, baseEnv, check, HOOKS }))
   .catch((e) => check('bus evolve: тесты не упали с исключением', false, e.stack))
+  .then(() => require('./bus-update-tests.js')({ sandbox, check, HOOKS }))
+  .catch((e) => check('bus update: тесты не упали с исключением', false, e.stack))
   .then(() => require('./bus-i18n-tests.js')({ check, HOOKS }))
   .catch((e) => check('bus i18n: тесты не упали с исключением', false, e.stack))
   .then(() => {

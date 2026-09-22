@@ -27,6 +27,7 @@ const bus = require('./bus.js');
 const wake = require('./wake.js');
 const settings = require('./settings.js');
 const i18n = require('./ui-i18n.js');
+const update = require('./update.js');
 
 // Язык ответа — язык вкладки, приславшей запрос (заголовок X-Bus-Lang): у двух вкладок он разный, поэтому не глобальная переменная.
 // Вне запроса (опрос, старт, консоль) языка нет — tr отдаёт русский. Тексты bus.js, scheduler.js и wake.js не переводятся:
@@ -87,6 +88,8 @@ let idleTimer = null;
 let cwd = '';
 let summarizing = false;
 let rewriting = false;
+let updateState = { state: 'off' }; // проверка обновления идёт в фоне после старта; до её конца кнопки нет
+let updating = false;
 
 // ---------- агенты ----------
 
@@ -1188,10 +1191,54 @@ async function rewriteRole({ key, name, instruction, description, body }) {
   }
 }
 
+// ---------- обновление ----------
+
+/** На страницу — без тега и причины сбоя: причина одной строкой уходит в консоль сервера. */
+const updatePayload = () => {
+  const { state, current, latest, notes, url } = updateState;
+  return { state, current, latest, notes, url };
+};
+
+function checkUpdate() {
+  if (process.env.BUS_UPDATE_CHECK === '0') return; // тесты UI: публичная копия с release.json иначе полезла бы в сеть
+  update.check().then((result) => {
+    updateState = result;
+    if (result.state === 'error') console.error(`обновление: не проверил — ${result.reason}`);
+    broadcast('update', updatePayload());
+  }, (e) => console.error(`обновление: ${e.message}`));
+}
+
+async function installUpdate() {
+  collectAgents(); // свежий список работающих в фоне
+  const busy = [...runningBoxes.keys()].map((key) => key.split('@')[0]);
+  if (busy.length) throw new bus.BusError(tr('{names} работает в фоне — дождись конца или останови, потом обновляй.', { names: busy.join(', ') }));
+  if (updateState.state !== 'available') throw new bus.BusError(tr('Обновлять нечего: новой версии шины нет.'));
+  updating = true;
+  try {
+    if (!frozenVersion) {
+      frozenVersion = pageVersion();
+      for (const file of [PAGE, LOGIC, I18N, CRON]) frozen.set(file, fs.readFileSync(file, 'utf8'));
+      scheduler(); // грузится лениво: подтянутый после установки новый scheduler.js встал бы на старый bus.js
+    }
+    const result = await update.install({ tag: updateState.tag });
+    updateState = { ...updateState, state: 'installed' };
+    console.log(`Шина обновлена до ${result.version}, копия прежней — ${result.backup}. Перезапусти: bus.js ui`);
+    broadcast('update', updatePayload());
+    return { ...result, backup: undefined };
+  } finally {
+    updating = false;
+  }
+}
+
 // ---------- HTTP ----------
 
 /** Вкладка, открытая до правки ui.html или до перезапуска сервера, живёт со старой страницей и мёртвым токеном — по этой метке она перезагрузит себя сама. */
-const pageVersion = () => `${token.slice(0, 8)}-${Math.round(Math.max(...[PAGE, LOGIC, I18N, CRON].map((file) => fs.statSync(file).mtimeMs)))}`;
+const pageVersion = () => frozenVersion || `${token.slice(0, 8)}-${Math.round(Math.max(...[PAGE, LOGIC, I18N, CRON].map((file) => fs.statSync(file).mtimeMs)))}`;
+// После установки обновления на диске новая страница, а сервер — старый до перезапуска: отдаём страницу, с которой он стартовал,
+// иначе вкладки по новой метке перезагрузились бы в код, не знающий этого сервера
+const frozen = new Map();
+let frozenVersion = '';
+const pageFile = (file) => (frozen.has(file) ? frozen.get(file) : fs.readFileSync(file, 'utf8'));
 
 // Страницу нельзя открыть во фрейме: чужой сайт выманил бы клик по «Очистить» или «Удалить» (запрос ушёл бы с настоящим токеном).
 // Только frame-ancestors — полный CSP не вводим: страница грузит свои скрипты и инлайновые стили
@@ -1246,10 +1293,10 @@ async function handle(req, res, port) {
   }
 
   if (req.method === 'GET') {
-    if (url.pathname === '/') return reply(res, 200, fs.readFileSync(PAGE, 'utf8').replace('__BUS_TOKEN__', token).replace('__BUS_PAGE__', pageVersion()), 'text/html; charset=utf-8');
-    if (url.pathname === '/i18n.js') return reply(res, 200, fs.readFileSync(I18N, 'utf8'), 'text/javascript; charset=utf-8');
-    if (url.pathname === '/logic.js') return reply(res, 200, fs.readFileSync(LOGIC, 'utf8'), 'text/javascript; charset=utf-8');
-    if (url.pathname === '/cron.js') return reply(res, 200, fs.readFileSync(CRON, 'utf8'), 'text/javascript; charset=utf-8');
+    if (url.pathname === '/') return reply(res, 200, pageFile(PAGE).replace('__BUS_TOKEN__', token).replace('__BUS_PAGE__', pageVersion()), 'text/html; charset=utf-8');
+    if (url.pathname === '/i18n.js') return reply(res, 200, pageFile(I18N), 'text/javascript; charset=utf-8');
+    if (url.pathname === '/logic.js') return reply(res, 200, pageFile(LOGIC), 'text/javascript; charset=utf-8');
+    if (url.pathname === '/cron.js') return reply(res, 200, pageFile(CRON), 'text/javascript; charset=utf-8');
     if (url.pathname === '/api/schedule') return reply(res, 200, scheduleState());
     if (url.pathname === '/api/settings') return reply(res, 200, settingsState());
     if (url.pathname === '/api/ping') return reply(res, 200, { app: 'bus-ui', cwd });
@@ -1261,7 +1308,7 @@ async function handle(req, res, port) {
     if (url.pathname === '/api/state') {
       // Открытие страницы — всегда с диска: вырезанную из журнала строку по размеру файла не поймать
       const snapshot = tick(true) || { agents: [], here: { cwd, root: null, project: null }, error: tr('Реестр шины сейчас не читается.') };
-      return reply(res, 200, { ...snapshot, page: pageVersion(), types: bus.TYPES, access: accessPayload(snapshot.here.root), ...limitsPayload(snapshot.here.root), ...statePayload(), live: liveState() });
+      return reply(res, 200, { ...snapshot, page: pageVersion(), types: bus.TYPES, access: accessPayload(snapshot.here.root), ...limitsPayload(snapshot.here.root), ...statePayload(), live: liveState(), update: updatePayload() });
     }
     return reply(res, 404, { error: tr('Нет такой страницы.') });
   }
@@ -1271,6 +1318,7 @@ async function handle(req, res, port) {
     if (origin && !allowed.includes(origin.replace(/^https?:\/\//, ''))) return reply(res, 403, { error: tr('Чужой Origin.') });
     if (req.headers['x-bus-token'] !== token) return reply(res, 403, { error: tr('Нет токена страницы. Обнови вкладку.') });
     if (url.pathname === '/api/upload') return reply(res, 200, await receiveUpload(req));
+    if (url.pathname === '/api/update' && updating) return reply(res, 409, { error: tr('Обновление уже идёт.') });
     if (!String(req.headers['content-type'] || '').startsWith('application/json')) return reply(res, 415, { error: tr('Нужен application/json.') });
     const roleSized = url.pathname.startsWith('/api/agent/') || url.pathname === '/api/schedule/save';
     const body = await readBody(req, url.pathname === '/api/send' ? SEND_BODY_LIMIT : roleSized ? ROLE_BODY_LIMIT : BODY_LIMIT);
@@ -1288,6 +1336,7 @@ async function handle(req, res, port) {
       return reply(res, 200, result);
     }
     if (url.pathname === '/api/summarize') return reply(res, 200, await summarize(body));
+    if (url.pathname === '/api/update') return reply(res, 200, await installUpdate());
     if (url.pathname === '/api/settings') return reply(res, 200, saveSettings(body));
     if (url.pathname === '/api/delete') return reply(res, 200, deleteMessages(body));
     if (url.pathname === '/api/clear') return reply(res, 200, clearDialog(body));
@@ -1391,6 +1440,7 @@ async function start(args = []) {
     console.log(`UI: ${url} — каталог ${cwd}. Остановить: Ctrl+C; без открытой вкладки сам погаснет через ${IDLE_EXIT_MS / 60000} мин.`);
     updateTimers();
     if (open) openBrowser(url);
+    checkUpdate();
     // Страховка расписания: задачи включены, а демон лежит (pm2 после перезагрузки не воскрес) — поднимаем. После старта и не в ущерб ему: pm2 стоит секунды
     setImmediate(() => {
       try {

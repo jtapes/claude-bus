@@ -1,6 +1,6 @@
 /**
  * Словарь интерфейса шины (skills/bus/scripts/ui-i18n.js) против кода. Ключ перевода — русская строка, поэтому правка русского текста
- * молча отрывает перевод: тест собирает все tr('…') / N('…') из ui.html, ui-logic.js, cron.js, ui.js, settings.js и русские тексты статичной
+ * молча отрывает перевод: тест собирает все tr('…') / N('…') из ui.html, ui-logic.js, cron.js, ui.js, settings.js, update.js и русские тексты статичной
  * разметки и сверяет со словарём EN. Зовёт run-tests.js; сам по себе — node test/bus-i18n-tests.js [--missing].
  */
 
@@ -15,7 +15,7 @@ function collectKeys(SCRIPTS) {
   const keys = new Map();
   const templates = [];
   const add = (key, where) => keys.has(key) || keys.set(key, where);
-  for (const name of ['ui.html', 'ui-logic.js', 'cron.js', 'ui.js', 'settings.js']) {
+  for (const name of ['ui.html', 'ui-logic.js', 'cron.js', 'ui.js', 'settings.js', 'update.js']) {
     const text = fs.readFileSync(path.join(SCRIPTS, name), 'utf8');
     for (const m of text.matchAll(/(?<![\w.$])(?:tr|N)\(\s*'((?:[^'\\\n]|\\.)*)'/g)) add(m[1].replace(/\\(.)/g, '$1'), name);
     for (const m of text.matchAll(/(?<![\w.$])(?:tr|N)\(\s*[`"]/g)) templates.push(`${name}: ${text.slice(m.index, m.index + 60)}`);
