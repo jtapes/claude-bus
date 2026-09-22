@@ -8,7 +8,7 @@
  * Лимит, таймаут и рубильник проекта — настройки каталога запуска (settings.js, шестерёнка в UI); ниже — их дефолты.
  * В ящике агента: wake.lock — идёт запуск, wake.json — чем кончился последний, wake.log — отчёты запусков,
  * wake-btw.jsonl — очередь btw работающему агенту, wake-pending.jsonl — id сообщений, с которых начнётся следующий круг,
- * wake-evolve.json и role-proposal.json — самоправка роли (см. evolve()).
+ * wake-evolve.json и role-proposal.json — самоправка роли (см. evolve()), wake-live.jsonl — живой ход текущего круга для UI (см. liveEntries()).
  *
  * Агент поднимается потоково (stream-json в обе стороны, stdin открыт): так ему можно вбросить сообщение посреди хода (btw),
  * а сессия пишется на диск — остановленного (stop) или упавшего продолжает resume через claude --resume.
@@ -54,6 +54,10 @@ const btwFile = (box) => path.join(box, 'wake-btw.jsonl');
 const pendingFile = (box) => path.join(box, 'wake-pending.jsonl');
 // Самоправка роли: wake-evolve.json — метка «после DONE на это сообщение разбери свою работу», role-proposal.json — черновик роли для UI
 const evolveFile = (box) => path.join(box, 'wake-evolve.json');
+const liveFile = (box) => path.join(box, 'wake-live.jsonl');
+const LIVE_TEXT = 400; // строка хода в UI — не простыня
+const LIVE_KEEP = 200; // хвост файла: сессия на 20 минут — сотни вызовов, UI столько не нужно
+const LIVE_TRIM_EVERY = 50; // раз в столько записей файл переписывается хвостом
 const proposalFile = (box) => path.join(box, 'role-proposal.json');
 const EVOLVE_TIMEOUT_MS = Number(process.env.BUS_EVOLVE_TIMEOUT_MS) || 5 * 60 * 1000;
 const EVOLVE_TTL_MS = 24 * 60 * 60 * 1000; // задачу так и не закрыли — метка протухает, а не срабатывает на чужой работе через неделю
@@ -433,16 +437,72 @@ const btwPrompt = (line) =>
     'Ответь отправителю через шину (send <кто> DONE …) из того, шо уже знаешь, и продолжай основную работу — не бросай её и не начинай заново.',
   ].join('\n');
 
+const oneLine = (text, max) => {
+  const flat = String(text || '').replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+};
+// Абсолютный путь внутри каталога агента — относительным: строка в UI короче
+function shortPath(value, cwd) {
+  const text = String(value || '');
+  if (!cwd || !path.isAbsolute(text)) return text;
+  const rel = path.relative(cwd, text);
+  return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel.split(path.sep).join('/') : text;
+}
+const LIVE_ARG = { Read: 'file_path', Edit: 'file_path', Write: 'file_path', NotebookEdit: 'file_path', Grep: 'pattern', Glob: 'pattern', Agent: 'description', SendMessage: 'to', WebFetch: 'url', WebSearch: 'query' };
+function toolLine(block, cwd) {
+  const input = block.input || {};
+  const name = String(block.name || '?');
+  let arg = '';
+  if (name === 'Bash' || name === 'PowerShell') arg = input.description || String(input.command || '').slice(0, 80);
+  else if (LIVE_ARG[name]) arg = input[LIVE_ARG[name]];
+  if (LIVE_ARG[name] === 'file_path') arg = shortPath(arg, cwd);
+  return arg ? `${name} ${arg}` : name;
+}
+
+/**
+ * Событие потока claude → строки живого хода [{ at, kind: 'text' | 'tool', text }]. Берём только assistant верхнего уровня:
+ * без --include-partial-messages оно приходит одно на ход модели с полными блоками text и tool_use (доки claude, Context7, 22.09.2026).
+ * thinking, результаты тулов и ходы вложенного субагента (parent_tool_use_id) — шум и мегабайты, в ленту не идут.
+ */
+function liveEntries(e, cwd) {
+  if (!e || e.type !== 'assistant' || e.parent_tool_use_id || !Array.isArray(e.message && e.message.content)) return [];
+  const at = Date.now();
+  const out = [];
+  for (const block of e.message.content) {
+    if (block && block.type === 'text' && String(block.text || '').trim()) out.push({ at, kind: 'text', text: oneLine(block.text, LIVE_TEXT) });
+    else if (block && block.type === 'tool_use') out.push({ at, kind: 'tool', text: oneLine(toolLine(block, cwd), LIVE_TEXT) });
+  }
+  return out;
+}
+
+// Живой ход круга — в wake-live.jsonl ящика: файл обнуляется на старте, хвост держится в LIVE_KEEP строк
+function liveWriter(box) {
+  const file = liveFile(box);
+  fs.writeFileSync(file, '');
+  let count = 0;
+  return (entry) => {
+    try {
+      fs.appendFileSync(file, JSON.stringify(entry) + '\n');
+      if (++count % LIVE_TRIM_EVERY) return;
+      const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+      if (lines.length > LIVE_KEEP) fs.writeFileSync(file, lines.slice(-LIVE_KEEP).join('\n') + '\n');
+    } catch {
+      // живой ход — украшение: сбой записи не валит подъём
+    }
+  };
+}
+
 const userLine = (text) => JSON.stringify({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, session_id: '' }) + '\n';
 
 /**
  * Один фоновый запуск claude -p, промпт через stdin. agent — подъём субагента шины; без него — безымянная сессия каталога
  * (задача расписания без адресата, scheduler.js), ей можно задать model.
  * stream — потоковый подъём агента: stdin открыт до итога. resume — id сессии, которую продолжаем; onStart(sessionId) — claude назвал
- * сессию; btw() → [{ line }] — очередь сообщений посреди хода, опрашивается раз в секунду. Без stream — разовый запуск: промпт и EOF.
+ * сессию; btw() → [{ line }] — очередь сообщений посреди хода, опрашивается раз в секунду; onLive(entry) — строка живого хода (liveEntries).
+ * Без stream — разовый запуск: промпт и EOF.
  * → { ok, ms, tokens, context, cost, reason, report, sessionId }
  */
-function runClaude({ cwd, agent = null, model = null, settings: settingsFile = null, prompt: text, timeoutMs = timeoutOf(settings.get(cwd)), stream = false, resume = null, onStart = null, btw = null }) {
+function runClaude({ cwd, agent = null, model = null, settings: settingsFile = null, prompt: text, timeoutMs = timeoutOf(settings.get(cwd)), stream = false, resume = null, onStart = null, btw = null, onLive = null }) {
   const { spawn } = require('child_process');
   return new Promise((resolve) => {
     const started = Date.now();
@@ -489,6 +549,7 @@ function runClaude({ cwd, agent = null, model = null, settings: settingsFile = n
         sessionId = e.session_id;
         if (onStart) onStart(sessionId);
       }
+      if (onLive) for (const entry of liveEntries(e, cwd)) onLive(entry);
       if (e.type !== 'result') return;
       if (resume && e.num_turns === 0) return; // --resume первым шлёт пустой итог поднятой сессии — ход ещё впереди
       final = e;
@@ -689,7 +750,7 @@ async function run(name, box, cwd, by, human = false, resumeId = '') {
       // sessionId прошлого запуска стираем сразу: упади claude до старта — resume поднял бы чужую, давно законченную сессию
       saveState(box, { state: 'running', at: Date.now(), startedAt: Date.now(), by, reason: '', stoppedBy: '', ms: 0, tokens: 0, cost: 0, times, trigger, sessionId: continued || '', evolve: '', evolveReason: '', evolveTokens: 0 }); // ms, tokens, cost прошлого запуска к этому не относятся
       if (!continued) dropSession(cwd, saved.sessionId);
-      const r = await runClaude({ cwd, agent: name, settings: sessionSettings(box), timeoutMs, prompt: continued ? resumePrompt(by) : prompt(by), stream: true, resume: continued, onStart: (sessionId) => saveState(box, { sessionId }), btw: () => takeBtw(box) });
+      const r = await runClaude({ cwd, agent: name, settings: sessionSettings(box), timeoutMs, prompt: continued ? resumePrompt(by) : prompt(by), stream: true, resume: continued, onStart: (sessionId) => saveState(box, { sessionId }), btw: () => takeBtw(box), onLive: liveWriter(box) });
       saveState(box, { state: r.ok ? 'ok' : 'failed', at: Date.now(), by, ms: r.ms, tokens: r.tokens, cost: r.cost, reason: r.reason });
       appendLog(box, `\n=== ${stamp()} · разбудил ${by} · ${r.ok ? 'ok' : 'СБОЙ: ' + r.reason} · ${Math.round(r.ms / 1000)} с · ≈${r.tokens} ток.\n${r.report.slice(0, REPORT_LENGTH)}\n`);
       // Самоправка роли — до проверки inbox: пришедшее, пока агент разбирал свою работу, заберёт следующий круг
@@ -719,7 +780,7 @@ async function run(name, box, cwd, by, human = false, resumeId = '') {
   if (seen && wakeLines(box).some((line) => !seen.includes(line))) request({ name, box }, { cwd, by });
 }
 
-module.exports = { LOG_ROTATE_BYTES, perHourOf, enabled, setEnabled, request, stop, resume, queueBtw, setEvolve, dropEvolve, proposal, dropProposal, bodyHash, state, running, runClaude, killTree, alive, freshBlank, readJson, writeJson, isFast, setFast, hasRules, setRules, headlessSettings };
+module.exports = { LOG_ROTATE_BYTES, liveEntries, perHourOf, enabled, setEnabled, request, stop, resume, queueBtw, setEvolve, dropEvolve, proposal, dropProposal, bodyHash, state, running, runClaude, killTree, alive, freshBlank, readJson, writeJson, isFast, setFast, hasRules, setRules, headlessSettings };
 
 if (require.main === module && process.argv[2] === 'run') {
   const [name, box, cwd, by, human, resumeId] = process.argv.slice(3);

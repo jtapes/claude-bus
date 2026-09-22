@@ -559,6 +559,14 @@ const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
     && errAtLeast.includes('не может быть меньше') && L.settingsFieldError(settingsSchema[3], '20', { 'schedule.minGapMin': 5 }) === '' && L.settingsFieldError(settingsSchema[0], 'мусор', {}) === '',
     JSON.stringify({ errRange, errNotInt, errModel, errAtLeast }));
 
+  const liveAt = new Date(2026, 8, 22, 9, 5, 7).getTime();
+  const liveRows = L.liveLines([{ at: liveAt, kind: 'text', text: 'читаю код' }, { at: liveAt, kind: 'tool', text: 'Read a.js' }, { at: liveAt, kind: 'mcp', text: 'x' }, { text: '' }, null], 2);
+  const liveLong = L.liveLast([{ at: liveAt, kind: 'text', text: 'я'.repeat(200) }]);
+  check('L59 ui-logic liveLines/liveLast: время чч:мм:сс, tone text | tool, хвост из n строк, пустые и битые строки выпали; liveLast режет до 80 символов; пустой список — пусто',
+    liveRows.length === 2 && liveRows[0].tone === 'tool' && liveRows[0].at === '09:05:07' && liveRows[1].tone === 'text' && liveRows[1].text === 'x'
+    && liveLong.length === 80 && liveLong.endsWith('…') && L.liveLast([]) === '' && L.liveLast(null) === '' && L.liveLines(undefined).length === 0,
+    JSON.stringify({ liveRows, liveLong: liveLong.length }));
+
   // wake.state(): раннер убили посреди работы — лока нет, а в wake.json осталось running
   const wake = require(path.resolve(HOOKS, '..', 'skills', 'bus', 'scripts', 'wake.js'));
   const deadBox = path.join(sandbox, 'dead-box');
@@ -657,6 +665,12 @@ function main() {
     const mode = fs.existsSync(${JSON.stringify(wakeMode)}) ? fs.readFileSync(${JSON.stringify(wakeMode)}, 'utf8').trim() : 'ok';
     fs.appendFileSync(${JSON.stringify(wakeSeen)}, JSON.stringify({ name, cwd: process.cwd(), wakeEnv: process.env.BUS_WAKE || '', argv, stdin: s }) + '\\n');
     if (streaming) console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'fake-session-' + name }));
+    // Ход модели для живой ленты UI: текст (длинный — режется до 400), Read внутри каталога агента и вложенный субагент — его строка отброшена
+    if (streaming) {
+      console.log(JSON.stringify({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'thinking', thinking: 'мысль' }, { type: 'text', text: 'живой ход ' + 'я'.repeat(500) }] } }));
+      console.log(JSON.stringify({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: require('path').join(process.cwd(), 'src', 'app.js') } }] } }));
+      console.log(JSON.stringify({ type: 'assistant', parent_tool_use_id: 'toolu_nested', message: { content: [{ type: 'text', text: 'вложенный субагент' }] } }));
+    }
     if (mode === 'hang') return setTimeout(() => {}, 60000);
     if (mode === 'fail') { console.error('модель недоступна'); process.exit(1); }
     if (mode !== 'noread') require('child_process').spawnSync(process.execPath, [${JSON.stringify(BUS_JS)}, '--as', name, 'inbox', '--quiet'], { cwd: process.cwd(), env: process.env });
@@ -1156,6 +1170,11 @@ function main() {
     first = first || { argv: [], stdin: '' };
     check('B53 bus autowake: TASK от субагента — получатель поднят в фоне claude -p --agent из каталога проекта с BUS_WAKE, inbox забран, итог и токены в wake.json, отчёт в wake.log, лок снят', r.out.includes('фон: masha поднят шиной в фоне') && !r.out.includes('wake:') && done && seenWakes().length === 1 && first.name === 'masha' && path.relative(first.cwd, projU) === '' && first.wakeEnv === '1' && first.argv.includes('bypassPermissions') && first.argv.includes('-p') && first.stdin.includes('inbox') && lines(box(projU, 'masha')).length === 0 && wakeState('masha').tokens === 14510 && wakeState('masha').by === 'dima' && read(box(projU, 'masha', 'wake.log')).includes('ответил отправителю'), r.out + r.err + JSON.stringify(wakeState('masha')) + JSON.stringify({ ...first, stdin: first.stdin.slice(0, 60) }) + ` seen=${seenWakes().length} inbox=${lines(box(projU, 'masha')).length}`);
 
+    const liveRecs = lines(box(projU, 'masha', 'wake-live.jsonl')).map((l) => JSON.parse(l));
+    check('B92 bus autowake live: ход агента из потока claude — в wake-live.jsonl ящика: текст (обрезан до 400) и тул с путём относительно каталога агента; thinking и ход вложенного субагента не пишутся',
+      liveRecs.length === 2 && liveRecs[0].kind === 'text' && liveRecs[0].text.startsWith('живой ход ') && liveRecs[0].text.length === 400 && liveRecs[1].kind === 'tool' && liveRecs[1].text === 'Read src/app.js'
+      && liveRecs.every((x) => x.at > 0) && !read(box(projU, 'masha', 'wake-live.jsonl')).includes('вложенный') && !read(box(projU, 'masha', 'wake-live.jsonl')).includes('мысль'), JSON.stringify(liveRecs).slice(0, 300));
+
     r = wbus(['send', 'masha', 'task', 'из живого чата']);
     await wait(700);
     check('B54 bus autowake: отправка из чата проекта фон не запускает — печатает wake:, поднимать будет оркестратор', r.out.includes('wake: masha local') && !r.out.includes('фон:') && seenWakes().length === 1, r.out);
@@ -1572,6 +1591,25 @@ function main() {
       pageWake.state === 'stopped' && pageWake.sessionId === undefined && JSON.stringify(pageWake.trigger) === '["x-1"]' && uiStop.status === 200 && uiStop.json().state === 'idle' && uiStopNoToken.status === 403
       && uiBtw.status === 200 && uiBtw.json().btw === false && read(box(projU, 'masha')).includes('btw из UI свободному'), JSON.stringify(pageWake) + uiStop.text + uiBtw.text);
     wbus(['--as', 'masha', 'inbox', '--quiet']);
+    fs.rmSync(box(projU, 'masha', 'wake.json'), { force: true });
+
+    // Живой ход в UI: пока агент работает, /api/state и SSE-событие live несут его строки; кончил — ключа нет
+    let liveStream = '';
+    const liveSse = http.get({ host: '127.0.0.1', port, path: '/api/events' }, (res) => res.on('data', (c) => (liveStream += c)));
+    setMode('slow');
+    wbus(['--as', 'dima', 'send', 'masha', 'task', 'покажи живой ход']);
+    // Подставной агент печатает ход сразу и потом 2.5 с «думает» — снимок состояния берём в это окно
+    const liveEvent = await until(() => /event: live\ndata: .*Read src\/app\.js/.test(liveStream), 15000);
+    const liveNow = ((await request('GET', '/api/state')).json().live || {})[mashaKey] || [];
+    const liveUp = liveNow.length === 2;
+    await settled('masha', 'ok');
+    const liveAfter = (await request('GET', '/api/state')).json().live || {};
+    // Пустой live уходит и на подписке (первый проход) — считаем только пришедший после строк агента
+    const liveGone = await until(() => /event: live\ndata: \{\}/.test(liveStream.slice(liveStream.lastIndexOf('Read src/app.js'))), 5000);
+    liveSse.destroy();
+    setMode('ok');
+    check('U35 bus ui live: агент работает — /api/state отдаёт live[ключ] с его строками и SSE шлёт событие live; отработал — ключа в live нет, по SSE уходит пустой live',
+      liveUp && liveNow[0].kind === 'text' && liveNow[1].text === 'Read src/app.js' && liveEvent && !liveAfter[mashaKey] && liveGone, JSON.stringify(liveNow).slice(0, 200) + liveStream.slice(-300));
     fs.rmSync(box(projU, 'masha', 'wake.json'), { force: true });
     }
 

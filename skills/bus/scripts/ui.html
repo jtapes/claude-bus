@@ -242,6 +242,13 @@
   .run-mark.run { color: var(--done); font-weight: 600; }
   .run-mark.bad { color: var(--danger); }
   .run-mark .clock { font-variant-numeric: tabular-nums; }
+  .live { flex-basis: 100%; margin: 0; padding: 6px 8px; max-height: 128px; overflow-y: auto; list-style: none; background: var(--field); border: 1px solid var(--line); border-radius: var(--r-xs); font-size: 12px; font-weight: 400; line-height: 1.45; color: var(--ink); cursor: pointer; }
+  .live.open { max-height: 320px; }
+  .live[hidden] { display: none; }
+  .live li { overflow-wrap: anywhere; }
+  .live li.tool { font-family: var(--mono); color: var(--ink-soft); }
+  .live time { margin-right: 6px; font-family: var(--mono); color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .agent .live-last { display: block; font: 11px/1.4 var(--mono); color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .run-mark .ghost { min-height: 26px; padding: 0 10px; font-size: 12px; font-weight: 400; color: var(--ink); }
   .btw-switch { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); cursor: pointer; }
   .text { margin: 6px 0 0; overflow-wrap: anywhere; }
@@ -819,7 +826,7 @@ function icon(name) {
   return svg;
 }
 
-const state = { agents: [], here: {}, types: [], maxFiles: 10, maxFileBytes: 30 * 1024 * 1024, messages: new Map(), summaries: new Map(), hues: new Map(), schedule: null, access: { servers: [], weights: null } };
+const state = { agents: [], here: {}, types: [], maxFiles: 10, maxFileBytes: 30 * 1024 * 1024, messages: new Map(), summaries: new Map(), hues: new Map(), schedule: null, access: { servers: [], weights: null }, live: {}, liveOpen: new Set() };
 let picked = []; // загруженные, но ещё не отправленные вложения: { id, name, size }
 let showCovered = false; // в режиме пары: раскрыты ли сообщения, которые уже ушли в сводку
 const filters = { agents: new Set(), types: new Set(), q: '' };
@@ -855,7 +862,7 @@ function agentButton(agent, fresh, me) {
   const replies = (me && me.repliesBy && me.repliesBy[agent.key]) || 0;
   const button = el('button', { type: 'button', className: `agent${agent.registered ? '' : ' off'}${agent.alive ? '' : ' gone'}${status.busy ? ' running' : ''}`, title: agent.description ? `${agent.description}\n${agent.where}` : agent.where },
     el('span', { className: 'wire' }),
-    el('span', {}, el('span', { className: 'name' }, agent.name), el('span', { className: 'kind' }, status.label, ...status.notes.map((n) => el('span', { className: `note ${n.tone}`, title: n.title || '' }, n.text)))),
+    el('span', {}, el('span', { className: 'name' }, agent.name), el('span', { className: 'kind' }, status.label, ...status.notes.map((n) => el('span', { className: `note ${n.tone}`, title: n.title || '' }, n.text)), status.busy ? liveLastNode(agent.key) : '')),
     // Медный — ответы пользователю: открой диалог, и они прочитаны. У своего оркестратора бейджа нет: в его ящике эти же ответы
     replies ? el('span', { className: 'badge', title: tr('тебе ответил — открой диалог, и прочитано') }, String(replies)) : '',
     agent.unread && !status.mine ? el('span', { className: 'badge wait', title: tr('лежит в его inbox') }, String(agent.unread)) : '');
@@ -1169,7 +1176,49 @@ function runMarkNode(mark) {
     });
     node.append(button);
   }
+  if (mark.tone === 'run') node.append(fillLive(el('ul', { className: 'live', title: tr('Шо агент делает прямо сейчас. Клик — весь ход') }), mark.key));
   return node;
+}
+
+// ---------- живой ход работающего агента (событие live) ----------
+
+const LIVE_SHORT = 6; // строк в свёрнутом блоке; раскрытый — всё, шо прислал сервер
+
+/** Блок под отметкой «работает»: последние строки хода, тулы моноширинно. Раскрытие живёт в state.liveOpen — переживает перерисовку. */
+function fillLive(node, key) {
+  const open = state.liveOpen.has(key);
+  const lines = L.liveLines(state.live[key], open ? Infinity : LIVE_SHORT);
+  node.dataset.key = key;
+  node.classList.toggle('open', open);
+  node.hidden = !lines.length;
+  node.replaceChildren(...lines.map((l) => el('li', { className: l.tone }, l.at ? el('time', {}, l.at) : '', l.text)));
+  if (!node.onclick) {
+    node.onclick = (e) => {
+      e.stopPropagation(); // клик по ходу — не выделение карточки
+      if (String(getSelection()).trim()) return;
+      if (!state.liveOpen.delete(key)) state.liveOpen.add(key);
+      fillLive(node, key);
+    };
+  }
+  node.scrollTop = node.scrollHeight;
+  return node;
+}
+
+/** Последняя строка хода под «работает…» в списке слева. */
+function liveLastNode(key) {
+  const text = L.liveLast(state.live[key]);
+  const node = el('span', { className: 'live-last', title: text ? L.liveLines(state.live[key], 1)[0].text : '' }, text);
+  node.dataset.key = key;
+  node.hidden = !text;
+  return node;
+}
+
+/** Событие live — точечно: блоки под отметками и строки в списке, без renderFeed (он пересобрал бы всю ленту на каждую строку потока). */
+function applyLive(live) {
+  state.live = live && typeof live === 'object' ? live : {};
+  for (const key of state.liveOpen) if (!state.live[key]) state.liveOpen.delete(key);
+  document.querySelectorAll('.live[data-key]').forEach((node) => fillLive(node, node.dataset.key));
+  document.querySelectorAll('.live-last[data-key]').forEach((node) => node.replaceWith(liveLastNode(node.dataset.key)));
 }
 
 const tickClocks = () => document.querySelectorAll('.run-mark .clock').forEach((c) => (c.textContent = L.elapsed(Date.now() - Number(c.dataset.since))));
@@ -1348,6 +1397,7 @@ async function load() {
   Object.assign(state, { access: data.access || state.access, types: data.types, maxFiles: data.maxFiles || state.maxFiles, maxFileBytes: data.maxFileBytes || state.maxFileBytes });
   L.setThresholds({ showLoadFrom: data.showLoadFrom, heavyTokens: data.heavyTokens }); // настройки проекта — пороги веса переписки, дефолт остаётся, пока не пришло число
   renderTypes();
+  state.live = data.live || {};
   applyAgents(data, true);
   // Ленту заменяем, а не доливаем: удалённое из журнала иначе жило бы во вкладке до F5. Пришедшее по SSE, пока шёл запрос, кладём поверх
   replaceFeed(data, late);
@@ -1402,6 +1452,7 @@ function connect() {
     renderAgents();
     renderFeed(new Set(), false);
   });
+  source.addEventListener('live', (e) => applyLive(JSON.parse(e.data)));
   // Задачи или итог запуска поменялись на диске — панель, если открыта, перерисовывается; форму, которую сейчас правят, не трогаем
   source.addEventListener('schedule', (e) => applySchedule(JSON.parse(e.data)));
 }

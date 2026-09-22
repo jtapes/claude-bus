@@ -64,6 +64,11 @@ process.stdin.on('data', (c) => {
 function main() {
   const argv = process.argv.slice(2);
   if (argv.includes('--input-format')) console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'fake-session-ui' }));
+  // Ход модели для живого блока под отметкой «работает»
+  if (argv.includes('--agent') && argv.includes('--input-format')) {
+    console.log(JSON.stringify({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'смотрю форму логина' }] } }));
+    console.log(JSON.stringify({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', name: 'Grep', input: { pattern: 'loginForm' } }] } }));
+  }
   if (argv.includes('--agent') && require('fs').existsSync(${JSON.stringify(fakeMode)}) && require('fs').readFileSync(${JSON.stringify(fakeMode)}, 'utf8').trim() === 'hang') return setTimeout(() => {}, 120000);
   if (argv.includes('--agent')) require('child_process').spawnSync(process.execPath, [${JSON.stringify(BUS_JS)}, '--as', argv[argv.indexOf('--agent') + 1], 'inbox', '--quiet'], { cwd: process.cwd(), env: process.env });
   // Правка роли в панели агента: ИИ отвечает JSON-ом с описанием и телом
@@ -430,7 +435,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       return [done.includes('ответил') && done.includes('≈1.5к') && (await page.locator('#autowake').count()) === 0 && inboxOf('masha') === '', JSON.stringify({ done })];
     });
 
-    await scenario('E40 отметка запуска: на сообщении, с которого агент начал, — «работает» с часами и «Остановить»; занятому агенту форма предлагает btw, оно уходит вбросом; стоп → «остановлен» и «Продолжить»; продолжение поднимает ту же сессию → «отработал»', async () => {
+    await scenario('E40 отметка запуска: на сообщении, с которого агент начал, — «работает» с часами и «Остановить», под ней живой ход агента (клик раскрывает, в списке слева — последняя строка); занятому агенту форма предлагает btw, оно уходит вбросом; стоп → «остановлен» и «Продолжить»; продолжение поднимает ту же сессию → «отработал»', async () => {
       bus(shop, ['autowake', 'on']);
       fs.writeFileSync(fakeMode, 'hang');
       await page.selectOption('#to', { label: 'masha' });
@@ -440,7 +445,16 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       await page.click('#sendBtn');
       const card = page.locator('.msg', { hasText: 'долгая работа из браузера' });
       await card.locator('.run-mark.run').waitFor({ timeout: 20000 });
-      const running = await card.locator('.run-mark.run').textContent();
+      const running = await card.locator('.run-mark > span').first().textContent() + await card.locator('.run-mark .clock').textContent();
+      // Живой ход: блок под отметкой (тул — моноширинно), последняя строка — в списке слева; клик раскрывает блок и карточку не выделяет
+      await card.locator('.live li.tool', { hasText: 'Grep loginForm' }).waitFor({ timeout: 20000 });
+      const liveRows = await card.locator('.live li').count();
+      const liveText = await card.locator('.live li.text').textContent();
+      const liveMono = await card.locator('.live li.tool').evaluate((n) => getComputedStyle(n).fontFamily.includes('Cascadia'));
+      const liveLast = await agentButton('masha').locator('.live-last').textContent();
+      await card.locator('.live').click();
+      const liveOpen = await card.locator('.live.open').count();
+      const livePicked = await card.evaluate((n) => n.classList.contains('picked'));
       await page.locator('#btwWrap').waitFor({ state: 'visible' });
 
       await page.check('#btw');
@@ -454,6 +468,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
       await card.locator('.run-mark button', { hasText: 'Остановить' }).click();
       await card.locator('.run-mark.wait', { hasText: 'остановлен' }).waitFor({ timeout: 20000 });
+      await card.locator('.live').waitFor({ state: 'detached' });
+      await agentButton('masha').locator('.live-last').waitFor({ state: 'detached' });
       const stopNote = await page.locator('#result').textContent();
       await page.locator('#btwWrap').waitFor({ state: 'hidden' });
 
@@ -465,7 +481,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       await card.locator('.run-mark.ok', { hasText: 'отработал' }).waitFor({ timeout: 20000 });
       const resumeNote = await page.locator('#result').textContent();
       bus(shop, ['autowake', 'off']);
-      return [btwHiddenIdle && /masha работает\d+:\d\d/.test(running) && btwReset && notInInbox && stopNote.includes('masha остановлен') && resumeNote.includes('продолжает прежнюю сессию') && inboxOf('masha') === '', JSON.stringify({ btwHiddenIdle, running, btwReset, notInInbox, stopNote, resumeNote })];
+      return [btwHiddenIdle && /masha работает\d+:\d\d/.test(running) && btwReset && notInInbox && stopNote.includes('masha остановлен') && resumeNote.includes('продолжает прежнюю сессию') && inboxOf('masha') === ''
+        && liveRows === 2 && liveText.includes('смотрю форму логина') && liveMono && liveLast === 'Grep loginForm' && liveOpen === 1 && !livePicked, JSON.stringify({ btwHiddenIdle, running, btwReset, notInInbox, stopNote, resumeNote, liveRows, liveText, liveMono, liveLast, liveOpen, livePicked })];
     });
 
     await scenario('E10 ответ оркестратору каталога UI: приходит без перезагрузки, подсвечен «новое», счётчик в шапке и в заголовке вкладки, медный бейдж — на ответившем, у оркестратора ни бейджа, ни подписи про промпт; открыл диалог агента — его ответы прочитаны, ответ другого агента остался', async () => {

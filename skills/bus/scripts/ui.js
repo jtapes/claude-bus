@@ -38,6 +38,7 @@ i18n.provide(() => langStore.getStore());
 const DEFAULT_PORT = 4780;
 const PORT_TRIES = 10;
 const POLL_MS = 1000;
+const LIVE_LINES = 30; // сколько последних строк живого хода агента едет на страницу
 const HEARTBEAT_MS = 25000; // комментарий в SSE-поток: без него прокси и браузер считают соединение мёртвым
 const IDLE_EXIT_MS = 15 * 60 * 1000;
 const BODY_LIMIT = 16 * 1024;
@@ -79,6 +80,8 @@ const journals = new Map(); // файл журнала → { offset, rest }: д�
 const uploads = new Map(); // uploadId → { file, name, at }
 let agentsSignature = '';
 let scheduleSignature = '';
+let liveSignature = '';
+let runningBoxes = new Map(); // ключ работающего субагента → его ящик: живой ход читается только у них (collectAgents)
 let pollTimer = null;
 let idleTimer = null;
 let cwd = '';
@@ -167,7 +170,10 @@ function collectAgents() {
   const here = bus.projectSelf({ ...plain, start: cwd }) || (projects.length === 1 ? projects[0] : null);
   const hereRoot = here ? here.root : null;
   const list = [];
-  const push = (agent, extra = {}) =>
+  const busy = new Map();
+  const push = (agent, extra = {}) => {
+    const wakeState = bus.isSubagent(agent) ? wakeOf(agent.box) : null;
+    if (wakeState && wakeState.state === 'running') busy.set(keyOf(agent.name, agent.kind, agent.root), agent.box);
     list.push({
       key: keyOf(agent.name, agent.kind, agent.root),
       name: agent.name,
@@ -177,12 +183,13 @@ function collectAgents() {
       registered: true,
       alive: fs.existsSync(agent.where),
       unread: bus.unread(agent),
-      wake: bus.isSubagent(agent) ? wakeOf(agent.box) : null, // последний фоновый подъём: running | ok | failed | stopped | limit
+      wake: wakeState, // последний фоновый подъём: running | ok | failed | stopped | limit
       proposal: bus.isSubagent(agent) && Boolean(wake.proposal(agent.box)), // агент предлагает правку своей роли (самоправка) — черновик ждёт в редакторе
       here: Boolean(agent.root && hereRoot && agent.root === hereRoot),
       ...rights(agent.kind, fs.existsSync(agent.where)),
       ...extra,
     });
+  };
 
   const roots = [];
   for (const name of Object.keys(globals)) {
@@ -233,6 +240,7 @@ function collectAgents() {
     else a.blocked = a.from ? '' : N('это оркестратор каталога.');
   }
   // cwd в шапке — каталог проекта, от чьего имени пишем: при подхваченном единственном проекте это не каталог запуска
+  runningBoxes = busy;
   return { agents: list, here: { cwd: hereRoot || cwd, root: hereRoot, project: here ? here.name : null }, roots };
 }
 
@@ -359,6 +367,33 @@ function journalsShrunk() {
   return false;
 }
 
+/**
+ * Живой ход работающих субагентов: { ключ → [{ at, kind, text }] } из wake-live.jsonl (пишет wake.js). Едет своим событием live, а не в снимке
+ * агентов: agents пересобирает на странице всю ленту, а поток меняется каждую секунду. Агент кончил — его ключа нет, страница блок убирает.
+ */
+function liveState() {
+  const live = {};
+  for (const [key, box] of runningBoxes) {
+    let text = '';
+    try {
+      text = fs.readFileSync(path.join(box, 'wake-live.jsonl'), 'utf8');
+    } catch {
+      continue; // подъём только начался — файла ещё нет
+    }
+    const lines = [];
+    for (const line of text.split('\n').filter(Boolean).slice(-LIVE_LINES)) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry && typeof entry.text === 'string') lines.push({ at: Number(entry.at) || 0, kind: entry.kind === 'tool' ? 'tool' : 'text', text: entry.text });
+      } catch {
+        // строку дописывают прямо сейчас или она битая
+      }
+    }
+    if (lines.length) live[key] = lines;
+  }
+  return live;
+}
+
 const statePayload = () => ({ messages: [...messages.values()].sort(byId).slice(-STATE_MESSAGES).map(forPage), summaries: [...summaries.values()] });
 
 /**
@@ -392,6 +427,12 @@ function tick(rebuild = false) {
   if (signature !== agentsSignature) {
     agentsSignature = signature;
     broadcast('agents', snapshot);
+  }
+  const live = liveState();
+  const liveSig = JSON.stringify(live);
+  if (liveSig !== liveSignature) {
+    liveSignature = liveSig;
+    broadcast('live', live);
   }
   // Расписание: файлы задач правят и руками, итоги пишет раннер — сверяем тем же проходом. Каталога scheduler/ нигде нет — модуль не грузим
   if ([null, ...snapshot.roots].some((root) => fs.existsSync(root ? path.join(root, '.claude', 'bus', 'scheduler') : path.join(bus.BUS, 'scheduler')))) {
@@ -1220,7 +1261,7 @@ async function handle(req, res, port) {
     if (url.pathname === '/api/state') {
       // Открытие страницы — всегда с диска: вырезанную из журнала строку по размеру файла не поймать
       const snapshot = tick(true) || { agents: [], here: { cwd, root: null, project: null }, error: tr('Реестр шины сейчас не читается.') };
-      return reply(res, 200, { ...snapshot, page: pageVersion(), types: bus.TYPES, access: accessPayload(snapshot.here.root), ...limitsPayload(snapshot.here.root), ...statePayload() });
+      return reply(res, 200, { ...snapshot, page: pageVersion(), types: bus.TYPES, access: accessPayload(snapshot.here.root), ...limitsPayload(snapshot.here.root), ...statePayload(), live: liveState() });
     }
     return reply(res, 404, { error: tr('Нет такой страницы.') });
   }

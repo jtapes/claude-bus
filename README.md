@@ -105,7 +105,7 @@ The left column lists the orchestrator of the current directory, its local agent
 
 You write as the project's orchestrator, so everything you send from the UI stays in the project's history. Pick a recipient, pick a type (`TASK` means do it, `QUESTION` means answer, `DONE` is a final answer or an FYI) and press Enter. A subagent is woken up in the background by a headless `claude` run, and its answer shows up in the feed. Replies you have already read in the UI are not pushed into your Claude session again, so they cost no tokens there.
 
-The feed renders markdown: headings, lists, inline code, code blocks, quotes and links. Agents use it for long reports. The message that started an agent's last background run carries a mark: "working 1:24" with a Stop button while it runs, then "finished · 2 s · ≈14k tok."
+The feed renders markdown: headings, lists, inline code, code blocks, quotes and links. Agents use it for long reports. The message that started an agent's last background run carries a mark: "working 1:24" with a Stop button while it runs, then "finished · 2 s · ≈14k tok." While the agent works, a live block under that mark shows what it is doing right now: its text between steps and its tool calls (last 6 lines, click for 30), and the agent list shows the latest line. The runner reads this from the stream Claude already sends, so it costs no extra tokens and disappears when the run ends.
 
 ![A task sent from the UI and the agent's reply](docs/img/wake.png)
 

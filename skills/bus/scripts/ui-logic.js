@@ -364,6 +364,25 @@
     return null;
   }
 
+  const LIVE_LAST = 80; // строка живого хода в списке агентов слева
+  const clockSec = (ms) => {
+    const d = new Date(ms);
+    return Number.isFinite(d.getTime()) && ms ? `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}` : '';
+  };
+
+  /** Живой ход работающего агента (событие live) → последние n строк для блока под отметкой «работает»: tone — text | tool. */
+  function liveLines(lines, n = Infinity) {
+    const list = Array.isArray(lines) ? lines.filter((l) => l && typeof l.text === 'string' && l.text) : [];
+    return list.slice(-n).map((l) => ({ tone: l.kind === 'tool' ? 'tool' : 'text', at: clockSec(l.at), text: l.text }));
+  }
+
+  /** Последняя строка живого хода — одной строкой под «работает…» в списке слева; пусто — нечего показать. */
+  function liveLast(lines) {
+    const last = liveLines(lines, 1)[0];
+    if (!last) return '';
+    return last.text.length > LIVE_LAST ? `${last.text.slice(0, LIVE_LAST - 1)}…` : last.text;
+  }
+
   /** Получатель сейчас работает в фоне — форма предлагает btw: вбросить посреди хода, а не ждать конца работы. */
   const canBtw = (agent) => Boolean(agent && agent.wake && agent.wake.state === 'running');
 
@@ -779,7 +798,7 @@
   }
 
   return {
-    hue, assignHues, pairKey, pairOf, selectedPair, covered, tokensOf, summaryTokens, weightReport, sizeOf, short, passes, splitByQuery, markdown, markdownInline, unreadIds, readTarget, nextSelection, feedItems, pairInfo, groupAgents, agentStatus, clock, elapsed, runMark, canBtw, canEvolve, wakeActionNote, blockedNote, writable, nameOf, dictated, spaceTap, voiceNote, lineDiff, raisedNote, sentNote, clearTarget, validAgentName,
+    hue, assignHues, pairKey, pairOf, selectedPair, covered, tokensOf, summaryTokens, weightReport, sizeOf, short, passes, splitByQuery, markdown, markdownInline, unreadIds, readTarget, nextSelection, feedItems, pairInfo, groupAgents, agentStatus, clock, elapsed, runMark, liveLines, liveLast, canBtw, canEvolve, wakeActionNote, blockedNote, writable, nameOf, dictated, spaceTap, voiceNote, lineDiff, raisedNote, sentNote, clearTarget, validAgentName,
     SCHEDULE_MINUTE_STEPS, SCHEDULE_HOUR_STEPS, buildScheduleCron, scheduleCronPreset, scheduleTarget, scheduleNextLabel, scheduleLastNote, scheduleDaemonNote, scheduleBadge, scheduleGroups, validScheduleName, isFrequentError,
     ACCESS_PRESETS, accessPreset, accessDenied, accessFromDenied, accessWeight, accessDeltaLabel,
     setThresholds, settingsDirty, settingsFieldError,

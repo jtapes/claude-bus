@@ -85,6 +85,7 @@
     'Вброшено агенту посреди работы, в inbox не лежало': 'Injected into the running agent mid-turn, never sat in the inbox',
     'Остановить': 'Stop',
     'Продолжить': 'Resume',
+    'Шо агент делает прямо сейчас. Клик — весь ход': 'What the agent is doing right now. Click for the whole run',
     'btw — вбросить сейчас': 'btw — inject now',
     'Агент сейчас работает. Обычное сообщение дождётся конца его работы, btw — дойдёт посреди хода, между вызовами инструментов': 'The agent is working. A regular message waits until it finishes; btw reaches it mid-turn, between tool calls',
     'самоправка роли': 'role self-edit',
