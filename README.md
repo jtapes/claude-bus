@@ -27,6 +27,14 @@ cp -r claude-bus/skills/bus ~/.claude/skills/bus
 
 You need Claude Code and Node.js 18+. `pm2` is needed only for scheduled tasks (`npm i -g pm2`).
 
+## Update
+
+When a newer release is out, the web UI shows an **Update to v…** button in the header (checked once when the UI starts; hover it for the release notes). The button downloads the release from GitHub, checks every file against its git hash and replaces only `~/.claude/skills/bus`: files of the old release that are gone are removed, your own files in that folder stay. A copy of the previous folder goes to `~/.claude/skills/bus.backup` (one copy, the next update overwrites it). Hooks in your `settings.json` are not touched: if a release needs a hook change, its notes say so.
+
+After the update, restart the UI (`bus.js ui`) and, if you use the schedule, the daemon (`pm2 restart bus-scheduler`) — until then they run the old code. The update is refused while an agent is working in the background.
+
+Updating by hand is the same install command. If `~/.claude/skills/bus` is a git clone, the UI doesn't offer updates — use `git pull`.
+
 ## Quick start
 
 Open Claude Code in your project and say what you want in plain words. The skill picks the commands.
