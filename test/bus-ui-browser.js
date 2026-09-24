@@ -702,6 +702,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       await page.locator('.msg .text', { hasText: 'в новом диалоге' }).waitFor();
       await page.locator('#dialogTabs .tab.on', { hasText: 'в новом диалоге' }).waitFor();
       const sent = journalRecords().find((r) => r.text === 'в новом диалоге') || {};
+      bus(shop, ['--as', 'masha', 'inbox'], quiet); // как по роли: сначала inbox — он переводит агента в диалог прочитанного
       const history = bus(shop, ['--as', 'masha', 'history', 'shop']);
       await page.locator('#dialogTabs .tab').first().locator('.open').click();
       await old.waitFor();

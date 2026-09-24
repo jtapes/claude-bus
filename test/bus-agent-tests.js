@@ -404,6 +404,24 @@ console.log(JSON.stringify({ type: 'result', is_error: false, result: 'ок', us
       fs.existsSync(`${journal}.1`) && afterRotation.text && !afterRotation.d && rotatedTabs && ghostDialog.status === 400 && notString.status === 400 && !read(journal).includes('фантом'),
       JSON.stringify({ afterRotation, rotatedTabs, ghostDialog: ghostDialog.text, notString: notString.text }));
 
+    // Агент прочитал задачу в A, пользователь нажал «+» (B) — ответ и history агента остаются в A; прочитал задачу из B — дальше B
+    const dA = (await post('/api/dialog/new', { a: 'aga', b: key })).json().d;
+    await post('/api/send', { to: key, type: 'TASK', text: 'задача в A', dialog: dA });
+    bus(proj, ['--as', 'newbie', 'inbox']);
+    const dB = (await post('/api/dialog/new', { a: 'aga', b: key })).json().d;
+    const historyA = history();
+    bus(proj, ['--as', 'newbie', 'send', 'aga', 'DONE', 'ответ на A']);
+    const replyA = records().find((r) => r.text === 'ответ на A') || {};
+    await post('/api/send', { to: key, type: 'TASK', text: 'задача в B', dialog: dB });
+    const beforeRead = bus(proj, ['--as', 'newbie', 'send', 'aga', 'DONE', 'ещё про A']).out;
+    const stillA = records().find((r) => r.text === 'ещё про A') || {};
+    bus(proj, ['--as', 'newbie', 'inbox']);
+    bus(proj, ['--as', 'newbie', 'send', 'aga', 'DONE', 'ответ на B']);
+    const replyB = records().find((r) => r.text === 'ответ на B') || {};
+    check('A12c bus диалог агента: ответ и history идут в диалог, из которого агент читал inbox, — «+» посреди работы и непрочитанное из другого диалога их не переносят; прочитал — дальше новый',
+      replyA.d === dA && historyA.includes('задача в A') && stillA.d === dA && replyB.d === dB,
+      JSON.stringify({ dA, dB, replyA: replyA.d, stillA: stillA.d, replyB: replyB.d, historyA, beforeRead }));
+
     // ---------- длинное сообщение ----------
     const longText = `Первая строка задачи.\n\n${'Дальше идёт длинное описание. '.repeat(200)}\nхвост сообщения`;
     const longSent = await post('/api/send', { to: 'ghelper', type: 'DONE', text: longText });

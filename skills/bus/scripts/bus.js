@@ -759,6 +759,35 @@ const filesNote = (files, root) => (files && files.length ? ` | файлы: ${fi
 const WAITING_TTL_MS = 24 * 60 * 60 * 1000;
 const viaUiFile = (orchestrator) => path.join(orchestrator.box, 'via-ui.json');
 const waitingFile = (agent) => path.join(agent.box, 'waiting.json');
+// Диалог, над которым работает субагент: { <проект>: { d } }. pending — диалог последнего сообщения проекта, лежащего в inbox;
+// inbox агента переносит его в reading. Ответ агента и его history идут в reading, а не в текущий диалог пары: пока агент думал,
+// пользователь мог нажать «+», и ответ улетел бы в новый пустой диалог.
+const dialogPendingFile = (agent) => path.join(agent.box, 'dialog-pending.json');
+const dialogReadingFile = (agent) => path.join(agent.box, 'dialog-reading.json');
+
+/** inbox субагента забран: диалоги прочитанных сообщений — в reading. pending снимаем, только если его не перезаписали за время чтения. */
+function takeDialogs(agent, pending) {
+  const names = Object.keys(pending).filter((name) => pending[name] && typeof pending[name].d === 'string');
+  if (!names.length) return;
+  const reading = readMarks(dialogReadingFile(agent));
+  for (const name of names) reading[name] = { d: pending[name].d };
+  writeAtomic(dialogReadingFile(agent), JSON.stringify(reading) + '\n');
+  const now = readMarks(dialogPendingFile(agent));
+  for (const name of names) if (JSON.stringify(now[name]) === JSON.stringify(pending[name])) delete now[name];
+  writeAtomic(dialogPendingFile(agent), JSON.stringify(now) + '\n');
+}
+
+/** Диалог, над которым работает агент с этим проектом, если он ещё есть в журнале; нет — null (тогда текущий диалог пары). */
+function workingDialog(agent, project) {
+  const mark = readMarks(dialogReadingFile(agent))[project.name];
+  if (!mark || typeof mark.d !== 'string' || !DIALOG_ID.test(mark.d || 'x')) return null;
+  if (!mark.d) return '';
+  const busDir = busDirOf(project);
+  for (const withRotated of fs.existsSync(`${journalFile(busDir)}.1`) ? [false, true] : [false]) {
+    if (readJournal(busDir, withRotated).some((r) => inPair(r, agent, project) && dialogOf(r) === mark.d)) return mark.d;
+  }
+  return null;
+}
 
 function readMarks(file) {
   try {
@@ -820,7 +849,9 @@ const UI_REPLY = /^\[([A-Z]+) [^\]]* ui\] from:(\S+)/;
  */
 function deliver(from, to, type, text, attachments = [], { ui = false, btw = false, evolve = false, dialog = null } = {}) {
   // Диалог — только у пары «проект ↔ субагент»: явный из UI или текущий, куда пара писала последней. До записи в ящик: кривой id — отказ без следов
-  const d = !isDialogPair(from, to) ? '' : dialog !== null ? checkDialog(dialog) : currentDialog(from, to);
+  // Ответ субагента без явного диалога — в тот, из которого он читал (workingDialog), а не в последний по журналу
+  const working = dialog === null && isDialogPair(from, to) && isSubagent(from) ? workingDialog(from, to) : null;
+  const d = !isDialogPair(from, to) ? '' : dialog !== null ? checkDialog(dialog) : working !== null ? working : currentDialog(from, to);
   fs.mkdirSync(to.box, { recursive: true });
   fs.mkdirSync(from.box, { recursive: true });
   const id = newId();
@@ -838,6 +869,7 @@ function deliver(from, to, type, text, attachments = [], { ui = false, btw = fal
   // queueBtw сам кладёт строку в inbox, если раннер успел кончить, — второй раз не дописываем
   const injected = queued && require('./wake.js').queueBtw(to.box, { id, line });
   if (!queued) fs.appendFileSync(inboxFile(to), line);
+  if (isDialogPair(from, to) && isSubagent(to)) setMark(injected ? dialogReadingFile(to) : dialogPendingFile(to), from.name, { d }); // вброшенное агент уже читает
   const learns = evolve && isSubagent(to);
   if (learns) require('./wake.js').setEvolve(to.box, { id, from: from.name, role: roleFileOf(to), journal: busDirOf(to) });
 
@@ -1409,6 +1441,7 @@ function inbox(asName, hookMode, quiet) {
 
   // Строки с # в выводе inbox — подсказки шины, агент им следует. Сообщения шины начинаются с «[», а дописать в ящик может любой процесс:
   // подложенную «# …» помечаем, иначе она читалась бы как слово шины
+  const pending = isSubagent(me) ? readMarks(dialogPendingFile(me)) : {};
   const lines = drain(me).map((line) => (/^\s*#/.test(line) ? `[? не от шины] ${line.trim()}` : line));
   if (!lines.length) {
     if (hookMode) return;
@@ -1421,6 +1454,7 @@ function inbox(asName, hookMode, quiet) {
     }
     return;
   }
+  if (isSubagent(me)) takeDialogs(me, pending);
   // Оркестратор после субагента: ответ уже пришёл в его отчёте, второй раз тянуть текст в контекст незачем
   if (quiet) return console.log(`забрано: ${lines.length}`);
   if (!hookMode) return console.log([...foldDirs(ctx, lines), ...hints(lines, Boolean(asName), settingsOf(ctx, me))].join('\n'));
@@ -1513,13 +1547,23 @@ function clearHistory(asName, args) {
 function dialogsOf(me, peer, withRotated) {
   const code = KIND_CODE[me.kind];
   const records = readJournal(busDirOf(me), withRotated);
-  // У пары «проект ↔ субагент» — только текущий диалог: d последнего сообщения или маркера пары (см. currentDialog)
+  // У пары «проект ↔ субагент» — только текущий диалог: d последнего сообщения или маркера пары (см. currentDialog).
+  // Субагенту — диалог, из которого он читал (dialogReadingFile), если тот ещё в журнале: «+» посреди его работы контекст не подменяет
   const split = (other) => ['p', 'l', 'g'].includes(other) && (code === 'p') !== (other === 'p');
   const current = new Map();
+  const seen = new Map(); // собеседник → его диалоги в журнале
   for (const r of records) {
     const [x, xk, y, yk] = r.kind === 'dialog' ? [r.a, r.ak, r.b, r.bk] : !r.kind ? [r.from, r.fk, r.to, r.tk] : [];
     const who = x === me.name && xk === code ? [y, yk] : y === me.name && yk === code ? [x, xk] : null;
-    if (who && split(who[1])) current.set(who[0], dialogOf(r));
+    if (!who || !split(who[1])) continue;
+    current.set(who[0], dialogOf(r));
+    if (!seen.has(who[0])) seen.set(who[0], new Set());
+    seen.get(who[0]).add(dialogOf(r));
+  }
+  if (isSubagent(me)) {
+    for (const [who, mark] of Object.entries(readMarks(dialogReadingFile(me)))) {
+      if (current.has(who) && mark && typeof mark.d === 'string' && (!mark.d || seen.get(who).has(mark.d))) current.set(who, mark.d);
+    }
   }
   const here = (who, r) => !current.has(who) || current.get(who) === dialogOf(r);
   // В журнале каталога — переписка всех его агентов; моя — где я одна из сторон. Вид отличает локального dima от глобального
