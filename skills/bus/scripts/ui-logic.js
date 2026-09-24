@@ -443,26 +443,34 @@
   /**
    * Вкладки диалогов пары по порядку появления. Диалог — из сообщений (d; без d — первый, '') и маркеров «+» (dialogs: [{ pair, d, id }]).
    * current — диалог последней записи пары: в него уйдут ответы агента, по умолчанию открыт он. Записей нет — одна пустая вкладка ''.
-   * → { tabs: [{ d, title, count, first, last }], current }
+   * closed — метки закрытия { threadKey: id-метка }: вкладка закрыта, пока метка новее её последнего сообщения, и уходит в историю
+   * (свежие сверху). Маркеры не в счёт: ротация журнала пишет указатель текущего со свежим id — он открыл бы закрытое.
+   * Пустой закрытый в историю не идёт. Закрыто всё — текущий диалог остаётся вкладкой: пустого ряда без ленты не бывает.
+   * → { tabs: [{ d, title, count, first, last, t }], history: [такие же], current }
    */
-  function dialogTabs(messages, dialogs, pair) {
+  function dialogTabs(messages, dialogs, pair, closed = {}) {
     const tabs = new Map();
-    const touch = (d, id, m) => {
-      if (!tabs.has(d)) tabs.set(d, { d, title: '', count: 0, first: id, last: id });
+    const touch = (d, id, m, t) => {
+      if (!tabs.has(d)) tabs.set(d, { d, title: '', count: 0, first: id, last: id, t: t || '' });
       const tab = tabs.get(d);
       if (id < tab.first) tab.first = id;
-      if (id > tab.last) tab.last = id;
+      if (id >= tab.last) Object.assign(tab, { last: id, t: t || tab.t });
       if (m) {
         tab.count++;
+        if (!tab.said || id > tab.said) tab.said = id;
         if (!tab.title || id <= tab.titleId) Object.assign(tab, { title: dialogTitle(m), titleId: id });
       }
     };
-    for (const x of dialogs) if (x.pair === pair) touch(x.d, x.id);
-    for (const m of messages) if (pairOf(m) === pair) touch(m.d || '', m.id, m);
-    const list = [...tabs.values()].sort((a, b) => (a.first < b.first ? -1 : a.first > b.first ? 1 : 0)).map(({ titleId, ...tab }) => ({ ...tab, title: tab.title || tr('Новый диалог') }));
-    if (!list.length) return { tabs: [{ d: '', title: tr('Новый диалог'), count: 0, first: '', last: '' }], current: '' };
+    for (const x of dialogs) if (x.pair === pair) touch(x.d, x.id, null, x.t);
+    for (const m of messages) if (pairOf(m) === pair) touch(m.d || '', m.id, m, m.t);
+    const list = [...tabs.values()].sort((a, b) => (a.first < b.first ? -1 : a.first > b.first ? 1 : 0)).map(({ titleId, said, ...tab }) => ({ ...tab, title: tab.title || tr('Новый диалог'), said: said || '' }));
+    if (!list.length) return { tabs: [{ d: '', title: tr('Новый диалог'), count: 0, first: '', last: '', t: '' }], history: [], current: '' };
     const current = list.reduce((a, b) => (b.last > a.last ? b : a)).d;
-    return { tabs: list, current };
+    const isClosed = (tab) => { const at = closed[threadKey(pair, tab.d)]; return typeof at === 'string' && at > tab.said; };
+    const open = list.filter((tab) => !isClosed(tab));
+    const history = list.filter((tab) => isClosed(tab) && tab.count).sort((a, b) => (a.last < b.last ? 1 : -1));
+    if (!open.length) return { tabs: list.filter((tab) => tab.d === current), history: history.filter((tab) => tab.d !== current), current };
+    return { tabs: open, history, current };
   }
 
   const AGENT_NAME = /^[a-z0-9][a-z0-9-]{0,30}$/; // то же правило, шо NAME и RESERVED в bus.js

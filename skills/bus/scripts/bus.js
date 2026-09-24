@@ -1846,7 +1846,7 @@ module.exports = {
   CONFIG_DIR, BUS, REGISTRY, TYPES, MAX_LENGTH, ACCESS_GROUPS, parseDenied, deniedLine, UI_REPLY, BusError,
   loadRegistry, context, contextOf, describe, projectSelf, isSubagent, journalFile, findDefinition, isWrapper, enroll,
   splitDefinition, joinDefinition, readRole, checkBody, readJournal, roleFileOf, createAgent, updateAgent, syncWrapper, deleteAgent, isInside,
-  readStdin, writeAtomic, clean, oneLine, checkAttachments, deliver, journalNote, writeSummary, newDialog, currentDialog, isDialogPair, rewriteJournal, auditNote, autoWake, orchestratorOf, requireAlive, drain, unread,
+  readStdin, writeAtomic, clean, oneLine, checkAttachments, deliver, journalNote, writeSummary, newDialog, currentDialog, isDialogPair, checkDialog, rewriteJournal, auditNote, autoWake, orchestratorOf, requireAlive, drain, unread,
 };
 
 if (require.main === module) main(process.argv.slice(2));

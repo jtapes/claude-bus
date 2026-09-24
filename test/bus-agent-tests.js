@@ -58,6 +58,15 @@ module.exports = async function busAgentTests({ sandbox, configDir, baseEnv, che
   check('L52 вкладки диалогов: по порядку появления, название — начало первого сообщения, пустой «+» — «Новый диалог»; текущий — диалог последней записи пары; чужая пара не в счёт; без записей — одна пустая вкладка',
     tabsOf.tabs.map((t) => t.d).join() === ',b2,c9' && tabsOf.tabs[0].title === 'старый диалог про деплой и т…' && tabsOf.tabs[0].count === 2 && tabsOf.tabs[1].title === 'второй' && tabsOf.tabs[2].title === 'Новый диалог' && tabsOf.current === 'c9'
     && empty.tabs.length === 1 && empty.current === '' && L.threadOf(msg('x', 't', 'b2')) === 'aga|dima@/p#b2' && L.threadOf(msg('x', 't')) === 'aga|dima@/p', JSON.stringify(tabsOf));
+  const closedTabs = L.dialogTabs([msg('a1', 'первый'), msg('a3', 'второй', 'b2'), msg('a6', 'третий', 'c9')], [], 'aga|dima@/p', { 'aga|dima@/p#b2': 'a4-zzzz', 'aga|dima@/p#c9': 'a5-zzzz', 'aga|dima@/p': 'a0-zzzz' });
+  const allClosed = L.dialogTabs([msg('a1', 'первый'), msg('a3', 'второй', 'b2')], [], 'aga|dima@/p', { 'aga|dima@/p#b2': 'a4-zzzz', 'aga|dima@/p': 'a2-zzzz' });
+  // Указатель ротации (маркер новее метки) закрытое не открывает; пустой закрытый в историю не идёт
+  const pointer = L.dialogTabs([msg('a1', 'первый'), msg('a3', 'второй', 'b2')], [{ pair: 'aga|dima@/p', d: 'b2', id: 'a2' }, { pair: 'aga|dima@/p', d: 'b2', id: 'a9' }, { pair: 'aga|dima@/p', d: 'e1', id: 'a5' }], 'aga|dima@/p', { 'aga|dima@/p#b2': 'a4-zzzz', 'aga|dima@/p#e1': 'a6-zzzz' });
+  check('L52b закрытые вкладки: маркер новее метки (указатель ротации) закрытое не открывает, открывает только сообщение; закрытый пустой — не вкладка и не в истории',
+    pointer.tabs.map((t) => t.d).join() === '' && pointer.history.map((t) => t.d).join() === 'b2', JSON.stringify(pointer));
+  check('L52a закрытые вкладки: метка новее последней записи — диалог в истории, запись новее метки (ответ агента) — снова вкладка; метки чужой пары не в счёт; закрыто всё — текущий остаётся вкладкой',
+    closedTabs.tabs.map((t) => t.d).join() === ',c9' && closedTabs.history.map((t) => t.d).join() === 'b2' && closedTabs.current === 'c9'
+    && allClosed.tabs.map((t) => t.d).join() === 'b2' && allClosed.history.map((t) => t.d).join() === '' && tabsOf.history.length === 0, JSON.stringify({ closedTabs, allClosed }));
   const inTab = (m) => L.passes(m, { agents: new Set(['dima@/p']), types: new Set(), q: '', dialog: { pair: 'aga|dima@/p', d: 'b2' } }, null);
   check('L53 лента во вкладке: переписка пары — только открытого диалога, переписка агента с другими видна; сводка и вес — по диалогу',
     inTab(msg('m1', 't', 'b2')) && !inTab(msg('m2', 't')) && inTab({ id: 'm3', text: 't', fromKey: 'dima@/p', toKey: 'helper', roots: [] })
@@ -356,8 +365,24 @@ console.log(JSON.stringify({ type: 'result', is_error: false, result: 'ок', us
     const firstAgain = history();
     const notPair = await post('/api/dialog/new', { a: 'ghelper', b: key });
     const badId = await post('/api/send', { to: key, type: 'DONE', text: 'кривой диалог', dialog: 'Bad Id!' });
+    // «×» закрывает: метка в closed.json проекта, журнал цел; снять — reopen; удаление метку тоже снимает
+    const closedFile = path.join(proj, '.claude', 'bus', 'closed.json');
+    const closedOne = await post('/api/dialog/close', { a: 'aga', b: key, d });
+    const thread = `aga|${key}#${d}`;
+    const marked = JSON.parse(read(closedFile))[thread] === closedOne.json().at;
+    const stateClosed = ((await request('GET', `/api/state?k=${token}`)).json().closed || {})[thread] === closedOne.json().at;
+    const journalKept = read(journal).includes('во втором диалоге');
+    const reopenedDialog = await post('/api/dialog/reopen', { a: 'aga', b: key, d });
+    const unmarked = !(thread in JSON.parse(read(closedFile)));
+    const closeNotPair = await post('/api/dialog/close', { a: 'ghelper', b: key, d });
+    const closeBadId = await post('/api/dialog/close', { a: 'aga', b: key, d: 'Bad Id!' });
+    await post('/api/dialog/close', { a: 'aga', b: key, d });
     const dropped = await post('/api/dialog/delete', { a: 'aga', b: key, d });
-    check('A12 bus ui диалоги: «+» пишет маркер и агент начинает с чистой истории; сообщение вкладки и ответ агента из CLI несут d, history агента — только текущий диалог; «×» стирает диалог с маркером, первый диалог и прочая переписка целы; не пара «проект ↔ субагент» и кривой id — 400',
+    const unmarkedByDelete = !(thread in JSON.parse(read(closedFile)));
+    check('A12b bus ui закрытие диалога: close кладёт метку в <проект>/.claude/bus/closed.json и в state, журнал цел; reopen и delete метку снимают; не пара и кривой id — 400',
+      closedOne.status === 200 && /^[a-z0-9]+-zzzz$/.test(closedOne.json().at) && marked && stateClosed && journalKept && reopenedDialog.status === 200 && unmarked && closeNotPair.status === 400 && closeBadId.status === 400 && unmarkedByDelete,
+      [closedOne.text, reopenedDialog.text, closeNotPair.text, closeBadId.text].join(' ¦ '));
+    check('A12 bus ui диалоги: «+» пишет маркер и агент начинает с чистой истории; сообщение вкладки и ответ агента из CLI несут d, history агента — только текущий диалог; удаление из истории стирает диалог с маркером, первый диалог и прочая переписка целы; не пара «проект ↔ субагент» и кривой id — 400',
       dialogMade.status === 200 && /^[a-z0-9-]+$/.test(d) && freshHistory.includes('Переписки с «aga» нет') && secondHistory.includes('во втором диалоге') && secondHistory.includes('ответ во втором') && !secondHistory.includes('первое новичку') && stamped
       && stateDialogs.some((x) => x.d === d && x.pair === `aga|${key}`) && firstAgain.includes('первое новичку') && firstAgain.includes('снова в первом') && !firstAgain.includes('во втором')
       && notPair.status === 400 && badId.status === 400 && !read(journal).includes('кривой диалог')

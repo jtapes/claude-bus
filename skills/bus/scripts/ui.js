@@ -78,6 +78,8 @@ const clients = new Set();
 const messages = new Map(); // id → сообщение; id общий у копий в журналах двух каталогов — дубль снимается сам
 const summaries = new Map(); // диалог пары (threadKey) → его последняя сводка
 const dialogs = new Map(); // диалог пары (threadKey) → маркер { id, t, pair, d }: пустой диалог, созданный «+», живёт по нему
+let closed = {}; // закрытые вкладки диалогов: threadKey → метка закрытия (closed.json проектов, см. closeDialog)
+let closedSignature = '';
 const journals = new Map(); // файл журнала → { offset, rest }: докуда дочитали и недописанный хвост
 const uploads = new Map(); // uploadId → { file, name, at }
 let agentsSignature = '';
@@ -415,7 +417,7 @@ function liveState() {
   return live;
 }
 
-const statePayload = () => ({ messages: [...messages.values()].sort(byId).slice(-STATE_MESSAGES).map(forPage), summaries: [...summaries.values()], dialogs: [...dialogs.values()] });
+const statePayload = () => ({ messages: [...messages.values()].sort(byId).slice(-STATE_MESSAGES).map(forPage), summaries: [...summaries.values()], dialogs: [...dialogs.values()], closed });
 const freshId = (f) => (f.summary ? f.summary.id : f.dialog ? f.dialog.id : f.id);
 const knownIds = () => new Set([...messages.keys(), ...[...summaries.values(), ...dialogs.values()].map((x) => x.id)]);
 
@@ -451,6 +453,12 @@ function tick(rebuild = false) {
   if (signature !== agentsSignature) {
     agentsSignature = signature;
     broadcast('agents', snapshot);
+  }
+  closed = readClosed(snapshot);
+  const closedSig = JSON.stringify(closed);
+  if (closedSig !== closedSignature) {
+    closedSignature = closedSig;
+    broadcast('closed', closed);
   }
   const live = liveState();
   const liveSig = JSON.stringify(live);
@@ -1017,7 +1025,48 @@ function newDialog({ a: aKey, b: bKey }) {
   return { ok: true, d };
 }
 
-/** «×»: диалог стирается целиком — сообщения, сводки, маркер и вложения — во всех видимых журналах. Вернуть нельзя. */
+/**
+ * «×» закрывает вкладку, а не стирает: метка в <проект>/.claude/bus/closed.json, журнал не трогаем — это вид страницы.
+ * Метка того же вида, шо id сообщений (base36-время): вкладка закрыта, пока метка новее последней записи диалога,
+ * поэтому ответ агента или send из чата в закрытый диалог открывает его сам. Стереть — из истории, deleteDialog.
+ */
+const closedFile = (root) => path.join(root, '.claude', 'bus', 'closed.json');
+
+function readClosedFile(root) {
+  try {
+    const data = JSON.parse(fs.readFileSync(closedFile(root), 'utf8'));
+    return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  } catch {
+    return {}; // файла нет или он битый
+  }
+}
+
+function readClosed(snapshot) {
+  const all = {};
+  for (const root of snapshot.roots) for (const [thread, at] of Object.entries(readClosedFile(root))) if (isText(at)) all[thread] = at;
+  return all;
+}
+
+/** Метку ставим или снимаем (at = null) в каталоге проекта пары: у пары «проект ↔ субагент» проект один. */
+function markClosed(aKey, bKey, d, at) {
+  const snapshot = tick() || collectAgents();
+  const { a, b, pair } = dialogPair(aKey, bKey, snapshot);
+  const root = (a.kind === 'project' ? a : b).root;
+  const thread = threadKey(pair, bus.checkDialog(d));
+  const data = Object.fromEntries(Object.entries(readClosedFile(root)).filter(([, value]) => isText(value))); // мусор руками не переносим
+  if (at) data[thread] = at;
+  else if (thread in data) delete data[thread];
+  else return { ok: true, thread, at };
+  bus.writeAtomic(closedFile(root), JSON.stringify(data, null, 1));
+  safeTick();
+  return { ok: true, thread, at };
+}
+
+// Хвост zzzz: сообщение той же миллисекунды считается отправленным до закрытия
+const closeDialog = ({ a, b, d = '' }) => markClosed(a, b, d, `${Date.now().toString(36)}-zzzz`);
+const reopenDialog = ({ a, b, d = '' }) => markClosed(a, b, d, null);
+
+/** Удаление — из истории: диалог стирается целиком — сообщения, сводки, маркер и вложения — во всех видимых журналах. Вернуть нельзя. */
 function deleteDialog({ a: aKey, b: bKey, d = '' }) {
   if (summarizing) throw new bus.BusError(tr('Идёт сжатие диалога — дождись сводки, потом удаляй.'));
   const snapshot = tick() || collectAgents();
@@ -1031,6 +1080,7 @@ function deleteDialog({ a: aKey, b: bKey, d = '' }) {
     return validMessage(r) && pairKey(normalize(r, root).fromKey, normalize(r, root).toKey) === pair;
   });
   bus.auditNote(`ui dialog delete | ${aKey} <-> ${bKey}${thread ? ` #${thread}` : ''} | сообщений: ${removed}`);
+  markClosed(aKey, bKey, thread, null);
   return { ok: true, removed };
 }
 
@@ -1387,6 +1437,8 @@ async function handle(req, res, port) {
     if (url.pathname === '/api/settings') return reply(res, 200, saveSettings(body));
     if (url.pathname === '/api/delete') return reply(res, 200, deleteMessages(body));
     if (url.pathname === '/api/dialog/new') return reply(res, 200, newDialog(body));
+    if (url.pathname === '/api/dialog/close') return reply(res, 200, closeDialog(body));
+    if (url.pathname === '/api/dialog/reopen') return reply(res, 200, reopenDialog(body));
     if (url.pathname === '/api/dialog/delete') return reply(res, 200, deleteDialog(body));
     if (url.pathname.startsWith('/api/schedule/')) return reply(res, 200, scheduleAction(url.pathname.slice('/api/schedule/'.length), body));
     if (url.pathname === '/api/read') {

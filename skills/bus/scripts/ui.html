@@ -179,7 +179,7 @@
   .squeeze.danger:hover:not(:disabled) { color: var(--on-danger); }
   .picked-bar { align-items: center; }
 
-  /* ---- вкладки диалогов с агентом: «+» — новый, «×» — стереть ---- */
+  /* ---- вкладки диалогов с агентом: «+» — новый, «×» — закрыть в историю ---- */
   .tabs { position: relative; display: flex; align-items: flex-end; gap: 4px; padding: 6px var(--gutter) 0; border-bottom: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
   .tab { flex: none; display: inline-flex; align-items: center; max-width: 240px; border: 1px solid var(--line); border-bottom: none; border-radius: var(--r) var(--r) 0 0; color: var(--ink-soft); transition: color .15s, border-color .15s; }
   .tab:hover { color: var(--ink); }
@@ -189,7 +189,19 @@
   .tab .close { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; margin-right: 1px; background: none; border: 0; border-radius: var(--r); color: var(--ink-soft); }
   .tab .close .icon { width: 13px; height: 13px; }
   .tab .close:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
-  .tabs .tab-new { flex: none; min-height: 34px; width: 34px; margin-bottom: 2px; position: sticky; right: 0; background: var(--panel); box-shadow: -8px 0 8px var(--panel); } /* «+» на виду и при длинном ряде вкладок */
+  .tabs .tab-tools { flex: none; display: inline-flex; gap: 4px; margin-bottom: 2px; position: sticky; right: 0; background: var(--panel); box-shadow: -8px 0 8px var(--panel); } /* «+» и история на виду и при длинном ряде вкладок */
+  .tab-tools .iconbtn { min-height: 34px; width: 34px; }
+  .tab-tools .tab-history { min-height: 34px; padding: 0 8px; gap: 4px; }
+  .tab-tools .tab-history small { color: var(--ink-soft); }
+  .tab-tools .tab-history[aria-expanded="true"] { color: var(--copper); }
+  .dialog-history { border-bottom: 1px solid var(--line); background: var(--plate); max-height: 40vh; overflow-y: auto; }
+  .dialog-history ul { list-style: none; margin: 0; padding: 4px var(--gutter); }
+  .dialog-history li { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+  .dialog-history li:last-child { border-bottom: 0; }
+  .dialog-history .title { flex: 1; min-width: 0; text-align: left; background: none; border: 0; color: var(--ink); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+  .dialog-history .title:hover { text-decoration: underline; }
+  .dialog-history small { flex: none; color: var(--ink-soft); font-size: 12px; }
+  .dialog-history .danger:hover { color: var(--danger); }
 
   /* ---- панель пары: сколько весит диалог и итог сжатия ---- */
   .pair { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; padding: 8px var(--gutter); border-bottom: 1px solid var(--line); background: var(--plate); font-size: 13px; }
@@ -511,6 +523,9 @@
   }
 
   @media (max-width: 820px) {
+    .dialog-history li { flex-wrap: wrap; gap: 2px 8px; }
+    .dialog-history .title { flex-basis: 100%; }
+    .dialog-history small { flex: 1; }
     :root { --h-sm: 32px; --h: 36px; --h-lg: 40px; /* пальцем в 28px не попасть */ --gutter: 12px; --rail-x: 13px; --feed-left: 44px; --tap-curve: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Cpath d='M0 2C18 2 10 17 30 17' fill='none' stroke='%23000' stroke-width='2'/%3E%3C/svg%3E"); }
     /* Список агентов — поверх ленты, а не над ней: иначе он выдавливает ленту в ноль и форма уезжает за экран */
     .layout { grid-template-columns: minmax(0, 1fr); }
@@ -547,6 +562,7 @@
   <symbol id="i-squeeze" viewBox="0 0 24 24"><path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="m14 10 7-7"/><path d="m3 21 7-7"/></symbol>
   <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></symbol>
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
@@ -592,6 +608,8 @@
     </div>
     <!-- Выбран один агент — его диалоги с тобой: у каждого свой контекст агента; рисует renderDialogs -->
     <div class="tabs" id="dialogTabs" role="tablist" aria-label="Диалоги с агентом" hidden></div>
+    <!-- Часы у «+» — закрытые «×» диалоги: открыть или стереть; рисует renderHistory -->
+    <div class="dialog-history" id="dialogHistory" hidden></div>
     </div>
     <div class="feed-wrap" id="wrap"><ol class="feed" id="feed" aria-live="polite"></ol></div>
     <form id="composer">
@@ -848,7 +866,7 @@ function icon(name) {
   return svg;
 }
 
-const state = { agents: [], here: {}, types: [], maxFiles: 10, maxFileBytes: 30 * 1024 * 1024, messages: new Map(), summaries: new Map(), dialogs: new Map(), hues: new Map(), schedule: null, access: { servers: [], weights: null }, live: {}, liveOpen: new Set() };
+const state = { agents: [], here: {}, types: [], maxFiles: 10, maxFileBytes: 30 * 1024 * 1024, messages: new Map(), summaries: new Map(), dialogs: new Map(), closed: {}, hues: new Map(), schedule: null, access: { servers: [], weights: null }, live: {}, liveOpen: new Set() };
 let picked = []; // загруженные, но ещё не отправленные вложения: { id, name, size }
 let showCovered = false; // в режиме пары: раскрыты ли сообщения, которые уже ушли в сводку
 const filters = { agents: new Set(), types: new Set(), q: '', dialog: null }; // dialog — открытая вкладка { pair, d }, ставит renderDialogs
@@ -1313,7 +1331,8 @@ const NO_PAIR_HINT = N('Сжимается диалог двоих. Выбери
 
 /**
  * Вкладки диалогов над лентой: выбран один агент (L.dialogTarget) — его диалоги с тобой. Открыта выбранная пользователем вкладка,
- * а если её нет (не выбирал, стёрли) — текущая, куда агент ответит. Ставит filters.dialog — по нему лента, сводка и отправка.
+ * а если её нет (не выбирал, стёрли, закрыли) — текущая, куда агент ответит; закрыта и она — самая свежая открытая.
+ * «×» закрывает вкладку в историю (часы рядом с «+»): оттуда открыть или стереть. Ставит filters.dialog — по нему лента, сводка и отправка.
  */
 function renderDialogs() {
   const target = L.dialogTarget(filters, state.agents);
@@ -1321,31 +1340,63 @@ function renderDialogs() {
   bar.hidden = !target;
   if (!target) {
     filters.dialog = null;
+    $('dialogHistory').hidden = true;
     return bar.replaceChildren();
   }
-  const { tabs, current } = L.dialogTabs(messageList(), [...state.dialogs.values()], target.pair);
+  const { tabs, history, current } = L.dialogTabs(messageList(), [...state.dialogs.values()], target.pair, state.closed);
   const chosen = chosenDialog.get(target.pair);
-  const d = tabs.some((tab) => tab.d === chosen) ? chosen : current;
+  const has = (x) => tabs.some((tab) => tab.d === x);
+  const d = has(chosen) ? chosen : has(current) ? current : tabs.reduce((a, b) => (b.last > a.last ? b : a)).d;
   filters.dialog = { pair: target.pair, d };
+  renderHistory(target, history);
   const focused = bar.contains(document.activeElement) ? document.activeElement.dataset.d : null;
   bar.replaceChildren(...tabs.map((tab) => {
     const on = tab.d === d;
     const open = el('button', { type: 'button', className: 'open', role: 'tab', title: tr('{title} · сообщений {n}', { title: tab.title, n: tab.count }) + (tab.d === current ? tr(' · сюда ответит агент') : ''), onclick: () => pickDialog(target, tab.d) }, tab.title, tab.count ? el('small', {}, String(tab.count)) : '');
     open.setAttribute('aria-selected', String(on));
     open.dataset.d = tab.d;
-    const close = el('button', { type: 'button', className: 'close', title: tr('Удалить диалог'), ariaLabel: tr('Удалить диалог «{title}»', { title: tab.title }), onclick: () => dropDialog(target, tab) }, icon('x'));
+    const close = el('button', { type: 'button', className: 'close', title: tr('Закрыть диалог — он останется в истории'), ariaLabel: tr('Закрыть диалог «{title}»', { title: tab.title }), onclick: () => closeDialog(target, tab, tabs.length === 1) }, icon('x'));
     close.dataset.d = `x${tab.d}`;
-    return el('div', { className: `tab${on ? ' on' : ''}` }, open, close);
-  }), el('button', { type: 'button', id: 'dialogNew', className: 'ghost iconbtn tab-new', title: tr('Новый диалог: агент начнёт с чистого контекста'), ariaLabel: tr('Новый диалог'), onclick: () => addDialog(target) }, icon('plus')));
+    // Единственная и пустая — закрывать нечего: на её место встал бы такой же пустой
+    return el('div', { className: `tab${on ? ' on' : ''}` }, open, tabs.length === 1 && !tab.count ? '' : close);
+  }), el('span', { className: 'tab-tools', id: 'dialogTools' },
+    el('button', { type: 'button', id: 'dialogNew', className: 'ghost iconbtn', title: tr('Новый диалог: агент начнёт с чистого контекста'), ariaLabel: tr('Новый диалог'), onclick: () => addDialog(target) }, icon('plus')),
+    history.length ? historyButton(target, history.length) : ''));
   if (focused !== null && focused !== undefined) {
     const again = [...bar.querySelectorAll('button')].find((b) => b.dataset.d === focused);
     if (again) again.focus({ preventScroll: true });
   }
-  // Открытая вкладка — в видимой части ряда (на телефоне ряд прокручивается); «+» прилип справа и её не закрывает
+  // Открытая вкладка — в видимой части ряда (на телефоне ряд прокручивается); «+» и история прилипли справа и её не закрывают
   const active = bar.querySelector('.tab.on');
-  const plus = $('dialogNew').offsetWidth + 12;
+  const plus = $('dialogTools').offsetWidth + 12;
   if (active && active.offsetLeft + active.offsetWidth > bar.scrollLeft + bar.clientWidth - plus) bar.scrollLeft = active.offsetLeft + active.offsetWidth - bar.clientWidth + plus;
   else if (active && active.offsetLeft < bar.scrollLeft) bar.scrollLeft = active.offsetLeft - 8;
+}
+
+let historyOpen = null; // пара, у которой под рядом вкладок раскрыт список закрытых диалогов
+
+function historyButton(target, count) {
+  const button = el('button', { type: 'button', id: 'dialogHistoryBtn', className: 'ghost tab-history', title: tr('История: закрытые диалоги'), ariaLabel: tr('История: закрытые диалоги'), onclick: () => {
+    historyOpen = historyOpen === target.pair ? null : target.pair;
+    renderFeed();
+  } }, icon('history'), el('small', {}, String(count)));
+  button.setAttribute('aria-expanded', String(historyOpen === target.pair));
+  button.setAttribute('aria-controls', 'dialogHistory');
+  button.dataset.d = 'history';
+  return button;
+}
+
+/** Закрытые диалоги пары, свежие сверху: открыть — обратно во вкладки, удалить — насовсем. */
+function renderHistory(target, history) {
+  const box = $('dialogHistory');
+  if (!history.length && historyOpen === target.pair) historyOpen = null;
+  box.hidden = historyOpen !== target.pair;
+  if (box.hidden) return box.replaceChildren();
+  box.replaceChildren(el('ul', {}, ...history.map((tab) => el('li', {},
+    el('button', { type: 'button', className: 'title', title: tr('Открыть диалог'), onclick: () => reopenDialog(target, tab) }, tab.title),
+    el('small', {}, [tab.t ? String(tab.t).slice(0, 16) : '', tr('сообщений {n}', { n: tab.count })].filter(Boolean).join(' · ')),
+    el('button', { type: 'button', className: 'ghost', onclick: () => reopenDialog(target, tab) }, tr('Открыть')),
+    el('button', { type: 'button', className: 'ghost iconbtn danger', title: tr('Удалить диалог'), ariaLabel: tr('Удалить диалог «{title}»', { title: tab.title }), onclick: () => dropDialog(target, tab) }, icon('trash'))))));
 }
 
 function pickDialog(target, d) {
@@ -1354,7 +1405,8 @@ function pickDialog(target, d) {
   renderFeed();
 }
 
-async function addDialog(target) {
+/** quiet — зовёт closeDialog: без своей плашки, сбой уходит ему. */
+async function addDialog(target, quiet = false) {
   try {
     const r = await post('/api/dialog/new', { a: target.boss, b: target.agent });
     // Маркер придёт и событием dialogs — кладём сразу, шоб вкладка не мигнула
@@ -1363,10 +1415,45 @@ async function addDialog(target) {
     if (L.writable(state.agents.find((a) => a.key === target.agent) || {})) $('to').value = target.agent;
     renderFrom();
     renderFeed();
-    say(tr('Новый диалог с {name}: прошлой переписки агент в нём не увидит.', { name: target.names.split(' ↔ ')[1] }));
+    if (!quiet) say(tr('Новый диалог с {name}: прошлой переписки агент в нём не увидит.', { name: target.names.split(' ↔ ')[1] }));
     $('text').focus();
   } catch (err) {
+    if (quiet) throw err;
     say(tr('Диалог не создан: {why}', { why: err.message }), true);
+  }
+}
+
+/** Метку закрытия кладём сразу, шоб вкладка не мигнула; правда — событие closed от сервера. */
+function setClosed(target, d, at) {
+  const thread = L.threadKey(target.pair, d);
+  if (at) state.closed[thread] = at;
+  else delete state.closed[thread];
+}
+
+/** «×»: вкладка уходит в историю, переписка цела. Последнюю открытую сменяет новый пустой диалог, как в браузере. */
+async function closeDialog(target, tab, last) {
+  try {
+    if (last) await addDialog(target, true);
+    const r = await post('/api/dialog/close', { a: target.boss, b: target.agent, d: tab.d });
+    if (chosenDialog.get(target.pair) === tab.d) chosenDialog.delete(target.pair);
+    setClosed(target, tab.d, r.at);
+    renderFeed();
+    say(tr('Диалог «{title}» закрыт — он в истории.', { title: tab.title }));
+  } catch (err) {
+    say(tr('Диалог не закрыт: {why}', { why: err.message }), true);
+  }
+}
+
+async function reopenDialog(target, tab) {
+  try {
+    await post('/api/dialog/reopen', { a: target.boss, b: target.agent, d: tab.d });
+    setClosed(target, tab.d, null);
+    chosenDialog.set(target.pair, tab.d);
+    historyOpen = null;
+    showCovered = false;
+    renderFeed();
+  } catch (err) {
+    say(tr('Диалог не открыт: {why}', { why: err.message }), true);
   }
 }
 
@@ -1374,6 +1461,7 @@ function dropDialog(target, tab) {
   if (!confirm(tr('Удалить диалог «{title}» ({names}) вместе со сводкой и вложениями? Вернуть нельзя.', { title: tab.title, names: target.names }))) return;
   if (chosenDialog.get(target.pair) === tab.d) chosenDialog.delete(target.pair);
   state.dialogs.delete(L.threadKey(target.pair, tab.d));
+  setClosed(target, tab.d, null);
   destroy('/api/dialog/delete', { a: target.boss, b: target.agent, d: tab.d }, (r) => tr('Диалог «{title}» удалён, сообщений: {n}.', { title: tab.title, n: r.removed }));
 }
 
@@ -1504,6 +1592,7 @@ let feedLoaded = false; // в конец ленту ставит только п
 function replaceFeed(data, late = []) {
   state.summaries = new Map((data.summaries || []).map((x) => [x.thread || x.pair, x]));
   state.dialogs = new Map((data.dialogs || []).map((x) => [x.thread, x]));
+  state.closed = data.closed || {};
   state.messages = new Map();
   lastId = '';
   applyMessages([...(data.messages || []), ...late], false, !feedLoaded);
@@ -1550,6 +1639,11 @@ function connect() {
   // Новый диалог («+» в этой или соседней вкладке браузера) — ещё без сообщений, живёт маркером в журнале
   source.addEventListener('dialogs', (e) => {
     state.dialogs = new Map(JSON.parse(e.data).map((x) => [x.thread, x]));
+    renderFeed(new Set(), false);
+  });
+  // Вкладку закрыли или открыли (эта или соседняя вкладка браузера) — метки закрытия из closed.json
+  source.addEventListener('closed', (e) => {
+    state.closed = JSON.parse(e.data);
     renderFeed(new Set(), false);
   });
   source.addEventListener('live', (e) => applyLive(JSON.parse(e.data)));

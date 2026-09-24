@@ -710,22 +710,43 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         JSON.stringify({ clearGone, tabsBefore, tabsAfter, othersVisible, d: sent.d, history, newHidden })];
     });
 
-    await scenario('E32 «×» у вкладки: после confirm стирает только этот диалог — вкладка пропала, первый диалог и переписка агента с другими целы, ответы агента снова идут в первый', async () => {
+    await scenario('E32 «×» закрывает вкладку в историю, журнал цел; ответ агента в закрытый диалог открывает его сам; из истории — открыть и стереть (после confirm): стёрт только этот диалог, ответы снова идут в первый', async () => {
       const second = page.locator('#dialogTabs .tab', { hasText: 'в новом диалоге' });
-      page.once('dialog', (d) => d.dismiss());
-      await second.locator('.close').click();
-      const keptAfterDismiss = (await second.count()) === 1;
-      page.once('dialog', (d) => d.accept());
       await second.locator('.close').click();
       await second.waitFor({ state: 'detached', timeout: 10000 });
+      const closedNote = await page.locator('#result').textContent();
+      const keptInJournal = read(journal).includes('в новом диалоге');
+      const counter = await page.locator('#dialogHistoryBtn small').textContent();
+      bus(shop, ['--as', 'masha', 'send', 'shop', 'done', 'ответ в закрытый'], quiet);
+      await second.waitFor({ timeout: 10000 });
+      const reopenedByReply = (await page.locator('#dialogHistoryBtn').count()) === 0;
+      await second.locator('.close').click();
+      await second.waitFor({ state: 'detached', timeout: 10000 });
+      await page.click('#dialogHistoryBtn');
+      const row = page.locator('#dialogHistory li', { hasText: 'в новом диалоге' });
+      await row.waitFor();
+      if (process.env.BUS_SHOT) await page.screenshot({ path: path.join(process.env.BUS_SHOT, 'e32-history.png') });
+      await row.locator('button.ghost', { hasText: 'Открыть' }).click();
+      await page.locator('#dialogTabs .tab.on', { hasText: 'в новом диалоге' }).waitFor();
+      const historyHidden = await page.locator('#dialogHistory').isHidden();
+      await second.locator('.close').click();
+      await second.waitFor({ state: 'detached', timeout: 10000 });
+      await page.click('#dialogHistoryBtn');
+      page.once('dialog', (d) => d.dismiss());
+      await row.locator('button.danger').click();
+      const keptAfterDismiss = (await row.count()) === 1 && read(journal).includes('в новом диалоге');
+      page.once('dialog', (d) => d.accept());
+      await row.locator('button.danger').click();
+      await row.waitFor({ state: 'detached', timeout: 10000 });
       const result = await page.locator('#result').textContent();
+      const noHistory = (await page.locator('#dialogHistoryBtn').count()) === 0 && (await page.locator('#dialogHistory').isHidden());
       bus(shop, ['--as', 'masha', 'send', 'shop', 'done', 'ответ после удаления'], quiet);
       await page.locator('.msg .text', { hasText: 'ответ после удаления' }).waitFor();
       const back = journalRecords().find((r) => r.text === 'ответ после удаления') || {};
       bus(shop, ['inbox'], quiet); // ответ оркестратору забран — счётчик «Ответили» в заголовке не сбивает дальнейшие сценарии
       await agentButton('masha').click(); // повторный клик снимает выбор
-      return [keptAfterDismiss && !read(journal).includes('в новом диалоге') && read(journal).includes('старый диалог с машей') && read(journal).includes('маша диме — не трогать') && result.includes('удалён') && !back.d,
-        JSON.stringify({ keptAfterDismiss, result, back })];
+      return [closedNote.includes('закрыт') && keptInJournal && counter === '1' && reopenedByReply && historyHidden && keptAfterDismiss && noHistory && !read(journal).includes('в новом диалоге') && read(journal).includes('старый диалог с машей') && read(journal).includes('маша диме — не трогать') && result.includes('удалён') && !back.d,
+        JSON.stringify({ closedNote, keptInJournal, counter, reopenedByReply, historyHidden, keptAfterDismiss, noHistory, result, back })];
     });
 
     const roleFile = (name) => path.join(shop, '.claude', 'agents', `${name}.md`);
