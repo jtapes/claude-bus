@@ -47,11 +47,21 @@ module.exports = async function busAgentTests({ sandbox, configDir, baseEnv, che
   // ---------- логика страницы ----------
   const L = require(path.join(SCRIPTS, 'ui-logic.js'));
   const agents = [{ key: 'aga', name: 'aga', kind: 'project', from: '' }, { key: 'dima@/p', name: 'dima', kind: 'local', from: 'aga' }, { key: 'helper', name: 'helper', kind: 'global', from: 'aga' }];
-  const target = (...keys) => L.clearTarget({ agents: new Set(keys) }, agents);
-  check('L50 очистка в UI: никто не выбран — весь журнал; пара — её диалог; один агент — диалог оркестратора с ним; сам оркестратор и трое — подсказка, а не снос журнала',
-    target().mode === 'all' && target('dima@/p', 'helper').mode === 'pair' && target('dima@/p', 'helper').names === 'dima ↔ helper'
-    && target('dima@/p').mode === 'single' && target('dima@/p').a === 'dima@/p' && target('dima@/p').b === 'aga' && target('helper').b === 'aga'
-    && target('aga').mode === 'none' && target('aga').hint.includes('aga') && target('aga', 'helper', 'dima@/p').mode === 'none', JSON.stringify([target('dima@/p'), target('aga')]));
+  for (const a of agents) Object.assign(a, { registered: true, alive: true });
+  const target = (...keys) => L.dialogTarget({ agents: new Set(keys) }, agents);
+  check('L50 вкладки диалогов: один субагент или он в паре со своим оркестратором — пара «оркестратор ↔ агент»; никто, сам оркестратор, два агента, трое — вкладок нет',
+    target('dima@/p').pair === 'aga|dima@/p' && target('dima@/p').boss === 'aga' && target('dima@/p').agent === 'dima@/p' && target('aga', 'helper').agent === 'helper' && target('helper').names === 'aga ↔ helper'
+    && target() === null && target('aga') === null && target('dima@/p', 'helper') === null && target('aga', 'helper', 'dima@/p') === null, JSON.stringify([target('dima@/p'), target('aga', 'helper')]));
+  const msg = (id, text, d) => ({ id, text, fromKey: 'aga', toKey: 'dima@/p', ...(d ? { d } : {}) });
+  const tabsOf = L.dialogTabs([msg('a1', 'старый диалог про деплой и тесты базы'), msg('a3', 'второй', 'b2'), msg('a4', 'ещё старый'), { id: 'a5', text: 'чужая пара', fromKey: 'aga', toKey: 'helper' }], [{ pair: 'aga|dima@/p', d: 'b2', id: 'a2' }, { pair: 'aga|dima@/p', d: 'c9', id: 'c9' }], 'aga|dima@/p');
+  const empty = L.dialogTabs([], [], 'aga|dima@/p');
+  check('L52 вкладки диалогов: по порядку появления, название — начало первого сообщения, пустой «+» — «Новый диалог»; текущий — диалог последней записи пары; чужая пара не в счёт; без записей — одна пустая вкладка',
+    tabsOf.tabs.map((t) => t.d).join() === ',b2,c9' && tabsOf.tabs[0].title === 'старый диалог про деплой и т…' && tabsOf.tabs[0].count === 2 && tabsOf.tabs[1].title === 'второй' && tabsOf.tabs[2].title === 'Новый диалог' && tabsOf.current === 'c9'
+    && empty.tabs.length === 1 && empty.current === '' && L.threadOf(msg('x', 't', 'b2')) === 'aga|dima@/p#b2' && L.threadOf(msg('x', 't')) === 'aga|dima@/p', JSON.stringify(tabsOf));
+  const inTab = (m) => L.passes(m, { agents: new Set(['dima@/p']), types: new Set(), q: '', dialog: { pair: 'aga|dima@/p', d: 'b2' } }, null);
+  check('L53 лента во вкладке: переписка пары — только открытого диалога, переписка агента с другими видна; сводка и вес — по диалогу',
+    inTab(msg('m1', 't', 'b2')) && !inTab(msg('m2', 't')) && inTab({ id: 'm3', text: 't', fromKey: 'dima@/p', toKey: 'helper', roots: [] })
+    && L.covered(msg('m1', 't', 'b2'), new Map([['aga|dima@/p#b2', { upto: 'm9' }]])) && !L.covered(msg('m1', 't'), new Map([['aga|dima@/p#b2', { upto: 'm9' }]])), '');
   check('L51 имя нового агента: правило то же, шо в bus.js; служебные имена шины заняты', L.validAgentName('qa-2') && !L.validAgentName('Дима') && !L.validAgentName('-x') && !L.validAgentName('files') && !L.validAgentName('scheduler') && !L.validAgentName(''), '');
 
   // ---------- песочница ----------
@@ -328,12 +338,46 @@ console.log(JSON.stringify({ type: 'result', is_error: false, result: 'ок', us
       measured.status === 0 && Object.keys(table.contexts).length === 128 && table.order.join() === 'read,edit,web,agents,service,skills,mcp' && table.contexts[''] === 20000 && table.contexts.skills === 19900 && table.contexts['read+edit'] === 19400
       && table.contexts['skills+mcp'] === 19500 && table.cli === '9.9.9' && table.model === 'haiku' && /^\d{4}-\d{2}-\d{2}$/.test(table.measured) && !fs.readdirSync(require('os').tmpdir()).some((name) => name.startsWith('bus-access-')), measured.stdout.slice(-200) + measured.stderr.slice(-300));
 
-    // ---------- очистка диалога с одним агентом ----------
+    // ---------- диалоги с агентом: «+» и «×» ----------
     await post('/api/send', { to: key, type: 'DONE', text: 'первое новичку' });
     await post('/api/send', { to: 'ghelper', type: 'DONE', text: 'глобальному — остаётся' });
     const journal = path.join(proj, '.claude', 'bus', 'history.jsonl');
-    const cleared = await post('/api/clear', { a: key, b: 'aga' });
-    check('A12 bus ui очистка: пара «оркестратор ↔ выбранный агент» чистит только их диалог, остальная переписка каталога цела', cleared.status === 200 && cleared.json().removed === 1 && !read(journal).includes('первое новичку') && read(journal).includes('глобальному — остаётся'), cleared.text);
+    const history = () => bus(proj, ['--as', 'newbie', 'history', 'aga']).out;
+    const dialogMade = await post('/api/dialog/new', { a: 'aga', b: key });
+    const d = dialogMade.json().d;
+    const freshHistory = history();
+    await post('/api/send', { to: key, type: 'DONE', text: 'во втором диалоге', dialog: d });
+    bus(proj, ['--as', 'newbie', 'send', 'aga', 'DONE', 'ответ во втором']);
+    const secondHistory = history();
+    const records = () => read(journal).split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    const stamped = records().filter((r) => ['во втором диалоге', 'ответ во втором'].includes(r.text)).every((r) => r.d === d);
+    const stateDialogs = (await request('GET', `/api/state?k=${token}`)).json().dialogs || [];
+    await post('/api/send', { to: key, type: 'DONE', text: 'снова в первом', dialog: '' });
+    const firstAgain = history();
+    const notPair = await post('/api/dialog/new', { a: 'ghelper', b: key });
+    const badId = await post('/api/send', { to: key, type: 'DONE', text: 'кривой диалог', dialog: 'Bad Id!' });
+    const dropped = await post('/api/dialog/delete', { a: 'aga', b: key, d });
+    check('A12 bus ui диалоги: «+» пишет маркер и агент начинает с чистой истории; сообщение вкладки и ответ агента из CLI несут d, history агента — только текущий диалог; «×» стирает диалог с маркером, первый диалог и прочая переписка целы; не пара «проект ↔ субагент» и кривой id — 400',
+      dialogMade.status === 200 && /^[a-z0-9-]+$/.test(d) && freshHistory.includes('Переписки с «aga» нет') && secondHistory.includes('во втором диалоге') && secondHistory.includes('ответ во втором') && !secondHistory.includes('первое новичку') && stamped
+      && stateDialogs.some((x) => x.d === d && x.pair === `aga|${key}`) && firstAgain.includes('первое новичку') && firstAgain.includes('снова в первом') && !firstAgain.includes('во втором')
+      && notPair.status === 400 && badId.status === 400 && !read(journal).includes('кривой диалог')
+      && dropped.status === 200 && dropped.json().removed === 2 && !read(journal).includes('во втором') && !records().some((r) => r.d === d) && read(journal).includes('первое новичку') && read(journal).includes('глобальному — остаётся'),
+      [dialogMade.text, freshHistory, secondHistory, firstAgain, notPair.text, badId.text, dropped.text].join(' ¦ '));
+
+    // Ротацию журнала вызывает сообщение другой пары: перенесённые маркеры не должны перебить текущий диалог
+    const d2 = (await post('/api/dialog/new', { a: 'aga', b: key })).json().d;
+    await post('/api/send', { to: key, type: 'DONE', text: 'текущий — первый', dialog: '' });
+    const ghostDialog = await post('/api/send', { to: key, type: 'DONE', text: 'фантом', dialog: 'no-such-dialog' });
+    const notString = await post('/api/send', { to: key, type: 'DONE', text: 'фантом', dialog: 123 });
+    fs.appendFileSync(journal, JSON.stringify({ id: '0-pad', t: '2026-01-01 00:00:00', from: 'x', fk: 'p', to: 'y', tk: 'p', type: 'DONE', text: 'x'.repeat(2.1 * 1024 * 1024) }) + '\n');
+    await post('/api/send', { to: 'ghelper', type: 'DONE', text: 'ротация чужой парой' });
+    bus(proj, ['--as', 'newbie', 'send', 'aga', 'DONE', 'ответ после ротации']);
+    const afterRotation = records().find((r) => r.text === 'ответ после ротации') || {};
+    const rotatedTabs = ((await request('GET', `/api/state?k=${token}`)).json().dialogs || []).some((x) => x.d === d2);
+    bus(proj, ['--as', 'newbie', 'inbox']); // ящик новичка забран — A13 считает только то, шо придёт дальше
+    check('A12a bus диалоги и ротация: журнал уехал в .1 от сообщения другой пары — ответ агента идёт в тот же текущий диалог, пустой диалог остаётся вкладкой; несуществующий или не строковый dialog — 400',
+      fs.existsSync(`${journal}.1`) && afterRotation.text && !afterRotation.d && rotatedTabs && ghostDialog.status === 400 && notString.status === 400 && !read(journal).includes('фантом'),
+      JSON.stringify({ afterRotation, rotatedTabs, ghostDialog: ghostDialog.text, notString: notString.text }));
 
     // ---------- длинное сообщение ----------
     const longText = `Первая строка задачи.\n\n${'Дальше идёт длинное описание. '.repeat(200)}\nхвост сообщения`;
@@ -353,7 +397,7 @@ console.log(JSON.stringify({ type: 'result', is_error: false, result: 'ок', us
     const deleted = await post('/api/agent/delete', { key });
     const lonerDeleted = await post('/api/agent/delete', { key: `loner@${proj}` });
     check('A13 bus ui удалить агента: пока он работает в фоне (wake.lock) — отказ; потом уходят файл роли, ящик и запись реестра, переписка в журнале остаётся; в ответе — непрочитанное и задачи расписания на него; незаведённое определение — уходит файл',
-      busyDelete.status === 400 && busyDelete.json().error.includes('работает') && deleted.status === 200 && deleted.json().left === 2 /* очистка диалога ящик не трогает: в нём оба DONE */ && deleted.json().jobs.join() === 'morning' && !fs.existsSync(localDef('newbie')) && !fs.existsSync(box('newbie'))
+      busyDelete.status === 400 && busyDelete.json().error.includes('работает') && deleted.status === 200 && deleted.json().left === 1 /* ящик забран после A12a — в нём только «останется в журнале» */ && deleted.json().jobs.join() === 'morning' && !fs.existsSync(localDef('newbie')) && !fs.existsSync(box('newbie'))
       && !registry().newbie && read(journal).includes('останется в журнале') && !(await stateAgent('newbie')).name && lonerDeleted.status === 200 && !fs.existsSync(localDef('loner')), busyDelete.text + deleted.text + lonerDeleted.text);
 
     // Реестр правили руками: определение «локального агента» лежит вне .claude/agents — ни читать, ни удалять его UI не должен

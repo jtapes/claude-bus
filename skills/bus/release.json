@@ -1,10 +1,10 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "repo": "jtapes/claude-bus",
   "files": [
     "SKILL.md",
     "references/admin.md",
-    "references/agents.md",
+    "references/roles.md",
     "references/schedule.md",
     "references/ui.md",
     "release.json",

@@ -179,6 +179,18 @@
   .squeeze.danger:hover:not(:disabled) { color: var(--on-danger); }
   .picked-bar { align-items: center; }
 
+  /* ---- вкладки диалогов с агентом: «+» — новый, «×» — стереть ---- */
+  .tabs { position: relative; display: flex; align-items: flex-end; gap: 4px; padding: 6px var(--gutter) 0; border-bottom: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+  .tab { flex: none; display: inline-flex; align-items: center; max-width: 240px; border: 1px solid var(--line); border-bottom: none; border-radius: var(--r) var(--r) 0 0; color: var(--ink-soft); transition: color .15s, border-color .15s; }
+  .tab:hover { color: var(--ink); }
+  .tab.on { background: var(--plate); color: var(--ink); border-color: var(--line); box-shadow: inset 0 2px 0 var(--copper); margin-bottom: -1px; padding-bottom: 1px; }
+  .tab .open { min-width: 0; min-height: 34px; padding: 0 4px 0 10px; background: none; border: 0; color: inherit; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tab .open small { color: var(--ink-soft); margin-left: 6px; }
+  .tab .close { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; margin-right: 1px; background: none; border: 0; border-radius: var(--r); color: var(--ink-soft); }
+  .tab .close .icon { width: 13px; height: 13px; }
+  .tab .close:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+  .tabs .tab-new { flex: none; min-height: 34px; width: 34px; margin-bottom: 2px; position: sticky; right: 0; background: var(--panel); box-shadow: -8px 0 8px var(--panel); } /* «+» на виду и при длинном ряде вкладок */
+
   /* ---- панель пары: сколько весит диалог и итог сжатия ---- */
   .pair { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; padding: 8px var(--gutter); border-bottom: 1px solid var(--line); background: var(--plate); font-size: 13px; }
   .pair b { font: 600 14px var(--mono); }
@@ -567,8 +579,6 @@
       <span id="types" role="group" aria-label="Типы сообщений"></span>
       <!-- На виду всегда: спрятанную до выбора пары кнопку пользователь не нашёл. Без пары клик по ней объясняет, как пару выбрать -->
       <button class="squeeze" id="squeeze" type="button"><svg class="icon"><use href="#i-squeeze"/></svg><span>Сжать диалог</span></button>
-      <!-- Выбрана пара — чистит её диалог, без пары — весь журнал каталога; подпись меняется в renderPair -->
-      <button class="squeeze danger" id="clear" type="button"><svg class="icon"><use href="#i-trash"/></svg><span>Очистить всё</span></button>
     </div>
     <!-- Клик по сообщению выделяет его; панель видна, пока шо-то выделено -->
     <div class="pair picked-bar" id="marked" hidden>
@@ -580,6 +590,8 @@
       <b id="pairNames"></b><span class="weight" id="pairWeight"></span>
       <span class="note" id="pairNote" role="status"></span>
     </div>
+    <!-- Выбран один агент — его диалоги с тобой: у каждого свой контекст агента; рисует renderDialogs -->
+    <div class="tabs" id="dialogTabs" role="tablist" aria-label="Диалоги с агентом" hidden></div>
     </div>
     <div class="feed-wrap" id="wrap"><ol class="feed" id="feed" aria-live="polite"></ol></div>
     <form id="composer">
@@ -836,17 +848,20 @@ function icon(name) {
   return svg;
 }
 
-const state = { agents: [], here: {}, types: [], maxFiles: 10, maxFileBytes: 30 * 1024 * 1024, messages: new Map(), summaries: new Map(), hues: new Map(), schedule: null, access: { servers: [], weights: null }, live: {}, liveOpen: new Set() };
+const state = { agents: [], here: {}, types: [], maxFiles: 10, maxFileBytes: 30 * 1024 * 1024, messages: new Map(), summaries: new Map(), dialogs: new Map(), hues: new Map(), schedule: null, access: { servers: [], weights: null }, live: {}, liveOpen: new Set() };
 let picked = []; // загруженные, но ещё не отправленные вложения: { id, name, size }
 let showCovered = false; // в режиме пары: раскрыты ли сообщения, которые уже ушли в сводку
-const filters = { agents: new Set(), types: new Set(), q: '' };
+const filters = { agents: new Set(), types: new Set(), q: '', dialog: null }; // dialog — открытая вкладка { pair, d }, ставит renderDialogs
+const chosenDialog = new Map(); // пара → d вкладки, которую открыл пользователь; нет — открыт текущий диалог (куда агент ответит)
 const TYPE_NOTE = { TASK: N('просьба сделать'), QUESTION: N('нужен ответ'), DONE: N('к сведению, ответа не жду') };
 const typeNote = (type) => tr(TYPE_NOTE[type] || '');
 
 const messageList = () => [...state.messages.values()];
 const hueOf = (name) => (state.hues.has(name) ? state.hues.get(name) : L.hue(name));
-function selectAgents(keys) {
+/** dialog — открыть и вкладку этого диалога пары (строка веса, карточка сводки, стрелка в сообщении). */
+function selectAgents(keys, dialog = null) {
   filters.agents = new Set(keys);
+  if (dialog && keys.length === 2) chosenDialog.set(L.pairKey(...keys), dialog.d);
   renderAgents();
   renderFeed();
 }
@@ -899,10 +914,13 @@ function renderWeight() {
   $('weightTotal').textContent = total.dialogs
     ? tr('Эта директория: диалогов {dialogs} · несжатых сообщений {fresh}, ≈{tokens} токенов', { dialogs: total.dialogs, fresh: total.fresh, tokens: L.short(total.tokens) }) + (total.summary ? tr(' · сводки ≈{n}', { n: L.short(total.summary) }) : '') + tr('. Оценка: символы / 3. Клик по диалогу откроет его — там «Сжать диалог».')
     : tr('В этой директории переписки нет.');
-  const row = (r) => el('button', { type: 'button', className: `weight-row${r.heavy ? ' heavy' : ''}`, title: tr('Открыть диалог'), onclick: () => { closeWeight(); selectAgents(r.keys); } },
+  // У пары несколько диалогов — строки различает начало первого сообщения
+  const perPair = new Map();
+  for (const r of report.rows) perPair.set(r.pair, (perPair.get(r.pair) || 0) + 1);
+  const row = (r) => el('button', { type: 'button', className: `weight-row${r.heavy ? ' heavy' : ''}`, title: tr('Открыть диалог'), onclick: () => { closeWeight(); selectAgents(r.keys, r); } },
     el('span', { className: 'names' }, r.names[0], el('i', {}, '↔'), r.names[1]),
     el('span', { className: 'tokens' }, tr('≈{n} ток.', { n: L.short(r.tokens) })),
-    el('span', { className: 'detail' }, tr('{total} сообщ. · несжатых {fresh}', { total: r.total, fresh: r.fresh }) + (r.summary ? tr(' · сводка ≈{n} ток.', { n: L.short(r.summary) }) : '') + (r.heavy ? tr(' · пора сжать') : '')));
+    el('span', { className: 'detail' }, (perPair.get(r.pair) > 1 ? `«${r.title}» · ` : '') + tr('{total} сообщ. · несжатых {fresh}', { total: r.total, fresh: r.fresh }) + (r.summary ? tr(' · сводка ≈{n} ток.', { n: L.short(r.summary) }) : '') + (r.heavy ? tr(' · пора сжать') : '')));
   const here = report.rows.filter((r) => r.here);
   const others = report.rows.filter((r) => !r.here);
   $('weightList').replaceChildren(
@@ -1080,7 +1098,7 @@ function pairButton(m) {
   const label = open ? tr('Выйти из диалога пары') : tr('Открыть диалог {from} ↔ {to}: его вес и сжатие', { from: m.from, to: m.to });
   const button = el('button', { type: 'button', className: 'arrow', title: label, ariaLabel: label }, icon('arrow'));
   button.setAttribute('aria-pressed', String(open));
-  button.addEventListener('click', () => selectAgents(open ? [] : [m.fromKey, m.toKey]));
+  button.addEventListener('click', () => selectAgents(open ? [] : [m.fromKey, m.toKey], { d: m.d || '' }));
   return button;
 }
 
@@ -1090,7 +1108,7 @@ function summaryNode({ summary, hidden, inPair }) {
   const node = el('li', { className: 'summary' },
     el('div', { className: 'head' }, el('span', { className: 'label' }, title), el('time', { title: summary.t }, tr('сделана {at}', { at: summary.t.slice(5, 16) }))),
     el('p', {}, summary.text));
-  if (!inPair) node.append(el('button', { type: 'button', className: 'ghost', onclick: () => selectAgents(summary.pair.split('|')) }, tr('Открыть диалог')));
+  if (!inPair) node.append(el('button', { type: 'button', className: 'ghost', onclick: () => selectAgents(summary.pair.split('|'), summary) }, tr('Открыть диалог')));
   else if (hidden || showCovered) node.append(el('button', { type: 'button', className: 'ghost', onclick: () => { showCovered = !showCovered; renderFeed(new Set(), false); } }, showCovered ? tr('Свернуть исходные') : tr('Показать исходные · {n}', { n: hidden })));
   return node;
 }
@@ -1264,6 +1282,7 @@ function renderFeed(freshIds = new Set(), jump = true) {
   const me = hereBoss();
   const unread = L.unreadIds(messageList(), me && me.repliesBy, me && me.key);
   scheduleRead(); // лента перерисовывается и на смену выбора, и на новое состояние агентов — оба повода перепроверить
+  renderDialogs();
   const { items, matched, shown, summary } = L.feedItems({ messages: messageList(), summaries: state.summaries, filters, hereRoot: state.here.root, showCovered });
   const feed = $('feed');
   feed.replaceChildren(...items.map((item) =>
@@ -1290,28 +1309,92 @@ function renderFeed(freshIds = new Set(), jump = true) {
   else if ([...freshIds].some((id) => shown.some((m) => m.id === id))) $('toBottom').hidden = false;
 }
 
-const NO_PAIR_HINT = N('Сжимается диалог двоих. Выбери пару: клик по стрелке между именами в любом их сообщении — или клик по первому агенту слева и двойной клик по второму.');
+const NO_PAIR_HINT = N('Сжимается диалог двоих. Выбери агента слева — сожмётся открытая вкладка твоего диалога с ним. Или пару: клик по стрелке между именами в любом их сообщении — или клик по первому агенту слева и двойной клик по второму.');
 
-/** Панель над лентой, когда выбраны двое: вес несжатого хвоста и кнопка сводки. */
+/**
+ * Вкладки диалогов над лентой: выбран один агент (L.dialogTarget) — его диалоги с тобой. Открыта выбранная пользователем вкладка,
+ * а если её нет (не выбирал, стёрли) — текущая, куда агент ответит. Ставит filters.dialog — по нему лента, сводка и отправка.
+ */
+function renderDialogs() {
+  const target = L.dialogTarget(filters, state.agents);
+  const bar = $('dialogTabs');
+  bar.hidden = !target;
+  if (!target) {
+    filters.dialog = null;
+    return bar.replaceChildren();
+  }
+  const { tabs, current } = L.dialogTabs(messageList(), [...state.dialogs.values()], target.pair);
+  const chosen = chosenDialog.get(target.pair);
+  const d = tabs.some((tab) => tab.d === chosen) ? chosen : current;
+  filters.dialog = { pair: target.pair, d };
+  const focused = bar.contains(document.activeElement) ? document.activeElement.dataset.d : null;
+  bar.replaceChildren(...tabs.map((tab) => {
+    const on = tab.d === d;
+    const open = el('button', { type: 'button', className: 'open', role: 'tab', title: tr('{title} · сообщений {n}', { title: tab.title, n: tab.count }) + (tab.d === current ? tr(' · сюда ответит агент') : ''), onclick: () => pickDialog(target, tab.d) }, tab.title, tab.count ? el('small', {}, String(tab.count)) : '');
+    open.setAttribute('aria-selected', String(on));
+    open.dataset.d = tab.d;
+    const close = el('button', { type: 'button', className: 'close', title: tr('Удалить диалог'), ariaLabel: tr('Удалить диалог «{title}»', { title: tab.title }), onclick: () => dropDialog(target, tab) }, icon('x'));
+    close.dataset.d = `x${tab.d}`;
+    return el('div', { className: `tab${on ? ' on' : ''}` }, open, close);
+  }), el('button', { type: 'button', id: 'dialogNew', className: 'ghost iconbtn tab-new', title: tr('Новый диалог: агент начнёт с чистого контекста'), ariaLabel: tr('Новый диалог'), onclick: () => addDialog(target) }, icon('plus')));
+  if (focused !== null && focused !== undefined) {
+    const again = [...bar.querySelectorAll('button')].find((b) => b.dataset.d === focused);
+    if (again) again.focus({ preventScroll: true });
+  }
+  // Открытая вкладка — в видимой части ряда (на телефоне ряд прокручивается); «+» прилип справа и её не закрывает
+  const active = bar.querySelector('.tab.on');
+  const plus = $('dialogNew').offsetWidth + 12;
+  if (active && active.offsetLeft + active.offsetWidth > bar.scrollLeft + bar.clientWidth - plus) bar.scrollLeft = active.offsetLeft + active.offsetWidth - bar.clientWidth + plus;
+  else if (active && active.offsetLeft < bar.scrollLeft) bar.scrollLeft = active.offsetLeft - 8;
+}
+
+function pickDialog(target, d) {
+  chosenDialog.set(target.pair, d);
+  showCovered = false;
+  renderFeed();
+}
+
+async function addDialog(target) {
+  try {
+    const r = await post('/api/dialog/new', { a: target.boss, b: target.agent });
+    // Маркер придёт и событием dialogs — кладём сразу, шоб вкладка не мигнула
+    state.dialogs.set(L.threadKey(target.pair, r.d), { id: r.d, pair: target.pair, d: r.d, thread: L.threadKey(target.pair, r.d) });
+    chosenDialog.set(target.pair, r.d);
+    if (L.writable(state.agents.find((a) => a.key === target.agent) || {})) $('to').value = target.agent;
+    renderFrom();
+    renderFeed();
+    say(tr('Новый диалог с {name}: прошлой переписки агент в нём не увидит.', { name: target.names.split(' ↔ ')[1] }));
+    $('text').focus();
+  } catch (err) {
+    say(tr('Диалог не создан: {why}', { why: err.message }), true);
+  }
+}
+
+function dropDialog(target, tab) {
+  if (!confirm(tr('Удалить диалог «{title}» ({names}) вместе со сводкой и вложениями? Вернуть нельзя.', { title: tab.title, names: target.names }))) return;
+  if (chosenDialog.get(target.pair) === tab.d) chosenDialog.delete(target.pair);
+  state.dialogs.delete(L.threadKey(target.pair, tab.d));
+  destroy('/api/dialog/delete', { a: target.boss, b: target.agent, d: tab.d }, (r) => tr('Диалог «{title}» удалён, сообщений: {n}.', { title: tab.title, n: r.removed }));
+}
+
+/** Панель над лентой, когда на экране диалог двоих (пара или вкладка диалога с агентом): вес несжатого хвоста и кнопка сводки. */
 function renderPair(matched) {
-  const pair = L.selectedPair(filters);
+  const pair = L.viewPair(filters);
+  const thread = L.viewThread(filters);
   $('pair').hidden = !pair;
-  if (pair !== renderPair.last) $('pairNote').textContent = ''; // итог прошлого сжатия относится к другой паре
-  renderPair.last = pair;
+  if (thread !== renderPair.last) $('pairNote').textContent = ''; // итог прошлого сжатия относится к другому диалогу
+  renderPair.last = thread;
   // Подпись кнопки раз уже ставил код («Сжимаю…») — статичный узел выпал из документа, и на смену языка её переводим сами
   if (!$('squeeze').dataset.busy) $('squeeze').lastElementChild.textContent = tr('Сжать диалог');
-  const wipe = L.clearTarget(filters, state.agents);
-  $('clear').lastElementChild.textContent = wipe.mode === 'all' ? tr('Очистить всё') : tr('Очистить диалог');
-  $('clear').title = wipe.mode === 'all' ? tr('Удалить весь журнал этой директории. Вернуть нельзя. Выбери агента — очистится только твой диалог с ним')
-    : wipe.mode === 'none' ? wipe.hint : tr('Удалить из журналов все сообщения {names} и сводки этой пары. Вернуть нельзя', { names: wipe.names });
   if (!pair) {
     // Не disabled: полупрозрачную кнопку пользователь не разглядел. Она видна всегда, а клик без пары объясняет, шо сделать
     if (!$('squeeze').dataset.busy) $('squeeze').disabled = false;
     $('squeeze').title = tr(NO_PAIR_HINT);
     return;
   }
-  const names = [...filters.agents].map((key) => (state.agents.find((a) => a.key === key) || { name: key.split('@')[0] }).name);
-  const info = L.pairInfo(matched, state.summaries);
+  const names = pair.split('|').map((key) => (state.agents.find((a) => a.key === key) || { name: key.split('@')[0] }).name);
+  // С одним выбранным агентом в ленте и его переписка с другими — вес и сжатие только про открытый диалог
+  const info = L.pairInfo(matched.filter((m) => L.pairOf(m) === pair), state.summaries);
   $('pairNames').replaceChildren(names[0], el('i', {}, '↔'), names[1]);
   // Вызов модели сам стоит ≈3–4к токенов (замер на haiku): на коротком диалоге сводка дороже, чем десяток его чтений
   $('pairWeight').textContent = tr('{total} сообщ. · агент прочтёт {tail}, ≈{weight} токенов', { total: info.total, tail: info.tail, weight: L.short(info.weight) }) + (info.early ? tr(' · сжимать рано: сама сводка стоит ≈3–4к токенов') : '');
@@ -1419,7 +1502,8 @@ async function load() {
 let feedLoaded = false; // в конец ленту ставит только первая загрузка: реконнект SSE и reset после удаления место чтения не трогают
 
 function replaceFeed(data, late = []) {
-  state.summaries = new Map((data.summaries || []).map((x) => [x.pair, x]));
+  state.summaries = new Map((data.summaries || []).map((x) => [x.thread || x.pair, x]));
+  state.dialogs = new Map((data.dialogs || []).map((x) => [x.thread, x]));
   state.messages = new Map();
   lastId = '';
   applyMessages([...(data.messages || []), ...late], false, !feedLoaded);
@@ -1458,9 +1542,14 @@ function connect() {
     renderAgents();
   });
   source.addEventListener('summaries', (e) => {
-    state.summaries = new Map(JSON.parse(e.data).map((x) => [x.pair, x]));
+    state.summaries = new Map(JSON.parse(e.data).map((x) => [x.thread || x.pair, x]));
     showCovered = false;
     renderAgents();
+    renderFeed(new Set(), false);
+  });
+  // Новый диалог («+» в этой или соседней вкладке браузера) — ещё без сообщений, живёт маркером в журнале
+  source.addEventListener('dialogs', (e) => {
+    state.dialogs = new Map(JSON.parse(e.data).map((x) => [x.thread, x]));
     renderFeed(new Set(), false);
   });
   source.addEventListener('live', (e) => applyLive(JSON.parse(e.data)));
@@ -1858,6 +1947,9 @@ $('composer').addEventListener('submit', async (e) => {
   e.preventDefault();
   if ($('sendBtn').disabled) return; // requestSubmit по Enter выключенную кнопку не видит: второй Enter, пока идёт отправка, слал дубль
   const body = { to: $('to').value, type: $('type').value, text: $('text').value, files: picked.map((f) => f.id), btw: $('btw').checked, evolve: $('evolve').checked };
+  // Пишешь агенту, чья вкладка открыта, — сообщение уходит в неё; другому — в его текущий диалог
+  const target = L.dialogTarget(filters, state.agents);
+  if (target && filters.dialog && target.agent === body.to) body.dialog = filters.dialog.d;
   if (!body.text.trim() && !body.files.length) return say(tr('Пустое сообщение не отправляю.'), true);
   if (uploading) return say(tr('Файл ещё грузится — секунду.'), true);
   $('sendBtn').disabled = true;
@@ -1972,24 +2064,13 @@ $('markedNone').addEventListener('click', () => {
   renderMarked();
 });
 
-$('clear').addEventListener('click', () => {
-  // Выбран один агент — чистим твой диалог с ним, а не весь журнал: «Очистить всё» осталось только без выбора
-  const wipe = L.clearTarget(filters, state.agents);
-  if (wipe.mode === 'none') return say(wipe.hint, true);
-  if (wipe.mode !== 'all') {
-    if (!confirm(tr('Удалить весь диалог {names} вместе со сводками? Вернуть нельзя.', { names: wipe.names }))) return;
-    return destroy('/api/clear', { a: wipe.a, b: wipe.b }, (r) => tr('Диалог {names} очищен, сообщений: {n}.', { names: wipe.names, n: r.removed }));
-  }
-  if (!state.here.root) return say(tr('Интерфейс запущен не из проекта шины — журнала каталога тут нет. Выбери пару агентов, шобы очистить их диалог.'), true);
-  if (!confirm(tr('Удалить ВЕСЬ журнал директории {root} — переписку всех её агентов? Вернуть нельзя.', { root: state.here.root }))) return;
-  destroy('/api/clear', { all: true }, (r) => tr('Журнал очищен, сообщений: {n}.', { n: r.removed }));
-});
-
 $('squeeze').addEventListener('click', async () => {
-  const [a, b] = [...filters.agents];
+  const pair = L.viewPair(filters);
+  const [a, b] = pair ? pair.split('|') : [];
+  const d = filters.dialog && filters.dialog.pair === pair ? filters.dialog.d : '';
   const button = $('squeeze');
   const note = (text, bad = false) => Object.assign($('pairNote'), { textContent: text, className: `note${bad ? ' bad' : ''}` });
-  if (!L.selectedPair(filters)) {
+  if (!pair) {
     // Панель пары открываем ради одной подсказки; следующая перерисовка ленты спрячет её сама
     $('pair').hidden = false;
     $('pairNames').textContent = tr('Пара не выбрана');
@@ -2001,7 +2082,7 @@ $('squeeze').addEventListener('click', async () => {
   button.lastElementChild.textContent = tr('Сжимаю…');
   note(tr('Отдал диалог claude. Обычно это 5–15 секунд.'));
   try {
-    const r = await post('/api/summarize', { a, b });
+    const r = await post('/api/summarize', { a, b, d });
     // Модель сжатия — настройка ui.summaryModel: называем ту, шо назвал сервер
     const model = r.model || (settingsData && settingsData.values['ui.summaryModel']) || 'haiku';
     note(tr('Сжато сообщений: {n}. Ушло ≈{tokens} токенов {model}.', { n: r.compressed, tokens: L.short(r.tokens), model }) + (r.left ? tr(' Осталось несжатых: {n} — нажми ещё раз.', { n: r.left }) : ''));

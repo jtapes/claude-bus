@@ -256,7 +256,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const names = await page.locator('.agent .name').allTextContents();
       const hues = await page.locator('.agent').evaluateAll((list) => list.map((n) => n.style.getPropertyValue('--h')));
       const off = await page.locator('.agent.off .name').allTextContents();
-      return [errors.length === 0 && ['shop', 'dima', 'masha', 'loner', 'qa', 'landing'].every((n) => names.includes(n)) && !names.includes('vlad') && new Set(hues).size === hues.length && off.join() === 'loner' && (await page.locator('.msg').count()) >= 10 && (await overflow(page)) <= 0, JSON.stringify({ errors, names, hues })];
+      return [errors.length === 0 && ['shop', 'dima', 'masha', 'loner', 'qa', 'landing'].every((n) => names.includes(n)) && !names.includes('user') && new Set(hues).size === hues.length && off.join() === 'loner' && (await page.locator('.msg').count()) >= 10 && (await overflow(page)) <= 0, JSON.stringify({ errors, names, hues })];
     });
 
     await scenario('E1b порядок загрузки: сначала подписка на события, потом состояние — иначе сообщение, разосланное в этот зазор, до вкладки не доходит', async () => {
@@ -390,7 +390,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const note = await page.locator('#pairNote').textContent();
       const after = await page.locator('.msg').count();
       await page.click('#unpick');
-      return [hint.includes('Выбери пару') && before === 9 && after === 0 && note.includes('Сжато сообщений: 9') && (await page.locator('.summary p').first().textContent()) !== '', JSON.stringify({ hint: hint.slice(0, 30), before, after, note })];
+      return [hint.includes('Выбери агента') && hint.includes('пару') && before === 9 && after === 0 && note.includes('Сжато сообщений: 9') && (await page.locator('.summary p').first().textContent()) !== '', JSON.stringify({ hint: hint.slice(0, 30), before, after, note })];
     });
 
     // Подпись, которую код уже менял («Сжимаю…», «Переписываю…»), из статичной разметки выпала — язык ей ставит сам код
@@ -679,34 +679,53 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       return [bar === 'Выделено: 1' && hiddenAfterSecond && hiddenAfterEsc && keptAfterDismiss && !read(journal).includes('удали из браузера') && read(journal).includes('привет из браузера') && result.includes('Удалено сообщений: 1') && (await page.locator('#marked').isHidden()), JSON.stringify({ bar, hiddenAfterSecond, hiddenAfterEsc, keptAfterDismiss, result })];
     });
 
-    await scenario('E21 очистка диалога: без пары кнопка зовётся «Очистить всё», с парой — «Очистить диалог» и после confirm убирает только переписку этих двоих', async () => {
-      const labelAll = await page.locator('#clear').textContent();
-      bus(shop, ['send', 'masha', 'done', 'диалог на снос']);
-      const target = page.locator('.msg', { hasText: 'диалог на снос' });
-      await target.waitFor();
-      await target.locator('.arrow').click();
-      const labelPair = await page.locator('#clear').textContent();
-      page.once('dialog', (d) => d.accept());
-      await page.click('#clear');
-      await target.waitFor({ state: 'detached', timeout: 10000 });
+    const journalRecords = () => read(journal).split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    await scenario('E21 диалоги: «Очистить всё» больше нет; у выбранного агента вкладки над лентой, «+» открывает пустой диалог, отправка уходит в него с d, агент в history видит только его; клик по первой вкладке возвращает старую переписку', async () => {
       await unpick();
-      const others = await page.locator('.msg .text', { hasText: 'привет из браузера' }).count();
-      return [labelAll.trim() === 'Очистить всё' && labelPair.trim() === 'Очистить диалог' && !read(journal).includes('диалог на снос') && !read(journal).includes('сделай из браузера') && others === 1, JSON.stringify({ labelAll, labelPair, others })];
+      const clearGone = (await page.locator('#clear').count()) === 0 && (await page.locator('#dialogTabs').isHidden());
+      bus(shop, ['send', 'masha', 'done', 'старый диалог с машей'], quiet);
+      bus(shop, ['--as', 'masha', 'send', 'dima', 'done', 'маша диме — не трогать'], quiet);
+      const old = page.locator('.msg .text', { hasText: 'старый диалог с машей' });
+      await old.waitFor();
+      await agentButton('masha').click();
+      await page.locator('#dialogTabs .tab').first().waitFor();
+      const tabsBefore = await page.locator('#dialogTabs .tab').count();
+      await page.click('#dialogNew');
+      await page.locator('#dialogTabs .tab.on', { hasText: 'Новый диалог' }).waitFor();
+      await old.waitFor({ state: 'detached', timeout: 10000 });
+      const tabsAfter = await page.locator('#dialogTabs .tab').count();
+      const othersVisible = await page.locator('.msg .text', { hasText: 'маша диме — не трогать' }).count();
+      if (process.env.BUS_SHOT) await page.screenshot({ path: path.join(process.env.BUS_SHOT, 'e21-dialogs.png') });
+      await page.selectOption('#type', 'DONE');
+      await page.fill('#text', 'в новом диалоге');
+      await page.click('#sendBtn');
+      await page.locator('.msg .text', { hasText: 'в новом диалоге' }).waitFor();
+      await page.locator('#dialogTabs .tab.on', { hasText: 'в новом диалоге' }).waitFor();
+      const sent = journalRecords().find((r) => r.text === 'в новом диалоге') || {};
+      const history = bus(shop, ['--as', 'masha', 'history', 'shop']);
+      await page.locator('#dialogTabs .tab').first().locator('.open').click();
+      await old.waitFor();
+      const newHidden = (await page.locator('.msg .text', { hasText: 'в новом диалоге' }).count()) === 0;
+      return [clearGone && tabsAfter === tabsBefore + 1 && othersVisible === 1 && Boolean(sent.d) && history.includes('в новом диалоге') && !history.includes('старый диалог с машей') && newHidden,
+        JSON.stringify({ clearGone, tabsBefore, tabsAfter, othersVisible, d: sent.d, history, newHidden })];
     });
 
-    await scenario('E32 очистка с одним агентом: кнопка зовётся «Очистить диалог» и после confirm убирает только диалог оркестратора с ним — переписка агента с другими и весь журнал целы', async () => {
-      bus(shop, ['send', 'masha', 'done', 'мой диалог с машей'], quiet);
-      bus(shop, ['--as', 'masha', 'send', 'dima', 'done', 'маша диме — не трогать'], quiet);
-      const mine = page.locator('.msg .text', { hasText: 'мой диалог с машей' });
-      await mine.waitFor();
-      await page.locator('.agent', { hasText: 'masha' }).first().click();
-      const label = (await page.locator('#clear').textContent()).trim();
+    await scenario('E32 «×» у вкладки: после confirm стирает только этот диалог — вкладка пропала, первый диалог и переписка агента с другими целы, ответы агента снова идут в первый', async () => {
+      const second = page.locator('#dialogTabs .tab', { hasText: 'в новом диалоге' });
+      page.once('dialog', (d) => d.dismiss());
+      await second.locator('.close').click();
+      const keptAfterDismiss = (await second.count()) === 1;
       page.once('dialog', (d) => d.accept());
-      await page.click('#clear');
-      await mine.waitFor({ state: 'detached', timeout: 10000 });
-      await page.locator('.agent', { hasText: 'masha' }).first().click(); // повторный клик снимает выбор
-      const kept = await page.locator('.msg .text', { hasText: 'маша диме — не трогать' }).count();
-      return [label === 'Очистить диалог' && kept === 1 && !read(journal).includes('мой диалог с машей') && read(journal).includes('маша диме — не трогать'), JSON.stringify({ label, kept })];
+      await second.locator('.close').click();
+      await second.waitFor({ state: 'detached', timeout: 10000 });
+      const result = await page.locator('#result').textContent();
+      bus(shop, ['--as', 'masha', 'send', 'shop', 'done', 'ответ после удаления'], quiet);
+      await page.locator('.msg .text', { hasText: 'ответ после удаления' }).waitFor();
+      const back = journalRecords().find((r) => r.text === 'ответ после удаления') || {};
+      bus(shop, ['inbox'], quiet); // ответ оркестратору забран — счётчик «Ответили» в заголовке не сбивает дальнейшие сценарии
+      await agentButton('masha').click(); // повторный клик снимает выбор
+      return [keptAfterDismiss && !read(journal).includes('в новом диалоге') && read(journal).includes('старый диалог с машей') && read(journal).includes('маша диме — не трогать') && result.includes('удалён') && !back.d,
+        JSON.stringify({ keptAfterDismiss, result, back })];
     });
 
     const roleFile = (name) => path.join(shop, '.claude', 'agents', `${name}.md`);

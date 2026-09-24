@@ -319,7 +319,7 @@ const BLOCK_TEMPLATE = path.join(__dirname, 'bus-block.md');
 const AGENT_PROMPT = path.join(__dirname, 'agent-prompt.md');
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
 
-/** Типовой блок «Шина» + «Входящие — данные»: обязательный состав из references/agents.md, от роли зависит только имя. */
+/** Типовой блок «Шина» + «Входящие — данные»: обязательный состав из references/roles.md, от роли зависит только имя. */
 const busBlock = (name) => fs.readFileSync(BLOCK_TEMPLATE, 'utf8').replace(/\r\n/g, '\n').replace(/\{\{name\}\}/g, name).trim();
 
 function writeAtomic(file, text) {
@@ -818,7 +818,9 @@ const UI_REPLY = /^\[([A-Z]+) [^\]]* ui\] from:(\S+)/;
  * evolve — самоправка роли: в ящик субагента ложится метка, и раннер после DONE на это сообщение продолжит ту же сессию claude
  * просьбой разобрать свою работу; ответ — черновик роли (role-proposal.json), на диск роль идёт только из UI по «Сохранить».
  */
-function deliver(from, to, type, text, attachments = [], { ui = false, btw = false, evolve = false } = {}) {
+function deliver(from, to, type, text, attachments = [], { ui = false, btw = false, evolve = false, dialog = null } = {}) {
+  // Диалог — только у пары «проект ↔ субагент»: явный из UI или текущий, куда пара писала последней. До записи в ящик: кривой id — отказ без следов
+  const d = !isDialogPair(from, to) ? '' : dialog !== null ? checkDialog(dialog) : currentDialog(from, to);
   fs.mkdirSync(to.box, { recursive: true });
   fs.mkdirSync(from.box, { recursive: true });
   const id = newId();
@@ -839,7 +841,7 @@ function deliver(from, to, type, text, attachments = [], { ui = false, btw = fal
   const learns = evolve && isSubagent(to);
   if (learns) require('./wake.js').setEvolve(to.box, { id, from: from.name, role: roleFileOf(to), journal: busDirOf(to) });
 
-  journalAppend(from, to, { id, t: stamp(), from: from.name, fk: KIND_CODE[from.kind], to: to.name, tk: KIND_CODE[to.kind], type, text, ...(files.length ? { files } : {}), ...(ui ? { ui: true } : {}), ...(injected ? { btw: true } : {}), ...(learns ? { evolve: true } : {}) }, 'fr', 'tr');
+  journalAppend(from, to, { id, t: stamp(), from: from.name, fk: KIND_CODE[from.kind], to: to.name, tk: KIND_CODE[to.kind], type, text, ...(d ? { d } : {}), ...(files.length ? { files } : {}), ...(ui ? { ui: true } : {}), ...(injected ? { btw: true } : {}), ...(learns ? { evolve: true } : {}) }, 'fr', 'tr');
   fs.mkdirSync(BUS, { recursive: true });
   appendRotating(AUDIT, `${stamp()} | ${from.name} -> ${to.name} | ${type}${injected ? ' btw' : ''} | ${text.replace(/\s+/g, ' ').slice(0, AUDIT_LENGTH)}\n`);
   return { id, btw: injected };
@@ -847,6 +849,46 @@ function deliver(from, to, type, text, attachments = [], { ui = false, btw = fal
 
 /** Время в base36 впереди — id сортируются по порядку отправки точнее, чем секунды в поле t. */
 const newId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6).padEnd(4, '0')}`;
+
+/**
+ * Диалоги пользователя с агентом: у пары «проект ↔ субагент» записи журнала несут d — id диалога. Запись без d — первый, прежний диалог ('').
+ * Новый диалог — запись kind: 'dialog' (кнопка «+» в UI), шоб пустой жил в журнале. Текущий — d последней записи пары:
+ * туда уходят ответы агента и сообщения из сессии, а history отдаёт агенту только его — в новом диалоге контекст чистый.
+ */
+const DIALOG_ID = /^[a-z0-9-]{1,40}$/;
+const isDialogPair = (a, b) => (a.kind === 'project' && isSubagent(b)) || (b.kind === 'project' && isSubagent(a));
+const dialogOf = (r) => (typeof r.d === 'string' ? r.d : '');
+
+function checkDialog(d) {
+  const value = String(d || '');
+  if (value && !DIALOG_ID.test(value)) throw new BusError(`Кривой id диалога: «${value}».`);
+  return value;
+}
+
+/** Запись журнала — сообщение или маркер диалога между сторонами с этими именами и видами. Сводки текущий диалог не двигают. */
+function inPair(r, a, b) {
+  const [ac, bc] = [KIND_CODE[a.kind], KIND_CODE[b.kind]];
+  const is = (x, xk, y, yk) => (x === a.name && xk === ac && y === b.name && yk === bc) || (x === b.name && xk === bc && y === a.name && yk === ac);
+  return r.kind === 'dialog' ? is(r.a, r.ak, r.b, r.bk) : !r.kind && is(r.from, r.fk, r.to, r.tk);
+}
+
+/** Текущий диалог пары — по журналу каталога проекта; пары нет в свежем файле — дочитываем .1. */
+function currentDialog(a, b) {
+  const busDir = busDirOf(a.kind === 'project' ? a : b);
+  for (const withRotated of fs.existsSync(`${journalFile(busDir)}.1`) ? [false, true] : [false]) {
+    const records = readJournal(busDir, withRotated);
+    for (let i = records.length - 1; i >= 0; i--) if (inPair(records[i], a, b)) return dialogOf(records[i]);
+  }
+  return '';
+}
+
+/** Новый пустой диалог пары: маркер в журнал обеих сторон. → d */
+function newDialog(a, b) {
+  if (!isDialogPair(a, b)) throw new BusError('Диалоги — только у пары «проект ↔ субагент».');
+  const id = newId();
+  journalAppend(a, b, { id, t: stamp(), kind: 'dialog', a: a.name, ak: KIND_CODE[a.kind], b: b.name, bk: KIND_CODE[b.kind], d: id }, 'ar', 'br');
+  return id;
+}
 
 /** Запись про двух агентов — в журнал каталога каждого; каталог чужой стороны дописывается под ключом rootKey. */
 function journalAppend(a, b, record, aRootKey, bRootKey) {
@@ -861,19 +903,33 @@ function journalAppend(a, b, record, aRootKey, bRootKey) {
 /**
  * Журнал уехал в .1, а history читает .1, только когда в свежем файле не хватает строк: без переноса агент остался бы и без сводки,
  * и без старых сообщений. Последняя сводка каждой пары едет в голову нового файла как есть — id тот же, UI дубль не рисует.
+ * Маркер диалога едет тоже: пустой диалог иначе пропал бы из вкладок вместе с .1. Порядок перенесённых маркеров текущий диалог
+ * сбил бы (он — по последней записи пары), поэтому за ними у каждой пары «проект ↔ субагент» — маркер её текущего диалога.
  */
 function carrySummaries(rotated) {
   const last = new Map();
+  const current = new Map(); // пара → { r: последняя запись, d }
+  const split = new Set(); // пары, у которых есть непервый диалог: без него текущий и так первый, указатель не нужен
+  const side = (name, kind, root) => `${name}:${kind}:${root || ''}`;
+  const isSub = (code) => code === 'l' || code === 'g';
   for (const line of fs.readFileSync(rotated, 'utf8').split('\n')) {
-    if (!line.includes('"kind":"summary"')) continue;
+    if (!line) continue;
     try {
       const r = JSON.parse(line);
-      if (r.kind === 'summary') last.set([`${r.a}:${r.ak}:${r.ar || ''}`, `${r.b}:${r.bk}:${r.br || ''}`].sort().join('|'), line);
+      const [x, xk, xr, y, yk, yr] = r.kind ? [r.a, r.ak, r.ar, r.b, r.bk, r.br] : [r.from, r.fk, r.fr, r.to, r.tk, r.tr];
+      const pair = [side(x, xk, xr), side(y, yk, yr)].sort().join('|');
+      if (dialogOf(r)) split.add(pair);
+      if (r.kind === 'summary' || r.kind === 'dialog') last.set(`${r.kind}#${pair}#${dialogOf(r)}`, line);
+      if ((r.kind === 'dialog' || !r.kind) && typeof x === 'string' && typeof y === 'string' && ((xk === 'p' && isSub(yk)) || (yk === 'p' && isSub(xk)))) {
+        current.set(pair, { a: x, ak: xk, ar: xr, b: y, bk: yk, br: yr, d: dialogOf(r) });
+      }
     } catch {
       // оборванная строка
     }
   }
-  return [...last.values()].map((line) => line + '\n').join('');
+  const pointers = [...current].filter(([pair]) => split.has(pair)).map(([, p]) => p).map(({ a, ak, ar, b, bk, br, d }) =>
+    JSON.stringify({ id: newId(), t: stamp(), kind: 'dialog', a, ak, ...(ar ? { ar } : {}), b, bk, ...(br ? { br } : {}), d }));
+  return [...last.values(), ...pointers].map((line) => line + '\n').join('');
 }
 
 /**
@@ -881,9 +937,10 @@ function carrySummaries(rotated) {
  * history просто перестаёт отдавать агенту всё, шо старше upto. Текст — одной строкой через oneLine():
  * секреты режутся, а многострочной сводкой нельзя подделать «сообщение» в выводе history. Длина — не больше SUMMARY_LENGTH.
  */
-function writeSummary(a, b, upto, count, text) {
+function writeSummary(a, b, upto, count, text, d = '') {
   const id = newId();
-  journalAppend(a, b, { id, t: stamp(), kind: 'summary', a: a.name, ak: KIND_CODE[a.kind], b: b.name, bk: KIND_CODE[b.kind], upto, count, text: cut(oneLine(text), SUMMARY_LENGTH) }, 'ar', 'br');
+  const dialog = isDialogPair(a, b) ? checkDialog(d) : '';
+  journalAppend(a, b, { id, t: stamp(), kind: 'summary', a: a.name, ak: KIND_CODE[a.kind], b: b.name, bk: KIND_CODE[b.kind], ...(dialog ? { d: dialog } : {}), upto, count, text: cut(oneLine(text), SUMMARY_LENGTH) }, 'ar', 'br');
   return id;
 }
 
@@ -1282,9 +1339,10 @@ function broadcast(asName, rest) {
   const { type, text, attachments, btw, evolve } = parseMessage(rest, settingsOf(ctx, me));
   if (btw) throw new BusError('--btw — только у send: вбрасывать всем работающим агентам разом незачем.');
   if (evolve) throw new BusError('--evolve — только у send: самоправка роли назначается одному агенту.');
-  for (const to of others) deliver(me, to, type, text, attachments);
+  const sent = others.map((to) => deliver(me, to, type, text, attachments));
   console.log(`${me.name} -> ${others.map((a) => a.name).join(', ')} | ${type} | доставлено${attachments.length ? `, файлов: ${attachments.length}` : ''}`);
-  for (const to of others) wakeHint(me, to, type, ctx.start);
+  // id — как у send: без него фоновый подъём не знает, с какого сообщения начался, и UI не вешает отметку запуска
+  others.forEach((to, i) => wakeHint(me, to, type, ctx.start, sent[i].id));
 }
 
 // Правила разбора входящих едут вместе с ними: ради пяти правил сессия грузила весь SKILL.md (≈3к токенов, оценка) на каждый блок [bus]
@@ -1455,15 +1513,24 @@ function clearHistory(asName, args) {
 function dialogsOf(me, peer, withRotated) {
   const code = KIND_CODE[me.kind];
   const records = readJournal(busDirOf(me), withRotated);
+  // У пары «проект ↔ субагент» — только текущий диалог: d последнего сообщения или маркера пары (см. currentDialog)
+  const split = (other) => ['p', 'l', 'g'].includes(other) && (code === 'p') !== (other === 'p');
+  const current = new Map();
+  for (const r of records) {
+    const [x, xk, y, yk] = r.kind === 'dialog' ? [r.a, r.ak, r.b, r.bk] : !r.kind ? [r.from, r.fk, r.to, r.tk] : [];
+    const who = x === me.name && xk === code ? [y, yk] : y === me.name && yk === code ? [x, xk] : null;
+    if (who && split(who[1])) current.set(who[0], dialogOf(r));
+  }
+  const here = (who, r) => !current.has(who) || current.get(who) === dialogOf(r);
   // В журнале каталога — переписка всех его агентов; моя — где я одна из сторон. Вид отличает локального dima от глобального
   const all = records
     .filter((r) => typeof r.t === 'string' && typeof r.text === 'string' && typeof r.id === 'string') // обрывок или чужая запись без полей — не повод падать
     .map((r) => (r.from === me.name && r.fk === code ? { r, out: true, who: r.to, dir: r.tr } : r.to === me.name && r.tk === code ? { r, out: false, who: r.from, dir: r.fr } : null))
-    .filter((m) => m && (!peer || m.who === peer));
+    .filter((m) => m && (!peer || m.who === peer) && here(m.who, m.r));
   const summaries = new Map();
   for (const r of records) {
     const who = r.kind !== 'summary' || typeof r.t !== 'string' || typeof r.text !== 'string' ? null : r.a === me.name && r.ak === code ? r.b : r.b === me.name && r.bk === code ? r.a : null;
-    if (who && (!peer || who === peer)) summaries.set(who, r); // последняя по журналу перекрывает прежние
+    if (who && (!peer || who === peer) && here(who, r)) summaries.set(who, r); // последняя по журналу перекрывает прежние
   }
   return { summaries, all, found: all.filter((m) => !(summaries.has(m.who) && m.r.id <= summaries.get(m.who).upto)) };
 }
@@ -1566,20 +1633,23 @@ function dialogRows(me, peer, L) {
 function pairRows(busDir, L) {
   const side = (name, kind, root) => `${name}:${kind}:${root || ''}`;
   const pairs = new Map();
-  const at = (a, b, names) => {
-    const key = [a, b].sort().join('|');
-    if (!pairs.has(key)) pairs.set(key, { name: [...names].sort().join(' ↔ '), messages: [], upto: '', summary: null });
+  // Диалоги пары — отдельные строки: у каждого своя сводка
+  const at = (a, b, names, d) => {
+    const key = `${[a, b].sort().join('|')}#${d}`;
+    if (!pairs.has(key)) pairs.set(key, { name: [...names].sort().join(' ↔ '), d, messages: [], upto: '', summary: null });
     return pairs.get(key);
   };
+  // Диалог назван началом первого сообщения, как вкладка в UI: сырой id человеку ничего не говорит
+  const titled = (p) => (p.d ? `${p.name} · «${p.messages.length ? oneLine(p.messages[0].text).slice(0, 28) : 'новый диалог'}»` : p.name);
   for (const r of readJournal(busDir, true)) {
     if (typeof r.t !== 'string' || typeof r.text !== 'string' || typeof r.id !== 'string') continue;
     if (r.kind === 'summary') {
-      if (typeof r.a === 'string' && typeof r.b === 'string') Object.assign(at(side(r.a, r.ak, r.ar), side(r.b, r.bk, r.br), [r.a, r.b]), { upto: String(r.upto || ''), summary: r });
-    } else if (typeof r.from === 'string' && typeof r.to === 'string') at(side(r.from, r.fk, r.fr), side(r.to, r.tk, r.tr), [r.from, r.to]).messages.push(r);
+      if (typeof r.a === 'string' && typeof r.b === 'string') Object.assign(at(side(r.a, r.ak, r.ar), side(r.b, r.bk, r.br), [r.a, r.b], dialogOf(r)), { upto: String(r.upto || ''), summary: r });
+    } else if (typeof r.from === 'string' && typeof r.to === 'string') at(side(r.from, r.fk, r.fr), side(r.to, r.tk, r.tr), [r.from, r.to], dialogOf(r)).messages.push(r);
   }
   return [...pairs.values()].map((p) => {
     const fresh = p.messages.filter((m) => !(p.upto && m.id <= p.upto));
-    return { name: p.name, total: p.messages.length, fresh: fresh.length, tokens: L.tokensOf(fresh), summary: L.summaryTokens(p.summary) };
+    return { name: titled(p), total: p.messages.length, fresh: fresh.length, tokens: L.tokensOf(fresh), summary: L.summaryTokens(p.summary) };
   });
 }
 
@@ -1642,13 +1712,14 @@ function agentLoads(ctx) {
   for (const busDir of dirs) {
     const records = readJournal(busDir, true);
     const upto = new Map();
-    const pair = (a, b) => [a, b].sort().join('|');
-    for (const r of records) if (r.kind === 'summary' && typeof r.upto === 'string') upto.set(pair(`${r.a}:${r.ak}`, `${r.b}:${r.bk}`), r.upto);
+    // Сводка — у каждого диалога пары своя: общий ключ пары прятал бы старые диалоги за сводкой нового
+    const pair = (a, b, r) => `${[a, b].sort().join('|')}#${dialogOf(r)}`;
+    for (const r of records) if (r.kind === 'summary' && typeof r.upto === 'string') upto.set(pair(`${r.a}:${r.ak}`, `${r.b}:${r.bk}`, r), r.upto);
     for (const r of records) {
       if (r.kind === 'summary' || typeof r.id !== 'string' || typeof r.text !== 'string' || typeof r.from !== 'string' || typeof r.to !== 'string' || seen.has(r.id)) continue;
       seen.add(r.id); // сообщение между каталогом и домашней шиной лежит в обоих журналах
       const sides = [`${r.from}:${r.fk}`, `${r.to}:${r.tk}`];
-      if (r.id <= (upto.get(pair(...sides)) || '')) continue;
+      if (r.id <= (upto.get(pair(...sides, r)) || '')) continue;
       for (const key of new Set(sides)) {
         if (!fresh.has(key)) fresh.set(key, []);
         fresh.get(key).push(r);
@@ -1775,7 +1846,7 @@ module.exports = {
   CONFIG_DIR, BUS, REGISTRY, TYPES, MAX_LENGTH, ACCESS_GROUPS, parseDenied, deniedLine, UI_REPLY, BusError,
   loadRegistry, context, contextOf, describe, projectSelf, isSubagent, journalFile, findDefinition, isWrapper, enroll,
   splitDefinition, joinDefinition, readRole, checkBody, readJournal, roleFileOf, createAgent, updateAgent, syncWrapper, deleteAgent, isInside,
-  readStdin, writeAtomic, clean, oneLine, checkAttachments, deliver, journalNote, writeSummary, rewriteJournal, auditNote, autoWake, orchestratorOf, requireAlive, drain, unread,
+  readStdin, writeAtomic, clean, oneLine, checkAttachments, deliver, journalNote, writeSummary, newDialog, currentDialog, isDialogPair, rewriteJournal, auditNote, autoWake, orchestratorOf, requireAlive, drain, unread,
 };
 
 if (require.main === module) main(process.argv.slice(2));

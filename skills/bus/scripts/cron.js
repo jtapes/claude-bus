@@ -129,7 +129,8 @@
     // Шаг, который не делит 60, рвётся на стыке часа (*/45 — это :00 и :45): «каждые 45 мин» было бы враньём
     if (stepOf(parts[0]) && parts[1] === '*' && 60 % Number(stepOf(parts[0])) === 0) time = stepOf(parts[0]) === '1' ? tr('каждую минуту') : tr('каждые {n} мин', { n: stepOf(parts[0]) });
     else if (parts[0] === '*' && parts[1] === '*') time = tr('каждую минуту');
-    else if (c.minute.size === 1 && stepOf(parts[1])) time = tr('каждые {n} ч в :{mm}', { n: stepOf(parts[1]), mm: pad(sorted(c.minute)[0]) });
+    // Так же у часов: */5 — это 0, 5 … 20 и снова 0 через 4 ч
+    else if (c.minute.size === 1 && stepOf(parts[1]) && 24 % Number(stepOf(parts[1])) === 0) time = tr('каждые {n} ч в :{mm}', { n: stepOf(parts[1]), mm: pad(sorted(c.minute)[0]) });
     else if (c.minute.size <= 6 && parts[1] === '*') time = tr('каждый час в {list}', { list: sorted(c.minute).map((m) => `:${pad(m)}`).join(', ') });
     else {
       every = false;

@@ -57,9 +57,18 @@
   const pairOf = (m) => pairKey(m.fromKey, m.toKey);
   /** Выбраны ровно двое — смотрим их диалог друг с другом, а не всё подряд про каждого. */
   const selectedPair = (filters) => (filters.agents.size === 2 ? pairKey(...filters.agents) : null);
+  /** Диалог пары: первый (без d) — сама пара, остальные — pair#d. Ключ сводок и строк веса, как threadKey в ui.js. */
+  const threadKey = (pair, d) => (d ? `${pair}#${d}` : pair);
+  const threadOf = (m) => threadKey(pairOf(m), m.d || '');
+  /** Пара, чей диалог на экране: выбранные двое или открытая вкладка диалога с одним агентом. */
+  const viewPair = (filters) => selectedPair(filters) || (filters.dialog ? filters.dialog.pair : null);
+  const viewThread = (filters) => {
+    const pair = viewPair(filters);
+    return pair && filters.dialog && filters.dialog.pair === pair ? threadKey(pair, filters.dialog.d) : pair;
+  };
 
   function covered(m, summaries) {
-    const summary = summaries.get(pairOf(m));
+    const summary = summaries.get(threadOf(m));
     return Boolean(summary && m.id <= summary.upto);
   }
 
@@ -76,6 +85,8 @@
   function passes(m, filters, hereRoot) {
     const pair = selectedPair(filters);
     if (pair ? pairOf(m) !== pair : filters.agents.size && !filters.agents.has(m.fromKey) && !filters.agents.has(m.toKey)) return false;
+    // Открыта вкладка диалога: переписка пары — только её, переписку агента с другими видно как раньше
+    if (filters.dialog && pairOf(m) === filters.dialog.pair && (m.d || '') !== filters.dialog.d) return false;
     if (filters.types.size && !filters.types.has(m.type)) return false;
     // Без выбора агента лента — только каталог UI; выбранного агента или пару видно из любого каталога:
     // галочка «только эта директория» давала пустую ленту на клик по агенту из «Другие проекты»
@@ -234,14 +245,14 @@
    * cont у сообщения — оно продолжает серию: на ветке ему хватает малого узла вместо полного отвода.
    */
   function feedItems({ messages, summaries, filters, hereRoot, showCovered = false }) {
-    const pair = selectedPair(filters);
-    const summary = (pair && summaries.get(pair)) || null;
+    const pair = viewPair(filters);
+    const summary = (pair && summaries.get(viewThread(filters))) || null;
     const matched = messages.filter((m) => passes(m, filters, hereRoot));
     const shown = summary && !showCovered ? matched.filter((m) => !covered(m, summaries)) : matched;
     const hidden = matched.filter((m) => covered(m, summaries)).length;
 
     const cardAfter = new Map(); // пара → id последнего покрытого сообщения: сообщения идут по порядку id, последний выигрывает
-    if (!pair) for (const m of shown) if (covered(m, summaries)) cardAfter.set(pairOf(m), m.id);
+    if (!pair) for (const m of shown) if (covered(m, summaries)) cardAfter.set(threadOf(m), m.id);
     const cardIds = new Map([...cardAfter].map(([key, id]) => [id, summaries.get(key)]));
 
     const items = [];
@@ -279,25 +290,26 @@
   /**
    * Отчёт о весе переписки: строка на диалог, тяжёлые первыми. tokens — несжатый хвост (его агент затянет через history),
    * summary — вес сводки. here — диалог каталога UI: такие идут в итог total, чужие проекты — справкой ниже.
-   * → { rows: [{ pair, keys, names, here, total, fresh, tokens, summary, heavy }], total: { dialogs, fresh, tokens, summary } }
+   * У пары несколько диалогов — строка на каждый: d и title (начало первого сообщения) их различают.
+   * → { rows: [{ pair, thread, d, title, keys, names, here, total, fresh, tokens, summary, heavy }], total: { dialogs, fresh, tokens, summary } }
    */
   function weightReport(messages, summaries, hereRoot) {
     const pairs = new Map();
     for (const m of messages) {
-      const pair = pairOf(m);
-      if (!pairs.has(pair)) {
+      const thread = threadOf(m);
+      if (!pairs.has(thread)) {
         const sides = [[m.fromKey, m.from], [m.toKey, m.to]].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-        pairs.set(pair, { pair, keys: sides.map((x) => x[0]), names: sides.map((x) => x[1]), here: false, list: [] });
+        pairs.set(thread, { pair: pairOf(m), thread, d: m.d || '', title: dialogTitle(m), keys: sides.map((x) => x[0]), names: sides.map((x) => x[1]), here: false, list: [] });
       }
-      const row = pairs.get(pair);
+      const row = pairs.get(thread);
       row.list.push(m);
       if (!hereRoot || !m.roots.length || m.roots.includes(hereRoot)) row.here = true;
     }
     const rows = [...pairs.values()].map(({ list, ...row }) => {
       const fresh = list.filter((m) => !covered(m, summaries));
       const tokens = tokensOf(fresh);
-      return { ...row, total: list.length, fresh: fresh.length, tokens, summary: summaryTokens(summaries.get(row.pair)), heavy: tokens >= heavyTokens };
-    }).sort((a, b) => Number(b.here) - Number(a.here) || b.tokens + b.summary - (a.tokens + a.summary) || a.pair.localeCompare(b.pair));
+      return { ...row, total: list.length, fresh: fresh.length, tokens, summary: summaryTokens(summaries.get(row.thread)), heavy: tokens >= heavyTokens };
+    }).sort((a, b) => Number(b.here) - Number(a.here) || b.tokens + b.summary - (a.tokens + a.summary) || a.thread.localeCompare(b.thread));
     const mine = rows.filter((row) => row.here);
     const sum = (key) => mine.reduce((n, row) => n + row[key], 0);
     return { rows, total: { dialogs: mine.length, fresh: sum('fresh'), tokens: sum('tokens'), summary: sum('summary') } };
@@ -409,20 +421,48 @@
   }
 
   /**
-   * Шо чистит красная кнопка над лентой. Никто не выбран — весь журнал каталога; пара — её диалог; один агент — диалог пользователя с ним,
-   * то есть пара «оркестратор, от чьего имени ему пишет UI ↔ агент». Раньше с одним выбранным агентом кнопка сносила весь журнал.
-   * → { mode: 'all' | 'pair' | 'single' | 'none', a, b, names, hint }
+   * Чьи диалоги показывать вкладками: выбран один субагент в шине (или он в паре со своим оркестратором) — пара «оркестратор, от чьего
+   * имени ему пишет UI ↔ агент». У агент↔агент и у проектов диалогов нет. → { agent, boss, pair, names } или null
    */
-  function clearTarget(filters, agents) {
-    const keys = [...filters.agents];
-    const nameBy = (key) => (agents.find((a) => a.key === key) || { name: key.split('@')[0] }).name;
-    if (!keys.length) return { mode: 'all' };
-    if (keys.length === 2) return { mode: 'pair', a: keys[0], b: keys[1], names: keys.map(nameBy).join(' ↔ ') };
-    if (keys.length > 2) return { mode: 'none', hint: tr('Выбрано больше двух агентов. Оставь одного — очистится твой диалог с ним, или двоих — их диалог.') };
-    const agent = agents.find((a) => a.key === keys[0]);
+  function dialogTarget(filters, agents) {
+    const picked = [...filters.agents].map((key) => agents.find((a) => a.key === key));
+    const sub = picked.find((a) => a && a.registered && a.alive && a.kind !== 'project' && a.from);
+    if (!sub) return null;
     // Имя проекта в реестре одно на машину, поэтому его ключ — само имя
-    if (agent && agent.from) return { mode: 'single', a: agent.key, b: agent.from, names: `${agent.from} ↔ ${agent.name}` };
-    return { mode: 'none', hint: tr('«{name}» — не тот, кому ты пишешь из UI, своего диалога с ним нет. Выбери второго агента — очистится их диалог; сними выбор — весь журнал каталога.', { name: nameBy(keys[0]) }) };
+    const boss = sub.from;
+    if (picked.length === 2 ? !picked.some((a) => a && a.kind === 'project' && a.key === boss) : picked.length !== 1) return null;
+    return { agent: sub.key, boss, pair: pairKey(sub.key, boss), names: `${boss} ↔ ${sub.name}` };
+  }
+
+  const TITLE_LENGTH = 28;
+  const dialogTitle = (m) => {
+    const text = String((m && m.text) || '').replace(/\s+/g, ' ').trim();
+    return text.length > TITLE_LENGTH ? `${text.slice(0, TITLE_LENGTH)}…` : text;
+  };
+
+  /**
+   * Вкладки диалогов пары по порядку появления. Диалог — из сообщений (d; без d — первый, '') и маркеров «+» (dialogs: [{ pair, d, id }]).
+   * current — диалог последней записи пары: в него уйдут ответы агента, по умолчанию открыт он. Записей нет — одна пустая вкладка ''.
+   * → { tabs: [{ d, title, count, first, last }], current }
+   */
+  function dialogTabs(messages, dialogs, pair) {
+    const tabs = new Map();
+    const touch = (d, id, m) => {
+      if (!tabs.has(d)) tabs.set(d, { d, title: '', count: 0, first: id, last: id });
+      const tab = tabs.get(d);
+      if (id < tab.first) tab.first = id;
+      if (id > tab.last) tab.last = id;
+      if (m) {
+        tab.count++;
+        if (!tab.title || id <= tab.titleId) Object.assign(tab, { title: dialogTitle(m), titleId: id });
+      }
+    };
+    for (const x of dialogs) if (x.pair === pair) touch(x.d, x.id);
+    for (const m of messages) if (pairOf(m) === pair) touch(m.d || '', m.id, m);
+    const list = [...tabs.values()].sort((a, b) => (a.first < b.first ? -1 : a.first > b.first ? 1 : 0)).map(({ titleId, ...tab }) => ({ ...tab, title: tab.title || tr('Новый диалог') }));
+    if (!list.length) return { tabs: [{ d: '', title: tr('Новый диалог'), count: 0, first: '', last: '' }], current: '' };
+    const current = list.reduce((a, b) => (b.last > a.last ? b : a)).d;
+    return { tabs: list, current };
   }
 
   const AGENT_NAME = /^[a-z0-9][a-z0-9-]{0,30}$/; // то же правило, шо NAME и RESERVED в bus.js
@@ -798,7 +838,7 @@
   }
 
   return {
-    hue, assignHues, pairKey, pairOf, selectedPair, covered, tokensOf, summaryTokens, weightReport, sizeOf, short, passes, splitByQuery, markdown, markdownInline, unreadIds, readTarget, nextSelection, feedItems, pairInfo, groupAgents, agentStatus, clock, elapsed, runMark, liveLines, liveLast, canBtw, canEvolve, wakeActionNote, blockedNote, writable, nameOf, dictated, spaceTap, voiceNote, lineDiff, raisedNote, sentNote, clearTarget, validAgentName,
+    hue, assignHues, pairKey, pairOf, selectedPair, threadKey, threadOf, viewPair, viewThread, covered, tokensOf, summaryTokens, weightReport, sizeOf, short, passes, splitByQuery, markdown, markdownInline, unreadIds, readTarget, nextSelection, feedItems, pairInfo, groupAgents, agentStatus, clock, elapsed, runMark, liveLines, liveLast, canBtw, canEvolve, wakeActionNote, blockedNote, writable, nameOf, dictated, spaceTap, voiceNote, lineDiff, raisedNote, sentNote, dialogTarget, dialogTitle, dialogTabs, validAgentName,
     SCHEDULE_MINUTE_STEPS, SCHEDULE_HOUR_STEPS, buildScheduleCron, scheduleCronPreset, scheduleTarget, scheduleNextLabel, scheduleLastNote, scheduleDaemonNote, scheduleBadge, scheduleGroups, validScheduleName, isFrequentError,
     ACCESS_PRESETS, accessPreset, accessDenied, accessFromDenied, accessWeight, accessDeltaLabel,
     setThresholds, settingsDirty, settingsFieldError,

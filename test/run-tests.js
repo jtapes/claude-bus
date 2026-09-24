@@ -364,7 +364,7 @@ const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
   const names = ['dima', 'masha', 'qa', 'shop-api', 'landing', 'backend', 'frontend', 'helper', 'test', 'api', 'web', 'bot', 'docs'];
   const hues = L.assignHues(names.map((name) => ({ name, kind: 'local' })));
   const again = L.assignHues([...names].reverse().map((name) => ({ name, kind: 'global' })));
-  check('L1 ui-logic hue: цвет провода из имени стабилен, медь (15–45°) занята шиной; среди известных агентов коллизии разведены и от порядка списка не зависят', L.hue('dima') === L.hue('dima') && names.every((n) => L.hue(n) >= 50 || L.hue(n) < 15) && L.hue('vlad', 'h') === L.hue('vlad') && new Set(hues.values()).size === hues.size && same([...hues].sort(), [...again].sort()), JSON.stringify([...hues]));
+  check('L1 ui-logic hue: цвет провода из имени стабилен, медь (15–45°) занята шиной; среди известных агентов коллизии разведены и от порядка списка не зависят', L.hue('dima') === L.hue('dima') && names.every((n) => L.hue(n) >= 50 || L.hue(n) < 15) && L.hue('user', 'h') === L.hue('user') && new Set(hues.values()).size === hues.size && same([...hues].sort(), [...again].sort()), JSON.stringify([...hues]));
 
   const md = L.markdown('## Итог\nготово, **форма** в `Form.vue`\nвторая строка\n\n1. первый\n   - вложенный\n2. второй\n\n```js\nconst a = 1;\n<script>x</script>\n```\n> цитата\n---');
   const kinds = md.map((b) => b.kind).join(',');
@@ -572,7 +572,7 @@ const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
   const wake = require(path.resolve(HOOKS, '..', 'skills', 'bus', 'scripts', 'wake.js'));
   const deadBox = path.join(sandbox, 'dead-box');
   fs.mkdirSync(deadBox, { recursive: true });
-  fs.writeFileSync(path.join(deadBox, 'wake.json'), JSON.stringify({ state: 'running', at: Date.now(), by: 'vlad', times: [Date.now(), Date.now() - 2 * 3600 * 1000] }));
+  fs.writeFileSync(path.join(deadBox, 'wake.json'), JSON.stringify({ state: 'running', at: Date.now(), by: 'user', times: [Date.now(), Date.now() - 2 * 3600 * 1000] }));
   const dead = wake.state(deadBox);
   fs.writeFileSync(path.join(deadBox, 'wake.lock'), JSON.stringify({ pid: process.pid, at: Date.now() }));
   const liveState = wake.state(deadBox);
@@ -717,7 +717,7 @@ function main() {
 
     const state = (await request('GET', '/api/state')).json();
     const agent = (name) => state.agents.find((a) => a.name === name) || {};
-    check('U2 bus ui state: оркестратор каталога, локальный, глобальный, чужой проект и определение «не в шине»; человека среди агентов нет; у каждого — от чьего имени ему пишут, своему оркестратору писать нельзя', agent('uia').orchestrator && agent('uia').here && agent('dima').kind === 'local' && agent('dima').here && agent('helper').kind === 'global' && !state.agents.some((a) => a.kind === 'human' || a.name === 'vlad') && !('human' in state) && agent('dima').from === 'uia' && agent('helper').from === 'uia' && agent('uib').from === 'uia' && agent('loner').from === 'uia' && agent('uia').from === '' && agent('uia').blocked.includes('оркестратор') && agent('dima').blocked === '' && agent('uib').kind === 'project' && !agent('uib').here && agent('loner').registered === false && agent('loner').description.includes('loner') && state.here.project === 'uia', JSON.stringify(state.agents.map((a) => [a.name, a.kind, a.registered])));
+    check('U2 bus ui state: оркестратор каталога, локальный, глобальный, чужой проект и определение «не в шине»; человека среди агентов нет; у каждого — от чьего имени ему пишут, своему оркестратору писать нельзя', agent('uia').orchestrator && agent('uia').here && agent('dima').kind === 'local' && agent('dima').here && agent('helper').kind === 'global' && !state.agents.some((a) => a.kind === 'human' || a.name === 'user') && !('human' in state) && agent('dima').from === 'uia' && agent('helper').from === 'uia' && agent('uib').from === 'uia' && agent('loner').from === 'uia' && agent('uia').from === '' && agent('uia').blocked.includes('оркестратор') && agent('dima').blocked === '' && agent('uib').kind === 'project' && !agent('uib').here && agent('loner').registered === false && agent('loner').description.includes('loner') && state.here.project === 'uia', JSON.stringify(state.agents.map((a) => [a.name, a.kind, a.registered])));
     check('U23 bus ui state: глобальное определение, затенённое локальным агентом каталога, второй строкой «не в шине» не показывается', state.agents.filter((a) => a.name === 'dima').length === 1 && agent('dima').registered === true, JSON.stringify(state.agents.filter((a) => a.name === 'dima')));
     check('U24 bus ui state: локальная обёртка над глобальной ролью помечена wraps (UI подпишет её «глобальный»), остаётся локальной по виду и ключу; обычный локальный агент с одноимённым глобальным определением — нет', agent('wrapped').wraps === true && agent('wrapped').kind === 'local' && agent('wrapped').key === `wrapped@${projU}` && state.agents.filter((a) => a.name === 'wrapped').length === 1 && !agent('dima').wraps, JSON.stringify(agent('wrapped')));
     check('U3 bus ui state: сообщение между каталогами лежит в двух журналах, в ленте — один раз', state.messages.filter((m) => m.text === 'между каталогами').length === 1 && state.messages.some((m) => m.text === 'привет из cli' && m.toKey === `dima@${projU}`), JSON.stringify(state.messages));
@@ -767,7 +767,7 @@ function main() {
     check('U9 bus ui read: открытый диалог агента забирает из ящика оркестратора каталога UI только его ответы пользователю — сессия их уже не получит; ответы других агентов, ответы сессии и звонки WAKE остаются в ящике, в счёт идут только ответы пользователю — по агентам; без агента — 400; чужие ящики целы',
       boss.replies === 2 && boss.repliesBy[`dima@${projU}`] === 1 && boss.repliesBy[`wrapped@${projU}`] === 1 && boss.unread === 4 && noReader.status === 400 && taken.taken === 1
       && bossAfter.replies === 1 && !(`dima@${projU}` in bossAfter.repliesBy) && !inboxAfter.includes('готово, смотри ленту') && lines(box(projU, 'uia')).length === 3 && inboxAfter.startsWith('[WAKE ') && inboxAfter.includes('ответ сессии') && inboxAfter.includes('ответ другого')
-      && lines(box(projU, 'dima')).length === 3 && !fs.existsSync(path.join(busDir, 'vlad')), `${JSON.stringify(boss)} ${JSON.stringify(taken)} ${inboxAfter}`);
+      && lines(box(projU, 'dima')).length === 3 && !fs.existsSync(path.join(busDir, 'user')), `${JSON.stringify(boss)} ${JSON.stringify(taken)} ${inboxAfter}`);
     fs.writeFileSync(box(projU, 'uia'), lines(box(projU, 'uia')).filter((l) => l.startsWith('[WAKE ')).join('\n') + '\n');
 
     const pairBody = { a: 'uia', b: `dima@${projU}` };
@@ -857,15 +857,15 @@ function main() {
     // Запись {human: true} могла остаться в реестре от прежних версий — адресатом она больше не считается
     const registryFile = path.join(busDir, 'agents.json');
     const registry = JSON.parse(read(registryFile));
-    fs.writeFileSync(registryFile, JSON.stringify({ agents: { ...registry.agents, vlad: { human: true } } }));
-    const asHuman = bus(projU, ['--as', 'vlad', 'send', 'dima', 'подделка']);
-    const toHuman = bus(projU, ['--as', 'dima', 'send', 'vlad', 'done', 'человеку']);
+    fs.writeFileSync(registryFile, JSON.stringify({ agents: { ...registry.agents, user: { human: true } } }));
+    const asHuman = bus(projU, ['--as', 'user', 'send', 'dima', 'подделка']);
+    const toHuman = bus(projU, ['--as', 'dima', 'send', 'user', 'done', 'человеку']);
     r = bus(projU, ['broadcast', 'done', 'всем агентам']);
     const listed = bus(projU, ['agents']);
-    const cleaned = bus(projU, ['remove', 'vlad']);
+    const cleaned = bus(projU, ['remove', 'user']);
     check('B44 bus: адресата-человека в шине нет — запись {human: true} из старого реестра не видна в agents, от её имени и ей не написать, broadcast её пропускает, remove убирает ключ',
-      asHuman.code === 1 && toHuman.code === 1 && toHuman.err.includes('нет') && r.code === 0 && !r.out.includes('vlad') && !listed.out.includes('vlad') && !fs.existsSync(path.join(busDir, 'vlad'))
-      && cleaned.code === 0 && !read(registryFile).includes('vlad'), asHuman.err + toHuman.err + r.out + cleaned.out + cleaned.err);
+      asHuman.code === 1 && toHuman.code === 1 && toHuman.err.includes('нет') && r.code === 0 && !r.out.includes('user') && !listed.out.includes('user') && !fs.existsSync(path.join(busDir, 'user'))
+      && cleaned.code === 0 && !read(registryFile).includes('user'), asHuman.err + toHuman.err + r.out + cleaned.out + cleaned.err);
 
     // ---------- вложения и «Разбудить» ----------
     const stuff = path.join(sandbox, 'stuff');
@@ -1693,15 +1693,12 @@ function main() {
       && read(journalU).includes('оставь меня') && !fs.existsSync(attachDir) && !idsAfter.has('удали меня') && !idsAfter.has('копия в двух журналах') && idsAfter.has('оставь меня') && idsAfter.has('диалог с машей') && read(path.join(busDir, 'audit.log')).includes('ui delete | сообщений: 2'),
       JSON.stringify(deleted) + deleteNoToken.status + emptyDelete.status + goneTwice.status);
 
-    const noPair = await request('POST', '/api/clear', { headers: auth, body: { a: 'uia' } });
-    const clearedPair = (await request('POST', '/api/clear', { headers: auth, body: { a: 'uia', b: `dima@${projU}` } })).json();
+    const noPair = await request('POST', '/api/dialog/delete', { headers: auth, body: { a: 'uia' } });
+    const clearNoMore = await request('POST', '/api/clear', { headers: auth, body: { all: true } });
+    const droppedFirst = (await request('POST', '/api/dialog/delete', { headers: auth, body: { a: 'uia', b: `dima@${projU}`, d: '' } })).json();
     const idsPair = await stateIds();
-    check('U33 bus ui clear пары: диалог двоих убран из журнала, переписка с другими агентами цела; без второго агента — 400', noPair.status === 400 && clearedPair.ok && clearedPair.removed >= 2 && !read(journalU).includes('оставь меня') && !read(journalU).includes('первое после очистки') && read(journalU).includes('диалог с машей') && !idsPair.has('оставь меня') && idsPair.has('диалог с машей'), JSON.stringify(clearedPair) + noPair.text);
-
-    bus(projU, ['send', 'uib', 'done', 'вторая копия']);
-    const clearedAll = (await request('POST', '/api/clear', { headers: auth, body: { all: true } })).json();
-    const idsAll = await stateIds();
-    check('U34 bus ui clear всего: журнал каталога UI удалён целиком, копии его сообщений убраны и из журнала соседа, чужая переписка соседа цела', clearedAll.ok && clearedAll.removed >= 2 && !fs.existsSync(journalU) && !read(journalV).includes('вторая копия') && !idsAll.has('диалог с машей') && !idsAll.has('вторая копия'), JSON.stringify(clearedAll) + [...idsAll.keys()].join(' | '));
+    check('U33 bus ui «×» первого диалога: переписка без d с агентом убрана из журнала, с другими агентами цела; без второго агента — 400; «Очистить всё» (/api/clear) больше нет',
+      noPair.status === 400 && clearNoMore.status !== 200 && fs.existsSync(journalU) && droppedFirst.ok && droppedFirst.removed >= 1 && !read(journalU).includes('оставь меня') && read(journalU).includes('диалог с машей') && !idsPair.has('оставь меня') && idsPair.has('диалог с машей'), JSON.stringify(droppedFirst) + noPair.text + clearNoMore.status);
 
     // UI с рубильником из файла (в первом сервере автоподъём заглушен окружением тестов)
     const port2 = port + 1 + Math.floor(Math.random() * 500);

@@ -343,7 +343,7 @@ function headlessPrompt(job) {
 function reportToFeed(job, report) {
   const to = job.root ? bus.orchestratorOf(job.root) : null;
   const text = bus.clean(`Расписание «${job.name}»: ${report.length > FEED_REPORT ? `${report.slice(0, FEED_REPORT)}… (целиком — schedule log ${job.name})` : report || '(пустой отчёт)'}`);
-  bus.journalNote(job.root ? path.join(job.root, '.claude', 'bus') : bus.BUS, { from: 'schedule', fk: 's', to: to ? to.name : 'vlad', tk: to ? 'p' : 'h', type: 'DONE', text, job: job.name });
+  bus.journalNote(job.root ? path.join(job.root, '.claude', 'bus') : bus.BUS, { from: 'schedule', fk: 's', to: to ? to.name : 'user', tk: to ? 'p' : 'h', type: 'DONE', text, job: job.name });
 }
 
 async function runHeadless(job) {
