@@ -1,8 +1,14 @@
 {
-  "version": "1.0.3",
+  "version": "1.0.4",
   "repo": "jtapes/claude-bus",
   "files": [
     "SKILL.md",
+    "assets/bg/2.mp4",
+    "assets/bg/3.mp4",
+    "assets/bg/5.mp4",
+    "assets/bg/6.mp4",
+    "assets/bg/7.mp4",
+    "assets/bg/9.mp4",
     "references/admin.md",
     "references/roles.md",
     "references/schedule.md",

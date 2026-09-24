@@ -1,51 +1,66 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-theme="dark"><!-- тёмная — по умолчанию; выбор пользователя из localStorage ставит скрипт -->
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Шина</title>
 <style>
   /*
-   * Образ — медная токовая шина в сером щите: рейка идёт через ленту, каждое сообщение — отвод от неё.
-   * Ветка монотонная: рейка и отводы одного нейтрального цвета — разноцветные провода на каждом сообщении читались гирляндой.
-   * Отвод — колено в две дуги, как ветка в графе коммитов; серия подряд от одного к одному — малые узлы на прямых отводах, без гирлянды колен.
-   * Цвет агента несёт только узел на ветке (кольцо; залит — адресовано пользователю, в медном ободке — новое), приглушённый оттенок его имени и точка в списке; медь — то, шо ждёт пользователя.
-   * Шрифты системные: страница локальная и должна открываться без сети.
+   * Образ — стекло над живым фоном (по мотивам qwatra): панели — слои белого 10/20/40 % с размытием, под ними плывут медные и фиолетовые пятна и тонкая сетка.
+   * Шина осталась: рейка — светящаяся нить через ленту, каждое сообщение — отвод от неё; ветка монотонная, цвет агента несёт только узел.
+   * Узлы, точки и галочки — ромбы; главное действие — полупрозрачное стекло с медным отсветом; кнопки на наведении чуть растут.
+   * Медь — то, шо ждёт пользователя. Шрифты системные: страница локальная и должна открываться без сети.
+   * Размытие (--blur) — только у крупных панелей: на каждой карточке ленты оно тормозило бы прокрутку, а пятна фона и так мягкие.
    *
-   * Набор: кегли 11 (бирки) · 12 (подписи, мета) · 13 (кнопки, второй план) · 14 (имена, поля) · 15 (текст); отступы кратны 2, в ходу 4/8/12/16/20;
-   * высоты контролов --h-sm / --h / --h-lg, радиусы --r-sm / --r / --r-lg. Поверхности: --panel (щит) → --plate (планки, карточки, панели) → --raised (выпадающее);
-   * поле ввода на планке — --field. Кнопки: .send — главное действие, .squeeze — действие над перепиской, .ghost — нейтральное.
+   * Набор: кегли 12 (бирки, подписи, мета, прописные) · 14 (текст, кнопки, поля — по умолчанию) · 15–16 (заголовки); мельче 12 не бывает; отступы кратны 2, в ходу 4/8/12/16/20;
+   * высоты контролов --h-sm / --h / --h-lg, радиусы --r-sm / --r / --r-lg. Поверхности: --bg (фон под стеклом) → --glass-1/2/3 (слои стекла) → --raised (выпадающее);
+   * поле ввода — --field. Кнопки: .send — главное действие, .squeeze — действие над перепиской, .ghost — нейтральное.
    */
   :root {
-    --panel: #e6e9e7;
-    --plate: #fafbfa;
-    --raised: #ffffff;
+    --bg: #e3e7e5;
+    --panel: var(--bg); /* сплошной цвет щита: вырезы вокруг узлов, дыра пустого ромба */
+    --glass-1: #ffffff73;
+    --glass-2: #ffffffa6;
+    --glass-3: #ffffffd1;
+    --plate: var(--glass-1);
+    --raised: #ffffff8c; /* выпадающее — полупрозрачное стекло, под ним размытие */
+    --sheet: #ffffff8c; /* боковая панель — стекло 70 %; подложка под ней светлая (--scrim), иначе мелкий текст на затемнённом падал до 3.7:1 */
+    --field: #ffffff99;
+    --edge: #ffffffcc; /* блик по верхнему краю стекла */
     --ink: #18212a;
-    --ink-soft: #55636f;
-    --line: #cfd5d2;
-    --field: #ffffff;
-    --copper: #964a17; /* темнее не от вкуса: мелкий медный текст на сером щите обязан давать 4.5:1 */
-    --copper-soft: color-mix(in srgb, var(--copper) 11%, transparent);
+    --ink-soft: #44515c;
+    --line: #18212a1f;
+    --line-strong: #18212a38;
+    --copper: #8c4414; /* темнее не от вкуса: мелкий медный текст на стекле обязан давать 4.5:1 */
+    --copper-hi: #c8702f;
+    --copper-soft: color-mix(in srgb, var(--copper) 12%, transparent);
+    --copper-glow: color-mix(in srgb, var(--copper-hi) 45%, transparent);
     --on-copper: #ffffff;
     --on-danger: #ffffff;
-    --wire-l: 36%;
+    --wire-l: 30%;
     --wire-s: 38%;
-    --tap: #aab3b0; /* рейка и отводы: нейтральный металл */
+    --tap: #18212a40; /* рейка и отводы: нейтральная нить */
     --dot-s: 55%; --dot-l: 42%; /* точка на ветке — цвет отправителя, сочнее имени: она маленькая */
     --task: var(--copper);
-    --question: #6546b0;
-    --done: #26734a;
+    --question: #5a3da3;
+    --done: #1f6640;
     --fyi: #55636f;
     --danger: #a8322d;
-    --shadow: 0 1px 2px #18212a14, 0 4px 14px -6px #18212a1f;
-    --shadow-pop: 0 18px 40px -14px #000a, 0 2px 8px #0002;
-    --scrim: #10151ab3;
-    --r-xs: 4px; --r-sm: 6px; --r: 8px; --r-lg: 10px; /* строчная мелочь · галочки, пункты списка · контролы · карточки */
+    --blob-a: #e6955c47; --blob-b: #ac95f03d; --blob-c: #6bc98f26; /* пятна фона: медь, фиолет, зелень */
+    --grid: #18212a0d;
+    --blur: blur(18px) saturate(150%);
+    --shadow: 0 1px 0 var(--edge) inset, 0 8px 24px -14px #18212a40;
+    --shadow-pop: 0 1px 0 var(--edge) inset, 0 24px 60px -20px #18212a80, 0 2px 8px #18212a1a;
+    --shadow-lift: 0 1px 0 var(--edge) inset, 0 14px 30px -14px #18212a66, 0 2px 6px -2px #18212a1f; /* выбранное — приподнято над соседями: выбранный агент, открытая вкладка, выделенное сообщение */
+    --scrim: #10151a1a;
+    --veil: #eef1efa6; /* вуаль над видеофоном: светлая — под ней стекло и мелкий текст держат контраст, как над пятнами */
+    --r-xs: 4px; --r-sm: 6px; --r: 10px; --r-lg: 14px; /* строчная мелочь · галочки, пункты списка · контролы · карточки */
     --h-sm: 28px; --h: 32px; --h-lg: 38px; /* мелкая кнопка в строке · кнопка планки · поле и главное действие */
     --gutter: 20px;
     --label: Bahnschrift, "DIN Alternate", "Roboto Condensed", "Arial Narrow", sans-serif;
     --body: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
     --mono: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, "SF Mono", monospace;
+    --ease: cubic-bezier(.2, .7, .2, 1);
     --rail-x: 25px; /* левый край рейки в ленте */
     --rail-w: 2px;
     --feed-left: 66px;
@@ -54,382 +69,497 @@
     --tap-curve: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='20'%3E%3Cpath d='M0 2C24 2 14 17 40 17' fill='none' stroke='%23000' stroke-width='2'/%3E%3C/svg%3E");
     color-scheme: light;
   }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --panel: #0f1419; --plate: #171e26; --raised: #1e2731; --field: #10161c; --ink: #e4ebf1; --ink-soft: #91a0ae; --line: #2a3643;
-      --copper: #e6955c; --on-copper: #1a120b; --on-danger: #2a0b09;
-      --wire-l: 76%; --wire-s: 40%; --tap: #3a4856; --dot-s: 62%; --dot-l: 66%;
-      --question: #ac95f0; --done: #6bc98f; --fyi: #9aa8b6; --danger: #f0827b;
-      --shadow: 0 1px 0 #ffffff08 inset, 0 6px 18px -10px #000000b0;
-      color-scheme: dark;
-    }
-  }
   :root[data-theme="dark"] {
-    --panel: #0f1419; --plate: #171e26; --raised: #1e2731; --field: #10161c; --ink: #e4ebf1; --ink-soft: #91a0ae; --line: #2a3643;
-    --copper: #e6955c; --on-copper: #1a120b; --on-danger: #2a0b09;
-    --wire-l: 76%; --wire-s: 40%; --tap: #3a4856; --dot-s: 62%; --dot-l: 66%;
+    --bg: #0b1016; --glass-1: #ffffff0d; --glass-2: #ffffff1a; --glass-3: #ffffff2e; --raised: #ffffff1c; --sheet: #ffffff0f; --field: #0000002e; --edge: #ffffff17;
+    --ink: #e8eef3; --ink-soft: #97a6b3; --line: #ffffff17; --line-strong: #ffffff33;
+    --copper: #eda36a; --copper-hi: #f5b27e; --on-copper: #1a120b; --on-danger: #2a0b09;
+    --wire-l: 76%; --wire-s: 40%; --tap: #ffffff38; --dot-s: 62%; --dot-l: 66%;
     --question: #ac95f0; --done: #6bc98f; --fyi: #9aa8b6; --danger: #f0827b;
-    --shadow: 0 1px 0 #ffffff08 inset, 0 6px 18px -10px #000000b0;
+    --blob-a: #e6955c1f; --blob-b: #7b5fd624; --blob-c: #2f8f7a1a; --grid: #ffffff0a;
+    --shadow: 0 1px 0 var(--edge) inset, 0 10px 28px -16px #000000d9;
+    --shadow-pop: 0 1px 0 var(--edge) inset, 0 28px 70px -20px #000000f2, 0 2px 10px #0006;
+    --shadow-lift: 0 1px 0 var(--edge) inset, 0 16px 34px -14px #000000e6, 0 2px 8px -2px #00000080;
+    --scrim: #05080b66; --veil: #05080b73;
     color-scheme: dark;
   }
+  /* Над видео стекло плотнее и тонировано под тему: у роликов светлые пятна и искры, сквозь прозрачное белое стекло мелкий текст падал до 1.2:1 (замер qa).
+     Ролик остаётся живым между карточками и по краям, а под текстом — ровная подложка. Слои так же светлеют 1 → 2 → 3.
+     Плотность задаёт пользователь ползунком «Затемнение» в ⚙: --dim — множитель к плотностям ниже (1 — как написано), ставит setDim. Выпадающее (--raised) не зависит: список обязан читаться */
+  :root { --dim: calc(40 / 65); } /* затемнение по умолчанию — 40 % (DIM_DEFAULT в скрипте); плотности ниже написаны для 65 % */
+  :root.has-video:not([data-theme="dark"]) { --glass-1: color-mix(in srgb, #f6f8f7 min(100%, 80% * var(--dim)), transparent); --glass-2: color-mix(in srgb, #f9fafa min(100%, 85% * var(--dim)), transparent); --glass-3: color-mix(in srgb, #fcfdfc min(100%, 90% * var(--dim)), transparent); --field: color-mix(in srgb, #ffffff min(100%, 78% * var(--dim)), transparent); --sheet: color-mix(in srgb, #f6f8f7 min(100%, 82% * var(--dim)), transparent); --raised: #f9fafade; --veil: color-mix(in srgb, #eef1ef min(100%, 72% * var(--dim)), transparent); }
+  :root.has-video[data-theme="dark"] { --glass-1: color-mix(in srgb, #0b1016 min(100%, 65% * var(--dim)), transparent); --glass-2: color-mix(in srgb, #151c25 min(100%, 70% * var(--dim)), transparent); --glass-3: color-mix(in srgb, #1f2833 min(100%, 75% * var(--dim)), transparent); --field: color-mix(in srgb, #05080b min(100%, 50% * var(--dim)), transparent); --sheet: color-mix(in srgb, #0b1016 min(100%, 72% * var(--dim)), transparent); --raised: #151c25cc; --veil: color-mix(in srgb, #05080b min(100%, 45% * var(--dim)), transparent); }
 
   * { box-sizing: border-box; }
   [hidden] { display: none !important; } /* иначе display у .ghost и .squeeze перебивает атрибут */
   html, body { height: 100%; margin: 0; }
   /* Колонка, а не grid: полоса «нет связи» то есть, то нет, и раскладка под ней не должна менять ряд */
-  body { background: var(--panel); color: var(--ink); font: 15px/1.5 var(--body); display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+  body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--body); display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+  /* Живой фон под стеклом: крупные мягкие пятна — фон ровный, без клякс; плывут по кругу, сетка медленно едет на одну клетку — шов не виден */
+  body::before, body::after { content: ""; position: fixed; z-index: -1; pointer-events: none; }
+  body::before { inset: -25%; background: radial-gradient(70% 60% at 25% 30%, var(--blob-a), transparent), radial-gradient(70% 65% at 80% 35%, var(--blob-b), transparent), radial-gradient(80% 60% at 55% 90%, var(--blob-c), transparent); animation: drift 90s ease-in-out infinite alternate; }
+  body::after { inset: -48px 0 0 -48px; background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px); background-size: 48px 48px; -webkit-mask-image: radial-gradient(120% 90% at 50% 40%, #000 40%, transparent); mask-image: radial-gradient(120% 90% at 50% 40%, #000 40%, transparent); animation: grid-pan 24s linear infinite; }
+  @keyframes drift { 0% { transform: translate(0, 0) rotate(0deg) scale(1); } 50% { transform: translate(2%, -2%) rotate(4deg) scale(1.03); } 100% { transform: translate(-2%, 2%) rotate(-3deg) scale(1.01); } }
+  @keyframes grid-pan { to { transform: translate(48px, 48px); } }
+  /* Видеофон (ролики qwatra, выбор — в ⚙): под пятнами, а пятна и сетка при нём гаснут. Ролик чуть размыт и увеличен — края размытия за экраном;
+     вуаль по теме держит контраст стекла. Смена ролика — наплыв: новый проявляется поверх старого, старый убирает скрипт */
+  .bg-video { position: fixed; inset: 0; z-index: -2; overflow: hidden; pointer-events: none; }
+  .bg-video video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: blur(3px); scale: 1.04; opacity: 0; transition: opacity .8s ease; }
+  .bg-video video.on { opacity: 1; }
+  .bg-video::after { content: ""; position: absolute; inset: 0; background: var(--veil); opacity: 0; transition: opacity .8s ease; }
+  :root.has-video .bg-video::after { opacity: 1; }
+  body::before, body::after { transition: opacity .8s ease; }
+  :root.has-video body::before, :root.has-video body::after { opacity: 0; }
   button, input, select, textarea { font: inherit; color: inherit; }
-  input[type="checkbox"] { accent-color: var(--copper); width: 16px; height: 16px; margin: 0; flex: none; }
+  /* Галочка — ромб, как в qwatra: снаружи контур, отмечена — внутри залитый медный ромб. Сам input настоящий: клавиатура и доступность браузерные */
+  input[type="checkbox"] { appearance: none; position: relative; width: 20px; height: 20px; margin: 0; flex: none; cursor: pointer; background: none; border: 0; }
+  input[type="checkbox"]::before, input[type="checkbox"]::after { content: ""; position: absolute; inset: 0; margin: auto; rotate: 45deg; transition: transform .25s var(--ease), background-color .2s, border-color .2s, box-shadow .2s; }
+  input[type="checkbox"]::before { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid var(--ink-soft); background: var(--glass-1); }
+  input[type="checkbox"]::after { width: 7px; height: 7px; border-radius: 1px; background: var(--copper); transform: scale(0); }
+  input[type="checkbox"]:hover::before { border-color: var(--copper); }
+  input[type="checkbox"]:checked::before { border-color: var(--copper); box-shadow: 0 0 10px var(--copper-glow); }
+  input[type="checkbox"]:checked::after { transform: scale(1); }
+  input[type="checkbox"]:disabled { cursor: default; opacity: .6; }
+  /* Ползунок — как галочка: бегунок-ромб, пройденная часть медью (--fill ставит скрипт). Сам input настоящий: стрелки и доступность браузерные */
+  input[type="range"] { --fill: 50%; appearance: none; height: 20px; margin: 0; background: none; cursor: pointer; }
+  input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: linear-gradient(90deg, var(--copper) var(--fill), var(--line-strong) var(--fill)); }
+  input[type="range"]::-moz-range-track { height: 4px; border-radius: 999px; background: linear-gradient(90deg, var(--copper) var(--fill), var(--line-strong) var(--fill)); }
+  input[type="range"]::-webkit-slider-thumb { appearance: none; width: 13px; height: 13px; margin-top: -4.5px; rotate: 45deg; border-radius: 3px; border: 0; background: var(--copper); box-shadow: 0 0 0 3px var(--bg), 0 0 12px var(--copper-glow); transition: scale .2s var(--ease); }
+  input[type="range"]::-moz-range-thumb { width: 13px; height: 13px; rotate: 45deg; border-radius: 3px; border: 0; background: var(--copper); box-shadow: 0 0 0 3px var(--bg), 0 0 12px var(--copper-glow); }
+  input[type="range"]:hover::-webkit-slider-thumb, input[type="range"]:active::-webkit-slider-thumb { scale: 1.2; }
   button { cursor: pointer; }
   button:disabled { cursor: default; }
   :focus-visible { outline: 2px solid var(--copper); outline-offset: 2px; }
   svg.icon { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .label { font-family: var(--label); text-transform: uppercase; letter-spacing: .1em; font-size: 12px; color: var(--ink-soft); }
-  * { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  * { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+  ::selection { background: color-mix(in srgb, var(--copper) 35%, transparent); }
 
   /* ---- шапка ---- */
-  .top { display: flex; align-items: center; gap: 8px 12px; padding: 10px var(--gutter); border-bottom: 1px solid var(--line); background: var(--plate); flex-wrap: wrap; }
+  /* Нить по краю панели — как разделители qwatra: гаснет к концам, к центру медная */
+  .top { position: relative; display: flex; align-items: center; gap: 8px 12px; padding: 10px var(--gutter); background: var(--glass-1); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); flex-wrap: wrap; z-index: 3; animation: from-top .7s var(--ease) backwards; }
+  .top::after, #composer::before { content: ""; position: absolute; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--line-strong) 20%, var(--copper-glow) 50%, var(--line-strong) 80%, transparent); pointer-events: none; }
+  .top::after { bottom: 0; }
   .where { min-width: 0; flex: 1 1 200px; }
   .where b { display: block; font: 600 15px/1.3 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .where b small { font: 12px var(--label); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); margin-left: 8px; }
+  .where b small, .settings-scope { font: 12px var(--label); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); margin-left: 8px; white-space: nowrap; }
   .where span { display: block; font: 12px/1.4 var(--mono); color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; } /* rtl: у длинного пути режется начало, а не имя каталога */
-  .mine { display: none; align-items: center; gap: 8px; font-size: 13px; min-height: var(--h); padding: 0 12px; border-radius: 999px; background: var(--copper-soft); color: var(--copper); font-weight: 600; }
-  .mine.on { display: flex; }
-  .ghost { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: var(--h); background: none; border: 1px solid var(--line); border-radius: var(--r); padding: 0 12px; font-size: 13px; line-height: 1.2; transition: border-color .15s, color .15s, background-color .15s; }
-  .ghost:hover:not(:disabled) { border-color: var(--copper); color: var(--copper); }
+  .mine { display: none; align-items: center; gap: 8px; font-size: 14px; min-height: var(--h); padding: 0 12px; border-radius: 999px; background: var(--copper-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--copper) 40%, transparent), 0 0 18px -4px var(--copper-glow); color: var(--copper); font-weight: 600; }
+  .mine.on { display: flex; animation: pop-in .4s var(--ease); }
+  .ghost { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: var(--h); background: var(--glass-1); border: 1px solid var(--line); border-radius: var(--r); padding: 0 12px; font-size: 14px; line-height: 1.2; box-shadow: 0 1px 0 var(--edge) inset; transition: border-color .2s, color .2s, background-color .2s, box-shadow .2s, transform .3s var(--ease); }
+  .ghost:hover:not(:disabled) { border-color: var(--copper); color: var(--copper); background: var(--glass-2); box-shadow: 0 1px 0 var(--edge) inset, 0 0 16px -6px var(--copper-glow); }
+  /* Растут на наведении только кнопки-иконки: текст при scale браузер растеризует заново — шрифт прыгал в начале и в конце наведения */
+  .iconbtn:hover:not(:disabled) { transform: scale(1.08); }
+  .iconbtn:active:not(:disabled) { transform: scale(1.14); }
+  .ghost:disabled { opacity: .55; }
   .iconbtn { width: var(--h); padding: 0; }
-  .ghost.update-btn { background: var(--copper); border-color: var(--copper); color: var(--on-copper); font-weight: 600; }
+  .ghost.update-btn { background: radial-gradient(120% 140% at 15% 10%, var(--copper-hi), var(--copper) 70%); border-color: var(--copper); color: var(--on-copper); font-weight: 600; animation: glow 3s ease-in-out infinite; }
   .ghost.update-btn:hover:not(:disabled) { color: var(--on-copper); filter: brightness(1.08); }
-  .ghost.update-btn:disabled { opacity: .7; cursor: progress; }
-  .update-news { font-size: 13px; color: var(--copper); text-underline-offset: 2px; }
-  .update-note { display: flex; align-items: center; gap: 8px; padding: 8px var(--gutter); font-size: 13px; background: var(--copper-soft); color: var(--copper); font-weight: 600; border-bottom: 1px solid var(--line); }
+  .ghost.update-btn:disabled { opacity: .7; cursor: progress; animation: none; }
+  .update-news { font-size: 14px; color: var(--copper); text-underline-offset: 2px; }
+  .update-note { display: flex; align-items: center; gap: 8px; padding: 8px var(--gutter); font-size: 14px; background: var(--copper-soft); color: var(--copper); font-weight: 600; border-bottom: 1px solid color-mix(in srgb, var(--copper) 30%, transparent); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); }
   .update-note.bad { background: var(--danger); color: var(--on-danger); }
   #toggleAgents { display: none; }
   /* Пока связь есть, молчим: индикатор «всё хорошо» — шум. Полоса появляется, только когда лента перестала быть живой */
-  .link { display: none; align-items: center; gap: 8px; padding: 8px var(--gutter); font-size: 13px; background: var(--danger); color: var(--on-danger); }
-  .link.down { display: flex; }
-  .link i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
+  .link { display: none; align-items: center; gap: 8px; padding: 8px var(--gutter); font-size: 14px; background: color-mix(in srgb, var(--danger) 88%, transparent); color: var(--on-danger); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: 0 8px 24px -10px color-mix(in srgb, var(--danger) 70%, transparent); }
+  .link.down { display: flex; animation: from-top .4s var(--ease); }
+  .link i { width: 8px; height: 8px; rotate: 45deg; border-radius: 2px; background: currentColor; flex: none; animation: blink 1.2s ease-in-out infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
 
   /* ---- раскладка ---- */
   .layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); flex: 1; min-height: 0; position: relative; }
-  aside { border-right: 1px solid var(--line); overflow-y: auto; padding: 16px 8px 24px; }
+  aside { position: relative; overflow-y: auto; padding: 16px 8px 24px; background: var(--glass-1); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border-right: 1px solid transparent; border-image: linear-gradient(to bottom, transparent, var(--line-strong) 15%, var(--line-strong) 85%, transparent) 1; animation: from-left .8s .08s var(--ease) backwards; }
   main { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; min-width: 0; position: relative; }
 
   /* ---- агенты ---- */
   .group { margin-bottom: 20px; }
   .group > .label { display: block; padding: 0 12px 8px; }
   .group details > summary { cursor: pointer; padding: 0 12px 8px; list-style-position: inside; }
-  .agent { --h: 0; --wire: hsl(var(--h) var(--wire-s) var(--wire-l)); display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: start; gap: 10px; width: 100%; text-align: left; background: none; border: 0; border-radius: var(--r); padding: 8px 12px; position: relative; transition: background-color .15s; user-select: none; } /* двойной клик выбирает агента, а не выделяет его имя */
-  .agent:hover { background: color-mix(in srgb, var(--plate) 70%, transparent); }
-  .agent[aria-pressed="true"] { background: var(--plate); box-shadow: var(--shadow); }
-  .agent[aria-pressed="true"]::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: var(--wire); }
-  .agent .wire { width: 10px; height: 10px; margin-top: 6px; border-radius: 50%; background: hsl(var(--h) var(--dot-s) var(--dot-l)); } /* тот же цвет, шо у точки агента на ветке */
+  /* Строка агента — стеклянная плашка, как юнит qwatra: 10 % → 20 % и чуть крупнее под курсором */
+  .agent { --hue: 0; --wire: hsl(var(--hue) var(--wire-s) var(--wire-l)); display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: start; gap: 10px; width: 100%; text-align: left; background: none; border: 0; border-radius: var(--r); padding: 8px 12px; position: relative; transition: background-color .25s, box-shadow .25s, transform .3s var(--ease); user-select: none; } /* двойной клик выбирает агента, а не выделяет его имя */
+  .agent:hover { background: var(--glass-1); box-shadow: 0 1px 0 var(--edge) inset; }
+  /* Выбранный — светлее стекло и неон цвета агента слева; рамки нет, обводка шумела. Линия — внутренняя тень: идёт по скруглению плашки, как у выделенного сообщения, и мягко светит внутрь */
+  .agent[aria-pressed="true"] { background: var(--glass-2); box-shadow: inset 3px 0 0 var(--wire), inset 16px 0 18px -14px var(--wire), -6px 0 14px -8px var(--wire), var(--shadow-lift); }
+  .agent .wire { width: 9px; height: 9px; margin: 7px 0 0 1px; rotate: 45deg; border-radius: 2px; background: hsl(var(--hue) var(--dot-s) var(--dot-l)); box-shadow: 0 0 8px -1px hsl(var(--hue) var(--dot-s) var(--dot-l)); } /* тот же цвет, шо у узла агента на ветке */
   .agent .name { display: block; font: 600 14px/1.4 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .agent .kind { display: block; font-size: 12px; line-height: 1.45; color: var(--ink-soft); }
   .agent .note { display: block; } /* строкой, а не через «·»: точка повисала в конце строки при переносе */
   .agent .note.wait, .agent .note.load { color: var(--copper); }
   .agent .note.run { color: var(--done); font-weight: 600; }
   .agent .note.bad { color: var(--danger); }
-  .agent .badge { margin-top: 1px; font: 700 12px/20px var(--label); min-width: 20px; height: 20px; text-align: center; background: var(--copper); color: var(--on-copper); border-radius: 999px; padding: 0 6px; }
+  .agent .badge { margin-top: 1px; font: 700 12px/20px var(--label); min-width: 20px; height: 20px; text-align: center; background: radial-gradient(120% 140% at 20% 10%, var(--copper-hi), var(--copper) 70%); color: var(--on-copper); border-radius: 999px; padding: 0 6px; box-shadow: 0 0 12px -2px var(--copper-glow); animation: pop-in .35s var(--ease); }
   /* Непрочитанное у агента — не тревога: оно ждёт подъёма или следующего промпта. Медью залито только то, шо ждёт самого пользователя */
-  .agent .badge.wait { background: none; color: var(--ink-soft); box-shadow: inset 0 0 0 1px var(--line); }
+  .agent .badge.wait { background: var(--glass-1); color: var(--ink-soft); box-shadow: inset 0 0 0 1px var(--line-strong); }
   .agent.running .wire { animation: live 1.4s ease-in-out infinite; }
-  @keyframes live { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--done) 55%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
+  @keyframes live { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--done) 60%, transparent), 0 0 8px var(--done); } 50% { box-shadow: 0 0 0 6px transparent, 0 0 14px var(--done); } }
   .agent.off .name { color: var(--ink-soft); }
   .agent.off .wire { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-soft); }
   .agent.gone .name { text-decoration: line-through; }
   /* Карандаш — сосед строки, а не её часть: кнопка в кнопке невалидна. Место под него занято всегда — строка под курсором не прыгает */
-  .agent-row { display: flex; align-items: flex-start; gap: 2px; }
+  .agent-row { display: flex; align-items: flex-start; gap: 8px; }
   .agent-row .agent { flex: 1; min-width: 0; }
   /* На виду всегда: появлявшийся по наведению карандаш пользователь не нашёл — как и спрятанную до выбора пары «Сжать диалог» */
-  .agent-edit { flex: none; display: inline-grid; place-items: center; margin-top: 4px; width: var(--h-sm); height: var(--h-sm); padding: 0; border: 1px solid var(--line); background: var(--plate); border-radius: var(--r); color: var(--ink); transition: border-color .15s, color .15s; }
+  .agent-edit { flex: none; display: inline-grid; place-items: center; margin-top: 4px; width: var(--h-sm); height: var(--h-sm); padding: 0; border: 0; background: none; border-radius: var(--r); color: var(--ink-soft); transition: color .2s, background-color .2s, transform .3s var(--ease); }
   .agent-edit .icon { width: 14px; height: 14px; }
-  .agent-edit:hover, .agent-edit:focus-visible { color: var(--copper); border-color: var(--copper); }
+  .agent-edit:hover, .agent-edit:focus-visible { color: var(--copper); background: var(--copper-soft); transform: scale(1.08) rotate(-6deg); }
   .group > .agent-new { margin: 0 12px 8px; } /* вид — от .squeeze, как у «Сжать диалог»; здесь только место в колонке */
-  /* Снять выбор агентов: липнет к верху списка, шоб не искать её под длинной колонкой */
-  .unpick { position: sticky; top: 0; z-index: 1; width: 100%; justify-content: center; margin-bottom: 12px; background: var(--panel); }
+  /* Снять выбор агентов: липнет к верху списка, шоб не искать её под длинной колонкой. Плашка почти глухая: размытие внутри стеклянной панели Chrome не рисует, список просвечивал бы текстом */
+  .unpick { position: sticky; top: 0; z-index: 1; width: 100%; justify-content: center; margin-bottom: 12px; background: color-mix(in srgb, var(--bg) 88%, transparent); }
   .hint { font-size: 12px; line-height: 1.5; color: var(--ink-soft); padding: 4px 12px 0; margin: 0; }
-  .hint code { font: 12px var(--mono); background: var(--plate); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 0 4px; word-break: break-all; }
+  .hint code { font: 12px var(--mono); background: var(--glass-1); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 0 4px; word-break: break-all; }
 
   /* ---- фильтры ---- */
-  .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px var(--gutter); border-bottom: 1px solid var(--line); }
-  .search { flex: 1 1 200px; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: var(--h); background: var(--plate); border: 1px solid var(--line); border-radius: var(--r); padding: 0 10px; color: var(--ink-soft); transition: border-color .15s; }
-  .search:focus-within { border-color: var(--copper); }
+  /* Стекло планки — на ::before, а не на ней самой: backdrop-filter у предка отрезает потомкам вид на ленту, и плавающие кнопки выделения не размывали бы её */
+  main > div:first-child { position: relative; z-index: 2; animation: fade-in .8s .12s ease backwards; }
+  main > div:first-child::before { content: ""; position: absolute; inset: 0; z-index: -1; background: var(--glass-1); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); pointer-events: none; }
+  .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px var(--gutter); border-bottom: 1px solid transparent; border-image: linear-gradient(90deg, transparent, var(--line-strong) 12%, var(--line-strong) 88%, transparent) 1; }
+  .search { flex: 1 1 200px; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: var(--h-lg); background: var(--field); border: 1px solid var(--line); border-radius: 999px; padding: 0 16px; color: var(--ink-soft); box-shadow: 0 1px 0 var(--edge); transition: border-color .2s, box-shadow .2s, transform .3s var(--ease); }
+  .search:hover { border-color: var(--line-strong); }
+  .search:focus-within { border-color: var(--copper); color: var(--copper); box-shadow: 0 0 0 3px var(--copper-soft), 0 0 22px -8px var(--copper-glow); }
   .search input { flex: 1; min-width: 0; background: none; border: 0; padding: 0; font-size: 14px; color: var(--ink); outline: none; }
+  .search input::placeholder { color: var(--ink-soft); }
   #types { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
-  .chip { display: inline-flex; align-items: center; gap: 6px; min-height: var(--h); font: 700 11px/1 var(--label); letter-spacing: .08em; background: none; border: 1px solid var(--line); border-radius: 999px; padding: 0 12px 0 10px; color: var(--ink-soft); transition: background-color .15s, border-color .15s, color .15s; }
-  /* Точка чётная: 7px в 32px кнопке вставала на полпикселя мимо центра. Подпись обрезана по прописным — её центр на центре точки */
-  .chip::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+  .chip { display: inline-flex; align-items: center; gap: 7px; min-height: var(--h); font: 700 12px/1 var(--label); letter-spacing: .08em; background: var(--glass-1); border: 1px solid var(--line); border-radius: 999px; padding: 0 12px 0 11px; color: var(--ink-soft); box-shadow: 0 1px 0 var(--edge) inset; transition: background-color .2s, border-color .2s, color .2s, box-shadow .2s, transform .3s var(--ease); }
+  /* Ромб, а не точка — как маркеры qwatra; чётный размер, шоб центр вставал на пиксель. Подпись обрезана по прописным — её центр на центре ромба */
+  .chip::before { content: ""; flex: none; width: 7px; height: 7px; rotate: 45deg; border-radius: 1.5px; background: var(--c); box-shadow: 0 0 6px color-mix(in srgb, var(--c) 70%, transparent); transition: transform .3s var(--ease); }
   .chip span, .squeeze span { text-box: trim-both cap alphabetic; margin-right: -.08em; }
-  .chip:hover { border-color: var(--c); color: var(--ink); }
-  /* Включённый фильтр залит: полупрозрачная заливка на сером щите не давала тексту 4.5:1 */
-  .chip[aria-pressed="true"] { background: var(--c); border-color: var(--c); color: var(--on-copper); }
-  .chip[aria-pressed="true"]::before { background: currentColor; }
+  .chip:hover { border-color: var(--c); color: var(--ink); background: var(--glass-2); box-shadow: 0 1px 0 var(--edge) inset, 0 0 14px -6px color-mix(in srgb, var(--c) 70%, transparent); }
+  .chip:hover::before { transform: scale(1.25); }
+  /* Включённый фильтр залит и светится: полупрозрачная заливка на стекле не давала тексту 4.5:1 */
+  .chip[aria-pressed="true"] { background: var(--c); border-color: var(--c); color: var(--on-copper); box-shadow: 0 0 18px -4px color-mix(in srgb, var(--c) 70%, transparent), 0 1px 0 #ffffff40 inset; }
+  .chip[aria-pressed="true"]::before { background: currentColor; box-shadow: none; }
   .TASK { --c: var(--task); } .QUESTION { --c: var(--question); } .DONE { --c: var(--done); }
   .STATUS, .ACK, .FYI { --c: var(--fyi); } /* типы до сокращения — в старой переписке */
-  .squeeze { --sq: var(--copper); display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: var(--h); background: color-mix(in srgb, var(--sq) 7%, transparent); border: 1px solid color-mix(in srgb, var(--sq) 55%, var(--line)); color: var(--sq); border-radius: var(--r); padding: 0 12px; font: 700 12px/1.2 var(--label); letter-spacing: .08em; text-transform: uppercase; transition: background-color .15s, color .15s; }
+  .squeeze { --sq: var(--copper); display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: var(--h); background: color-mix(in srgb, var(--sq) 4%, var(--glass-1)); /* тонировка слабая: медный текст на медной заливке над медным пятном падал до 4:1 */ border: 1px solid color-mix(in srgb, var(--sq) 55%, var(--line)); color: var(--sq); border-radius: var(--r); padding: 0 12px; font: 700 12px/1.2 var(--label); letter-spacing: .08em; text-transform: uppercase; box-shadow: 0 1px 0 var(--edge) inset; transition: background-color .2s, color .2s, box-shadow .2s, transform .3s var(--ease); }
   /* Иконка под жирные прописные: 16px тонким штрихом рядом с ними смотрелась крупнее и легче текста. Меньше, толще — и отступ слева короче правого: у иконки внутри своё поле */
   .squeeze .icon { width: 14px; height: 14px; stroke-width: 2.5; }
   .squeeze:has(> .icon) { padding-left: 10px; }
   /* Строка подписи обрезана по прописным (.chip span выше) — центр букв встаёт на центр иконки, а не на полпикселя выше; хвост разрядки за последней буквой снят */
-  .squeeze:hover:not(:disabled) { background: var(--sq); border-color: var(--sq); color: var(--on-copper); }
-  .squeeze:disabled, .squeeze.danger:disabled { background: none; color: var(--ink-soft); border-color: var(--line); cursor: not-allowed; }
+  .squeeze:hover:not(:disabled) { background: var(--sq); border-color: var(--sq); color: var(--on-copper); box-shadow: 0 0 22px -6px color-mix(in srgb, var(--sq) 75%, transparent); }
+  .squeeze:active:not(:disabled) { filter: brightness(1.12); }
+  .squeeze:disabled, .squeeze.danger:disabled { background: var(--glass-1); color: var(--ink-soft); border-color: var(--line); cursor: not-allowed; }
   #squeeze { margin-left: auto; }
   .squeeze.danger { --sq: var(--danger); }
   .squeeze.danger:hover:not(:disabled) { color: var(--on-danger); }
-  .picked-bar { align-items: center; }
+  /* ---- плавающее над лентой: пара и выделение ---- */
+  /* Справа поверх ленты, без плашки — плашка над лентой сдвигала сообщения вниз. Стопкой: пара сверху, выделение под ней.
+     Каждая бирка и кнопка — стекло шапки: там под .ghost ещё слой стекла панели, здесь его заменяет --glass-2 и своё размытие ленты */
+  .floats { position: absolute; top: calc(100% + 8px); right: var(--gutter); z-index: 3; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; max-width: calc(100% - 2 * var(--gutter)); pointer-events: none; }
+  .floats > * { pointer-events: auto; }
+  .pair, .picked-bar { display: flex; align-items: center; gap: 8px; animation: fade-up .25s var(--ease); }
+  .pair { flex-direction: column; align-items: flex-end; }
+  .pair-row { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+  .picked-bar > *, .pair-row > b, .pair .stat, .pair .note { background: var(--glass-2); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: 0 1px 0 var(--edge) inset, 0 8px 20px -12px #0006; }
+  .picked-bar #markedCount, .pair-row > b, .pair .stat { display: inline-flex; align-items: center; gap: 6px; min-height: var(--h); padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r); font: 400 14px/1.2 var(--body); color: var(--ink-soft); white-space: nowrap; }
+  .picked-bar .ghost:hover:not(:disabled) { background: var(--glass-3); box-shadow: 0 1px 0 var(--edge) inset, 0 0 16px -6px var(--copper-glow), 0 8px 20px -12px #0006; }
+  .picked-bar .squeeze.danger:not(:hover) { background: color-mix(in srgb, var(--danger) 6%, var(--glass-2)); }
 
   /* ---- вкладки диалогов с агентом: «+» — новый, «×» — закрыть в историю ---- */
   .tabs { position: relative; display: flex; align-items: flex-end; gap: 4px; padding: 6px var(--gutter) 0; border-bottom: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
-  .tab { flex: none; display: inline-flex; align-items: center; max-width: 240px; border: 1px solid var(--line); border-bottom: none; border-radius: var(--r) var(--r) 0 0; color: var(--ink-soft); transition: color .15s, border-color .15s; }
-  .tab:hover { color: var(--ink); }
-  .tab.on { background: var(--plate); color: var(--ink); border-color: var(--line); box-shadow: inset 0 2px 0 var(--copper); margin-bottom: -1px; padding-bottom: 1px; }
-  .tab .open { min-width: 0; min-height: 34px; padding: 0 4px 0 10px; background: none; border: 0; color: inherit; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tab { flex: none; display: inline-flex; align-items: center; max-width: 240px; border: 1px solid var(--line); border-bottom: none; border-radius: var(--r) var(--r) 0 0; color: var(--ink-soft); background: var(--glass-1); transition: color .2s, border-color .2s, background-color .2s; animation: fade-up .3s var(--ease); }
+  .tab:hover { color: var(--ink); background: var(--glass-2); }
+  /* Открытая вкладка — светлее стекло, приподнята тенью, поверху ровная медная линия; без свечения — неон на вкладке спорил с лентой */
+  .tab.on, .tab-tools .tab-history[aria-expanded="true"] { background: var(--glass-3); color: var(--ink); border-color: var(--line-strong); box-shadow: inset 0 2px 0 var(--copper), 0 -6px 12px -9px #0006; }
+  .tab.on { margin-bottom: -1px; padding-bottom: 1px; }
+  .tab .open { min-width: 0; min-height: 34px; padding: 0 4px 0 10px; background: none; border: 0; color: inherit; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tab .open small { color: var(--ink-soft); margin-left: 6px; }
-  .tab .close { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; margin-right: 1px; background: none; border: 0; border-radius: var(--r); color: var(--ink-soft); }
+  .tab .close { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; margin-right: 1px; background: none; border: 0; border-radius: var(--r); color: var(--ink-soft); transition: color .2s, background-color .2s, transform .3s var(--ease); }
   .tab .close .icon { width: 13px; height: 13px; }
-  .tab .close:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
-  .tabs .tab-tools { flex: none; display: inline-flex; gap: 4px; margin-bottom: 2px; position: sticky; right: 0; background: var(--panel); box-shadow: -8px 0 8px var(--panel); } /* «+» и история на виду и при длинном ряде вкладок */
-  .tab-tools .iconbtn { min-height: 34px; width: 34px; }
-  .tab-tools .tab-history { min-height: 34px; padding: 0 8px; gap: 4px; }
-  .tab-tools .tab-history small { color: var(--ink-soft); }
-  .tab-tools .tab-history[aria-expanded="true"] { color: var(--copper); }
-  .dialog-history { border-bottom: 1px solid var(--line); background: var(--plate); max-height: 40vh; overflow-y: auto; }
-  .dialog-history ul { list-style: none; margin: 0; padding: 4px var(--gutter); }
-  .dialog-history li { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); }
-  .dialog-history li:last-child { border-bottom: 0; }
-  .dialog-history .title { flex: 1; min-width: 0; text-align: left; background: none; border: 0; color: var(--ink); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
-  .dialog-history .title:hover { text-decoration: underline; }
-  .dialog-history small { flex: none; color: var(--ink-soft); font-size: 12px; }
-  .dialog-history .danger:hover { color: var(--danger); }
+  .tab .close:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); transform: rotate(90deg); }
+  /* «+» и история на виду и при длинном ряде вкладок. Под ними не заливка, а размытие: пока ряд короткий, полосы не видно,
+     уехавшие под кнопки вкладки расплываются; левый край полосы гаснет маской, шоб не было шва.
+     Полоса заходит и на правый отступ ряда (right и margin в минус --gutter): иначе в нём из-под кнопок торчал хвост вкладки */
+  .tabs .tab-tools { flex: none; display: inline-flex; align-items: flex-end; gap: 4px; position: sticky; right: calc(-1 * var(--gutter)); padding-left: 12px; padding-right: var(--gutter); margin-right: calc(-1 * var(--gutter)); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); /* без saturate: он перекрашивал фон на пустом краю полосы */ -webkit-mask-image: linear-gradient(90deg, transparent, #000 12px); mask-image: linear-gradient(90deg, transparent, #000 12px); }
+  /* «+» и история — сами вкладки, а не кнопки на полке: тот же скруглённый верх без низа, то же стекло и высота. Не растут на наведении — вкладки стоят */
+  .tab-tools .ghost { min-height: 35px; padding: 0 12px; border: 1px solid var(--line); border-bottom: none; border-radius: var(--r) var(--r) 0 0; background: var(--glass-1); color: var(--ink-soft); box-shadow: none; }
+  .tab-tools .ghost:hover:not(:disabled) { transform: none; color: var(--ink); background: var(--glass-2); border-color: var(--line); box-shadow: none; }
+  .tab-tools .iconbtn { width: 38px; padding: 0; }
+  .tab-tools .iconbtn .icon { transition: transform .3s var(--ease); }
+  .tab-tools .iconbtn:hover .icon { transform: rotate(90deg); } /* растёт не вкладка, а знак в ней */
+  .tab-tools .tab-history { gap: 6px; }
+  .tab-tools .tab-history small { font: 600 12px var(--mono); color: inherit; }
+  /* Открытая история — как открытая вкладка (правило рядом с .tab.on); подпись медью */
+  .tab-tools .tab-history[aria-expanded="true"], .tab-tools .tab-history[aria-expanded="true"]:hover { color: var(--copper); background: var(--glass-3); border-color: var(--line-strong); box-shadow: inset 0 2px 0 var(--copper), 0 -6px 12px -9px #0006; }
+  /* Закрытые диалоги — стеклянные плашки, как строки агентов; нить снизу гаснет к краям, как у фильтров */
+  .dialog-history { max-height: 40vh; overflow-y: auto; border-bottom: 1px solid transparent; border-image: linear-gradient(90deg, transparent, var(--line-strong) 12%, var(--line-strong) 88%, transparent) 1; animation: fade-up .25s var(--ease); }
+  .dialog-history ul { list-style: none; margin: 0; padding: 8px var(--gutter); display: grid; gap: 6px; }
+  .dialog-history li { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 14px; background: var(--glass-1); border: 1px solid var(--line); border-radius: var(--r); box-shadow: 0 1px 0 var(--edge) inset; transition: background-color .2s, border-color .2s, box-shadow .2s; } /* без лесенки: renderHistory пересоздаёт строки на каждой перерисовке ленты — она проигрывалась бы снова и снова */
+  .dialog-history li:hover { background: var(--glass-2); border-color: var(--line-strong); box-shadow: 0 1px 0 var(--edge) inset, 0 0 18px -8px var(--copper-glow); }
+  .dialog-history .title { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 0; color: var(--ink); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; transition: color .2s; }
+  .dialog-history .title:hover { color: var(--copper); }
+  .dialog-history small { flex: none; color: var(--ink-soft); font: 12px var(--mono); }
+  .dialog-history .ghost { min-height: var(--h-sm); }
+  .dialog-history .iconbtn { width: var(--h-sm); }
+  .dialog-history .danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); box-shadow: 0 1px 0 var(--edge) inset, 0 0 16px -6px color-mix(in srgb, var(--danger) 60%, transparent); }
 
   /* ---- панель пары: сколько весит диалог и итог сжатия ---- */
-  .pair { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; padding: 8px var(--gutter); border-bottom: 1px solid var(--line); background: var(--plate); font-size: 13px; }
-  .pair b { font: 600 14px var(--mono); }
-  .pair b i { font: 400 14px var(--body); color: var(--ink-soft); margin: 0 8px; }
-  .pair .weight { color: var(--ink-soft); }
-  .pair .weight.heavy { color: var(--copper); font-weight: 600; }
-  .pair .note { color: var(--ink-soft); flex-basis: 100%; }
-  .pair .note.bad { color: var(--danger); }
+  /* Пара: имена · сообщений · сколько прочтёт агент и токены · часы «сжимать рано». Цифры с иконками, полная фраза — в подсказке у #pairWeight */
+  .pair-row > b { font: 600 14px/1.2 var(--mono); color: var(--ink); }
+  .pair-row > b i { font: 400 14px var(--body); font-style: normal; color: var(--copper); margin: 0 6px; }
+  .pair .weight { display: contents; }
+  .pair .stat { font: 600 12px/1.2 var(--mono); cursor: help; }
+  .pair .stat .icon { width: 14px; height: 14px; }
+  .pair .weight.heavy .read { color: var(--copper); border-color: color-mix(in srgb, var(--copper) 50%, var(--line)); box-shadow: 0 1px 0 var(--edge) inset, 0 0 16px -6px var(--copper-glow), 0 8px 20px -12px #0006; }
+  .pair .early { padding: 0; width: var(--h); justify-content: center; color: var(--copper); }
+  /* Итог сжатия и подсказки — строкой под бирками, тоже стеклом */
+  .pair .note { max-width: 420px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--r); font-size: 14px; line-height: 1.45; color: var(--ink); }
+  .pair .note.bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, var(--line)); }
   .pair .note:empty { display: none; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } /* только для читалки экрана */
+  /* Бирки пары стоят над лентой постоянно — лента начинается под ними, шоб не прятать время и ромб выделения верхней карточки */
+  main:has(#pair:not([hidden])) .feed { padding-top: calc(var(--h) + 16px); }
 
   /* ---- лента: рейка и отводы ---- */
-  .feed-wrap { overflow-y: auto; min-height: 0; scroll-behavior: smooth; }
+  .feed-wrap { overflow-y: auto; min-height: 0; scroll-behavior: smooth; animation: fade-in .9s .2s ease backwards; }
   .feed { list-style: none; margin: 0; padding: 8px var(--gutter) 28px var(--feed-left); position: relative; min-height: 100%; }
-  /* Рейка растворяется на концах: лента — кусок шины, а не вся шина */
-  .feed::before { content: ""; position: absolute; left: var(--rail-x); top: 0; bottom: 0; width: var(--rail-w); background: var(--tap); -webkit-mask-image: linear-gradient(to bottom, transparent, #000 32px, #000 calc(100% - 40px), transparent); mask-image: linear-gradient(to bottom, transparent, #000 32px, #000 calc(100% - 40px), transparent); }
+  /* Рейка — светящаяся нить, растворяется на концах: лента — кусок шины, а не вся шина */
+  .feed::before { content: ""; position: absolute; left: var(--rail-x); top: 0; bottom: 0; width: var(--rail-w); background: linear-gradient(to bottom, var(--tap), color-mix(in srgb, var(--copper) 45%, var(--tap)) 50%, var(--tap)); box-shadow: 0 0 10px var(--copper-glow); -webkit-mask-image: linear-gradient(to bottom, transparent, #000 32px, #000 calc(100% - 40px), transparent); mask-image: linear-gradient(to bottom, transparent, #000 32px, #000 calc(100% - 40px), transparent); }
   /* День — бирка на рейке: ромб-засечка и короткая перемычка к ней */
-  .day { position: relative; width: fit-content; margin: 16px 0 12px; padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--plate); font: 12px/1.2 var(--label); text-transform: uppercase; letter-spacing: .1em; color: var(--ink-soft); }
+  .day { position: relative; width: fit-content; margin: 16px 0 12px; padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--glass-2); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: 0 1px 0 var(--edge) inset; font: 12px/1.2 var(--label); text-transform: uppercase; letter-spacing: .1em; color: var(--ink-soft); }
   .day::before { content: ""; position: absolute; left: calc(var(--cx) - 1px); top: 50%; margin-top: -1px; width: calc(0px - var(--cx)); height: 2px; background: var(--tap); }
-  .day::after { content: ""; position: absolute; left: calc(var(--cx) - 5px); top: 50%; margin-top: -4px; width: 8px; height: 8px; transform: rotate(45deg); background: var(--tap); box-shadow: 0 0 0 2px var(--panel); }
-  .msg { --h: 0; --dot: hsl(var(--h) var(--dot-s) var(--dot-l)); --px: calc(var(--cx) - 1px); /* ось рейки от края padding-box: рамка съедает 1px */ position: relative; margin: 0 0 10px; padding: 10px 14px 12px; background: var(--plate); border: 1px solid var(--line); border-radius: var(--r-lg); max-width: 860px; box-shadow: var(--shadow); }
+  .day::after { content: ""; position: absolute; left: calc(var(--cx) - 5px); top: 50%; margin-top: -4px; width: 8px; height: 8px; transform: rotate(45deg); border-radius: 1.5px; background: var(--copper); box-shadow: 0 0 0 2px var(--bg), 0 0 10px var(--copper-glow); }
+  /* Карточка — стекло без размытия (см. шапку файла): полупрозрачная заливка, блик сверху, тень */
+  .msg { --hue: 0; --dot: hsl(var(--hue) var(--dot-s) var(--dot-l)); --px: calc(var(--cx) - 1px); /* ось рейки от края padding-box: рамка съедает 1px */ position: relative; margin: 0 0 10px; padding: 10px 14px 12px; background: var(--glass-1); border: 1px solid var(--line); border-radius: var(--r-lg); max-width: 860px; box-shadow: var(--shadow); transition: background-color .25s, border-color .25s, box-shadow .25s; }
+  .msg:hover { background: color-mix(in srgb, var(--glass-2) 70%, var(--glass-1)); border-color: var(--line-strong); }
   /* Отвод — плавное колено от узла вниз к шапке карточки, как ветка в графе коммитов. Кривая — маска: цвет остаётся за --tap */
   .msg::before { content: ""; position: absolute; left: var(--px); top: 3px; width: calc(0px - var(--cx)); height: 20px; background: var(--tap); -webkit-mask: var(--tap-curve) no-repeat; mask: var(--tap-curve) no-repeat; }
-  /* Узел на рейке: кольцо цвета отправителя; залит — сообщение пользователю, в медном ободке — ещё не прочитано */
-  .node { position: absolute; left: calc(var(--px) - 6px); top: -1px; width: 12px; height: 12px; border-radius: 50%; border: 2.5px solid var(--dot); background: var(--panel); }
+  /* Узел на рейке — ромб цвета отправителя: контур — обычное, залит — сообщение пользователю, в медном ободке — ещё не прочитано */
+  .node { position: absolute; left: calc(var(--px) - 6px); top: -1px; width: 12px; height: 12px; rotate: 45deg; border-radius: 3px; border: 2.5px solid var(--dot); background: var(--bg); box-shadow: 0 0 8px -1px var(--dot); }
   .msg.to-me .node, .msg.unread .node { background: var(--dot); }
-  .msg.unread .node { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--copper); }
+  .msg.unread .node { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--copper), 0 0 14px 2px var(--copper-glow); }
   /* Серия: то же «от кого → кому» подряд — карточки плотнее, вместо колена прямой отвод с малым узлом */
   .msg.cont { margin-top: -5px; }
   .msg.cont::before { top: 19px; height: 2px; -webkit-mask: none; mask: none; }
-  .msg.cont .node { left: calc(var(--px) - 4px); top: 16px; width: 8px; height: 8px; border: 0; background: var(--dot); box-shadow: 0 0 0 2px var(--panel); }
-  .msg.cont.unread .node { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--copper); }
-  .msg.to-me { background: color-mix(in srgb, var(--copper) 7%, var(--plate)); border-color: color-mix(in srgb, var(--copper) 35%, var(--line)); }
-  .msg.unread { border-color: var(--copper); box-shadow: 0 0 0 3px var(--copper-soft), var(--shadow); }
+  .msg.cont .node { left: calc(var(--px) - 4px); top: 16px; width: 8px; height: 8px; border: 0; border-radius: 2px; background: var(--dot); box-shadow: 0 0 0 2px var(--bg), 0 0 8px -1px var(--dot); }
+  .msg.cont.unread .node { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--copper), 0 0 14px 2px var(--copper-glow); }
+  .msg.to-me { background: color-mix(in srgb, var(--copper) 5%, var(--glass-1)); border-color: color-mix(in srgb, var(--copper) 32%, var(--line)); }
+  .msg.unread { border-color: var(--copper); box-shadow: 0 0 0 3px var(--copper-soft), 0 0 30px -12px var(--copper-glow), var(--shadow); }
   /* Бледнеет содержимое, а не вся карточка: сквозь полупрозрачный узел просвечивала бы рейка */
-  .msg.covered { box-shadow: none; background: color-mix(in srgb, var(--plate) 55%, var(--panel)); border-color: color-mix(in srgb, var(--line) 55%, var(--panel)); --dot: color-mix(in srgb, hsl(var(--h) var(--dot-s) var(--dot-l)) 55%, var(--panel)); }
-  .msg.covered.to-me { background: color-mix(in srgb, color-mix(in srgb, var(--copper) 7%, var(--plate)) 55%, var(--panel)); border-color: color-mix(in srgb, color-mix(in srgb, var(--copper) 35%, var(--line)) 55%, var(--panel)); }
+  .msg.covered { box-shadow: none; background: color-mix(in srgb, var(--glass-1) 45%, transparent); border-color: color-mix(in srgb, var(--line) 60%, transparent); --dot: color-mix(in srgb, hsl(var(--hue) var(--dot-s) var(--dot-l)) 55%, var(--bg)); }
+  .msg.covered.to-me { background: color-mix(in srgb, color-mix(in srgb, var(--copper) 5%, var(--glass-1)) 45%, transparent); border-color: color-mix(in srgb, color-mix(in srgb, var(--copper) 32%, var(--line)) 60%, transparent); }
   .msg.covered .text, .msg.covered time, .msg.covered .type, .msg.covered::before { opacity: .65; } /* кнопки имён, пары и выделения не бледнеют */
   /* Клик по карточке выделяет её под удаление; галочка — то же самое с клавиатуры */
   .msg { cursor: pointer; }
-  .msg.picked { border-color: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 22%, transparent), var(--shadow); }
-  /* Галочка видна всегда: появляющуюся по наведению не находят */
-  .pick { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; margin-left: 4px; background: none; border: 1px solid var(--line); border-radius: var(--r-sm); color: transparent; transition: border-color .15s; }
-  .pick .icon { width: 14px; height: 14px; }
-  .msg:hover .pick, .pick:focus-visible { border-color: var(--ink-soft); }
-  .msg.picked .pick { background: var(--danger); border-color: var(--danger); color: var(--on-danger); }
-  /* Новое: узел щёлкает на рейку, колено дорисовывается от него к карточке */
-  .msg.fresh { animation: land .5s cubic-bezier(.2, .7, .2, 1); }
-  .msg.fresh .node { animation: pop .45s cubic-bezier(.3, 1.6, .5, 1); }
+  /* Выделенная — как открытая вкладка: светлее стекло, приподнята тенью, слева ровная линия по скруглению карточки, без свечения;
+     медная: выделенное и удаляют, и указывают агенту цитатой — красной осталась только кнопка «Удалить». Контура нет */
+  .msg.picked { background: var(--glass-2); box-shadow: inset 2px 0 0 var(--copper), var(--shadow-lift); }
+  /* Выделение видно всегда: появляющееся по наведению не находят. Ромб, как галочки: контур, выделено — медный ромб внутри; галка-иконка не нужна */
+  .pick { position: relative; display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; margin-left: 4px; background: none; border: 0; border-radius: var(--r-sm); transition: transform .3s var(--ease); }
+  .pick::before, .pick::after { content: ""; position: absolute; inset: 0; margin: auto; rotate: 45deg; transition: transform .25s var(--ease), border-color .2s, box-shadow .2s; }
+  .pick::before { width: 15px; height: 15px; border-radius: 3px; border: 1.5px solid color-mix(in srgb, var(--ink-soft) 65%, transparent); background: var(--glass-1); }
+  .pick::after { width: 7px; height: 7px; border-radius: 1.5px; background: var(--copper); transform: scale(0); }
+  .pick .icon { display: none; }
+  .msg:hover .pick::before, .pick:focus-visible::before { border-color: var(--ink-soft); }
+  .pick:hover { transform: scale(1.12); }
+  .msg.picked .pick::before { border-color: var(--copper); }
+  .msg.picked .pick::after { transform: scale(1); }
+  /* Новое: карточка приземляется, узел щёлкает на рейку и вспыхивает медью, колено дорисовывается от него к карточке */
+  .msg.fresh { animation: land .55s var(--ease); }
+  .msg.fresh .node { animation: pop .5s cubic-bezier(.3, 1.6, .5, 1), flash 1.2s .2s ease-out; }
   .msg.fresh::before { animation: draw .45s ease-out; }
-  @keyframes land { from { transform: translateX(-8px); opacity: 0; } }
+  @keyframes land { from { transform: translateX(-10px) scale(.98); opacity: 0; filter: blur(4px); } }
   @keyframes pop { from { transform: scale(0); } }
+  @keyframes flash { 0% { box-shadow: 0 0 0 0 var(--copper-glow), 0 0 18px 4px var(--copper-glow); } 100% { box-shadow: 0 0 0 10px transparent, 0 0 8px -1px var(--dot); } }
   @keyframes draw { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0); } }
   .meta { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; }
   .meta time { margin-left: auto; font: 12px var(--mono); color: var(--ink-soft); }
-  .who { --wh: 0; font: 600 13px var(--mono); background: none; border: 0; padding: 0; color: hsl(var(--wh) var(--wire-s) var(--wire-l)); }
-  .who:hover { text-decoration: underline; }
-  .arrow { display: inline-flex; color: var(--ink-soft); background: none; border: 0; border-radius: var(--r-xs); padding: 2px; transition: color .15s, background-color .15s; }
+  .who { --wh: 0; font: 600 14px var(--mono); background: none; border: 0; padding: 0; color: hsl(var(--wh) var(--wire-s) var(--wire-l)); transition: text-shadow .2s; }
+  .who:hover { text-decoration: underline; text-shadow: 0 0 10px hsl(var(--wh) var(--wire-s) var(--wire-l) / .5); }
+  .arrow { display: inline-flex; color: var(--ink-soft); background: none; border: 0; border-radius: var(--r-xs); padding: 2px; transition: color .2s, background-color .2s, transform .3s var(--ease); }
   .arrow:hover, .arrow[aria-pressed="true"] { color: var(--copper); background: var(--copper-soft); }
+  .arrow:hover { transform: translateX(2px); }
   .arrow .icon { width: 14px; height: 14px; }
   /* Бирка: тип сообщения, «новое», пометка расписания — одна форма, разный цвет */
-  .type, .new, .sched-tag, .btw-tag { font: 700 11px/1 var(--label); letter-spacing: .08em; text-transform: uppercase; text-box: trim-both cap alphabetic; border-radius: 999px; padding: 5px 8px; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
-  .new { color: var(--on-copper); background: var(--copper); }
+  .type, .new, .sched-tag, .btw-tag { font: 700 12px/1 var(--label); letter-spacing: .08em; text-transform: uppercase; text-box: trim-both cap alphabetic; border-radius: 999px; padding: 5px 8px; color: var(--c); background: color-mix(in srgb, var(--c) 9%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 32%, transparent); } /* заливка 9 %, а не гуще: мелкий текст бирки на своём же цвете не должен падать ниже 4.5:1 */
+  .new { color: var(--on-copper); background: radial-gradient(120% 140% at 20% 10%, var(--copper-hi), var(--copper) 70%); box-shadow: 0 0 12px -2px var(--copper-glow); }
   .sched-tag { --c: var(--fyi); }
   .btw-tag { --c: var(--done); }
   /* Отметка запуска на сообщении, с которого агент начал работу: идёт / остановлен / упал / отработал */
-  .run-mark { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 12px; color: var(--ink-soft); }
+  .run-mark { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line-strong); font-size: 12px; color: var(--ink-soft); }
   .run-mark.run { color: var(--done); font-weight: 600; }
+  .run-mark.run .clock { text-shadow: 0 0 10px color-mix(in srgb, var(--done) 60%, transparent); }
   .run-mark.bad { color: var(--danger); }
   .run-mark .clock { font-variant-numeric: tabular-nums; }
-  .live { flex-basis: 100%; margin: 0; padding: 6px 8px; max-height: 128px; overflow-y: auto; list-style: none; background: var(--field); border: 1px solid var(--line); border-radius: var(--r-xs); font-size: 12px; font-weight: 400; line-height: 1.45; color: var(--ink); cursor: pointer; }
+  .live { flex-basis: 100%; margin: 0; padding: 6px 8px; max-height: 128px; overflow-y: auto; list-style: none; background: var(--field); border: 1px solid var(--line); border-radius: var(--r-sm); font-size: 12px; font-weight: 400; line-height: 1.45; color: var(--ink); cursor: pointer; transition: max-height .3s var(--ease), border-color .2s; }
+  .live:hover { border-color: var(--line-strong); }
   .live.open { max-height: 320px; }
   .live[hidden] { display: none; }
-  .live li { overflow-wrap: anywhere; }
+  .live li { overflow-wrap: anywhere; animation: fade-up .3s var(--ease); }
   .live li.tool { font-family: var(--mono); color: var(--ink-soft); }
   .live time { margin-right: 6px; font-family: var(--mono); color: var(--ink-soft); font-variant-numeric: tabular-nums; }
-  .agent .live-last { display: block; font: 11px/1.4 var(--mono); color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .run-mark .ghost { min-height: 26px; padding: 0 10px; font-size: 12px; font-weight: 400; color: var(--ink); }
-  .btw-switch { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); cursor: pointer; }
+  .agent .live-last { display: block; font: 12px/1.4 var(--mono); color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run-mark .ghost { min-height: var(--h-sm); padding: 0 10px; font-weight: 400; color: var(--ink); }
+  .btw-switch { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); cursor: pointer; }
+  /* Переключатели у формы — на одно сообщение и легко проглядеть: ромб крупнее обычной галочки */
+  .btw-switch input[type="checkbox"] { width: 24px; height: 24px; }
+  .btw-switch input[type="checkbox"]::before { width: 17px; height: 17px; border-radius: 4px; }
+  .btw-switch input[type="checkbox"]::after { width: 8px; height: 8px; }
   .text { margin: 6px 0 0; overflow-wrap: anywhere; }
   /* markdown в сообщении: заголовки скромные — карточка не документ */
   .text > * { margin: 8px 0 0; }
   .text > :first-child { margin-top: 0; }
   .text p, .text li, .text blockquote { white-space: pre-wrap; }
-  .text h3, .text h4, .text h5 { font: 600 15px/1.35 var(--body); margin-top: 14px; }
-  .text h4 { font-size: 14px; }
-  .text h5 { font-size: 13px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .04em; }
+  .text h3, .text h4, .text h5 { font: 600 16px/1.35 var(--body); margin-top: 16px; }
+  .text h4 { font-size: 15px; }
+  .text h5 { font: 600 12px/1.35 var(--label); color: var(--ink-soft); text-transform: uppercase; letter-spacing: .1em; }
   .text ul { list-style: none; padding: 0; display: grid; gap: 4px; }
   .text li { display: flex; gap: 8px; padding-left: calc(var(--depth, 0) * 18px); }
   .text li .marker { flex: none; min-width: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
-  .text code { font: 12.5px/1.5 var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 1px 5px; }
-  .text pre { overflow-x: auto; white-space: pre; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; }
+  .text code { font: 14px/1.5 var(--mono); background: var(--field); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 1px 5px; }
+  .text pre { overflow-x: auto; white-space: pre; background: var(--field); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; }
   .text pre code { background: none; border: 0; padding: 0; }
-  .text blockquote { border-left: 2px solid var(--line); padding-left: 10px; color: var(--ink-soft); }
-  .text hr { border: 0; border-top: 1px solid var(--line); }
+  .text blockquote { border-left: 2px solid var(--copper-glow); padding-left: 10px; color: var(--ink-soft); }
+  .text hr { border: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--line-strong), transparent); }
   .text a { color: var(--copper); }
   /* Найденное поиском: в тексте, именах и вложениях */
-  mark { background: color-mix(in srgb, var(--copper) 30%, transparent); color: inherit; border-radius: var(--r-xs); box-shadow: 0 0 0 1px color-mix(in srgb, var(--copper) 50%, transparent); }
+  mark { background: color-mix(in srgb, var(--copper) 30%, transparent); color: inherit; border-radius: var(--r-xs); box-shadow: 0 0 0 1px color-mix(in srgb, var(--copper) 50%, transparent), 0 0 10px -2px var(--copper-glow); }
   .files { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; align-items: flex-end; }
-  .thumb { display: block; max-width: 240px; max-height: 180px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); transition: border-color .15s; }
-  a:hover > .thumb { border-color: var(--copper); }
-  .filechip { display: inline-flex; align-items: center; gap: 6px; min-height: var(--h-sm); font: 12px var(--mono); color: inherit; text-decoration: none; border: 1px solid var(--line); border-radius: var(--r); padding: 4px 10px; background: var(--panel); max-width: 100%; overflow-wrap: anywhere; transition: border-color .15s; }
+  .thumb { display: block; max-width: 240px; max-height: 180px; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); transition: border-color .2s, box-shadow .2s, transform .3s var(--ease); }
+  a:hover > .thumb { border-color: var(--copper); box-shadow: 0 0 20px -6px var(--copper-glow); transform: scale(1.02); }
+  .filechip { display: inline-flex; align-items: center; gap: 6px; min-height: var(--h-sm); font: 12px var(--mono); color: inherit; text-decoration: none; border: 1px solid var(--line); border-radius: var(--r); padding: 4px 10px; background: var(--glass-1); box-shadow: 0 1px 0 var(--edge) inset; max-width: 100%; overflow-wrap: anywhere; transition: border-color .2s, background-color .2s; }
   .filechip .icon { width: 14px; height: 14px; color: var(--ink-soft); }
-  a.filechip:hover { border-color: var(--copper); }
+  a.filechip:hover { border-color: var(--copper); background: var(--glass-2); }
   .filechip small { font: 12px var(--body); color: var(--ink-soft); white-space: nowrap; }
   .filechip.gone { text-decoration: line-through; color: var(--ink-soft); }
   .filechip button { display: inline-flex; background: none; border: 0; padding: 2px; color: var(--ink-soft); border-radius: var(--r-xs); }
   .filechip button:hover { color: var(--danger); }
+  /* Чип цитат — медный: это не файл, а указание агенту на выделенное в ленте */
+  .filechip.refs { font-family: var(--body); color: var(--copper); border-color: color-mix(in srgb, var(--copper) 45%, var(--line)); background: color-mix(in srgb, var(--copper) 6%, var(--glass-1)); animation: pop-in .3s var(--ease); }
+  .filechip.refs .icon:first-child { color: currentColor; }
   /* Сводка — не отвод, а перемычка: пунктир вместо колена, полый медный ромб вместо узла */
-  .summary { position: relative; margin: 0 0 10px; padding: 10px 14px 12px; max-width: 860px; border: 1px dashed color-mix(in srgb, var(--copper) 60%, var(--line)); border-radius: var(--r-lg); background: color-mix(in srgb, var(--copper) 6%, var(--panel)); }
+  .summary { position: relative; margin: 0 0 10px; padding: 10px 14px 12px; max-width: 860px; border: 1px dashed color-mix(in srgb, var(--copper) 60%, var(--line)); border-radius: var(--r-lg); background: color-mix(in srgb, var(--copper) 7%, var(--glass-1)); box-shadow: 0 0 30px -18px var(--copper-glow); }
   .summary::before { content: ""; position: absolute; left: calc(var(--cx) - 1px); top: 18px; width: calc(0px - var(--cx)); height: 0; border-top: 2px dashed var(--copper); }
-  .summary::after { content: ""; position: absolute; left: calc(var(--cx) - 6px); top: 14px; width: 10px; height: 10px; transform: rotate(45deg); border: 2px solid var(--copper); background: var(--panel); }
+  .summary::after { content: ""; position: absolute; left: calc(var(--cx) - 6px); top: 14px; width: 10px; height: 10px; transform: rotate(45deg); border-radius: 2px; border: 2px solid var(--copper); background: var(--bg); box-shadow: 0 0 10px var(--copper-glow); }
   .summary .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .summary .head .label { color: var(--copper); }
   .summary .head time { margin-left: auto; font: 12px var(--mono); color: var(--ink-soft); }
   .summary p { margin: 6px 0 0; overflow-wrap: anywhere; }
-  .summary .ghost { margin-top: 8px; min-height: var(--h-sm); padding: 0 10px; font-size: 12px; background: var(--plate); }
-  .empty { color: var(--ink-soft); padding: 40px 0; max-width: 460px; }
+  .summary .ghost { margin-top: 10px; min-height: var(--h-sm); padding: 0 10px; background: var(--glass-2); }
+  .empty { color: var(--ink-soft); padding: 40px 0; max-width: 460px; animation: fade-up .6s var(--ease); }
   .empty b { display: block; color: var(--ink); font: 600 16px var(--body); margin-bottom: 4px; }
   .empty button { margin-top: 12px; }
-  .to-bottom { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(100% + 10px); z-index: 2; min-height: var(--h); background: var(--copper); color: var(--on-copper); border: 0; border-radius: 999px; padding: 0 16px; font: 700 12px var(--label); letter-spacing: .08em; text-transform: uppercase; box-shadow: var(--shadow); }
+  .to-bottom { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(100% + 10px); z-index: 2; min-height: var(--h); background: radial-gradient(120% 140% at 20% 10%, var(--copper-hi), var(--copper) 70%); color: var(--on-copper); border: 0; border-radius: 999px; padding: 0 16px; font: 700 12px var(--label); letter-spacing: .08em; text-transform: uppercase; box-shadow: 0 1px 0 #ffffff4d inset, 0 8px 24px -8px var(--copper-glow); animation: rise .4s var(--ease), glow 3s .4s ease-in-out infinite; }
+  .to-bottom:hover { filter: brightness(1.08); }
+  @keyframes rise { from { transform: translate(-50%, 12px); opacity: 0; } }
 
   /* ---- отправка ---- */
-  #composer { position: relative; border-top: 1px solid var(--line); background: var(--plate); padding: 12px var(--gutter); display: grid; grid-template-columns: minmax(140px, 200px) 220px minmax(0, 1fr) auto auto; gap: 8px 12px; align-items: end; }
+  #composer { position: relative; background: var(--glass-1); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); padding: 12px var(--gutter); display: grid; grid-template-columns: minmax(140px, 200px) 220px minmax(0, 1fr) auto auto; gap: 8px 12px; align-items: end; animation: from-bottom .8s .16s var(--ease) backwards; }
+  #composer::before { top: 0; }
   form label { display: grid; gap: 4px; min-width: 0; }
   /* Подпись поля — всегда одна строка: перенос пояснения сдвигал поле вниз, и соседние в ряду переставали стоять вровень */
   form label > .label { display: flex; align-items: baseline; gap: 6px; min-width: 0; white-space: nowrap; }
-  form label .label small { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font: inherit; letter-spacing: .04em; text-transform: none; opacity: .8; }
-  /* Поле ввода одно на все формы: отправка, расписание, агент */
-  form select, form textarea, form input:not([type="checkbox"]):not([type="file"]) { background: var(--field); border: 1px solid var(--line); border-radius: var(--r); min-height: var(--h-lg); padding: 8px 10px; font-size: 14px; line-height: 20px; width: 100%; min-width: 0; transition: border-color .15s, box-shadow .15s; }
-  form select:focus, form textarea:focus, form input:not([type="checkbox"]):not([type="file"]):focus { border-color: var(--copper); box-shadow: 0 0 0 3px var(--copper-soft); outline: none; }
+  form label .label small { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font: inherit; letter-spacing: .04em; text-transform: none; }
+  /* Поле ввода одно на все формы: отправка, расписание, агент. Стекло потемнее панели, на фокусе — медное свечение */
+  form select, form textarea, form input:not([type="checkbox"]):not([type="file"]):not([type="range"]) { background: var(--field); border: 1px solid var(--line); border-radius: var(--r); min-height: var(--h-lg); padding: 8px 10px; font-size: 14px; line-height: 20px; width: 100%; min-width: 0; box-shadow: 0 1px 0 var(--edge); transition: border-color .2s, box-shadow .25s, background-color .2s; }
+  form select:hover, form textarea:hover, form input:not([type="checkbox"]):not([type="file"]):not([type="range"]):hover { border-color: var(--line-strong); }
+  form select:focus, form textarea:focus, form input:not([type="checkbox"]):not([type="file"]):not([type="range"]):focus { border-color: var(--copper); background: color-mix(in srgb, var(--field) 60%, var(--glass-2)); box-shadow: 0 0 0 3px var(--copper-soft), 0 0 24px -8px var(--copper-glow); outline: none; }
+  form textarea::placeholder, form input::placeholder { color: var(--ink-soft); opacity: .85; }
   form textarea { display: block; resize: vertical; }
-  /* Идёт диктовка: поле, куда ложится текст. Без анимации — рамки хватает, а запись бывает долгой */
-  textarea.listening, input.listening { border-color: var(--copper) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--copper) 35%, transparent); }
+  /* Идёт диктовка: поле, куда ложится текст. Рамка и ровное свечение, без пульса — запись бывает долгой */
+  textarea.listening, input.listening { border-color: var(--copper) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--copper) 35%, transparent), 0 0 24px -6px var(--copper-glow) !important; }
   #composer textarea { height: var(--h-lg); max-height: 220px; }
   #composer textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* длинная подсказка в одну строку, а не обрезанная вторая */
-  .send { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: var(--h-lg); background: var(--copper); color: var(--on-copper); border: 0; border-radius: var(--r); padding: 0 16px; font: 700 13px var(--label); letter-spacing: .1em; text-transform: uppercase; transition: filter .15s, transform .1s; }
-  .send:hover:not(:disabled) { filter: brightness(1.08); }
-  .send:active:not(:disabled) { transform: translateY(1px); }
-  .send:disabled { background: var(--raised); color: var(--ink-soft); box-shadow: inset 0 0 0 1px var(--line); cursor: not-allowed; }
-  .attach { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-soft); min-width: 0; }
+  /* Главное действие — полупрозрачное, как кнопки qwatra: стекло с медным отсветом и медной рамкой. На наведении отсвет гуще и светится. Не дышит: анимированная тень перерисовывала размытую форму на каждом кадре */
+  .send { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: var(--h-lg); background: color-mix(in srgb, var(--copper) 16%, var(--glass-1)); color: var(--ink); border: 1px solid color-mix(in srgb, var(--copper) 55%, transparent); border-radius: var(--r); padding: 0 16px; font: 700 12px/1.2 var(--label); letter-spacing: .08em; text-transform: uppercase; box-shadow: 0 1px 0 var(--edge) inset, 0 8px 22px -12px var(--copper-glow); transition: background-color .25s, border-color .25s, transform .3s var(--ease), box-shadow .3s; }
+  .send .icon { color: var(--copper); }
+  @keyframes glow { 0%, 100% { box-shadow: 0 1px 0 #ffffff59 inset, 0 6px 18px -10px var(--copper-glow); } 50% { box-shadow: 0 1px 0 #ffffff59 inset, 0 8px 30px -6px var(--copper-glow); } }
+  /* «Скобки» по бокам — фирменный знак кнопок qwatra: прозрачные, на наведении проявляются и расходятся */
+  .send:hover:not(:disabled) { background: color-mix(in srgb, var(--copper) 26%, var(--glass-1)); border-color: var(--copper); box-shadow: 0 1px 0 var(--edge) inset, 0 0 26px -6px var(--copper-glow); }
+  .send:active:not(:disabled) { background: color-mix(in srgb, var(--copper) 34%, var(--glass-1)); }
+  .send:disabled { background: var(--glass-1); color: var(--ink-soft); border-color: var(--line); box-shadow: none; cursor: not-allowed; }
+  .send:disabled .icon { color: inherit; }
+  .attach { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: 12px; color: var(--ink-soft); min-width: 0; }
   #picked { display: contents; }
   #pickBtn { width: var(--h-lg); min-height: var(--h-lg); }
-  main.drop .feed-wrap { outline: 2px dashed var(--copper); outline-offset: -8px; }
-  main.drop #composer textarea { border-color: var(--copper); box-shadow: 0 0 0 3px var(--copper-soft); } /* бросать можно и на форму — поле это показывает */
-  .result { grid-column: 1 / -1; font-size: 13px; line-height: 20px; color: var(--ink-soft); min-height: 20px; margin: 0; }
+  #pickBtn:hover:not(:disabled) { transform: scale(1.05) rotate(-12deg); }
+  main.drop .feed-wrap { outline: 2px dashed var(--copper); outline-offset: -8px; background: color-mix(in srgb, var(--copper) 6%, transparent); }
+  main.drop #composer textarea { border-color: var(--copper); box-shadow: 0 0 0 3px var(--copper-soft), 0 0 24px -8px var(--copper-glow); } /* бросать можно и на форму — поле это показывает */
+  .result { grid-column: 1 / -1; font-size: 14px; line-height: 20px; color: var(--ink-soft); min-height: 20px; margin: 0; }
   .keys { font-size: 12px; line-height: 20px; color: var(--ink-soft); }
   .result.bad { color: var(--danger); }
 
   /* ---- расписание ---- */
-  .sched-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; margin-left: 2px; border-radius: 999px; background: var(--line); color: var(--ink); font: 700 11px/16px var(--label); }
-  .sched-badge.alert { background: var(--copper); color: var(--on-copper); }
+  .sched-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; margin-left: 2px; border-radius: 999px; background: var(--glass-3); color: var(--ink); font: 700 12px/16px var(--label); }
+  .sched-badge.alert { background: var(--copper); color: var(--on-copper); box-shadow: 0 0 10px var(--copper-glow); }
   #scheduleBtn.alert { border-color: var(--copper); color: var(--copper); }
 
-  .sched-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 20; }
-  /* Поверх ленты, не всей страницы: список агентов и шапка остаются на месте */
-  .schedule { position: fixed; top: 0; right: 0; bottom: 0; --gutter: 16px; width: min(480px, 100vw); background: var(--plate); border-left: 1px solid var(--line); box-shadow: var(--shadow-pop); z-index: 21; display: flex; flex-direction: column; min-height: 0; }
-  .sched-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px var(--gutter); border-bottom: 1px solid var(--line); flex: none; }
-  .sched-head b { font: 600 15px var(--body); }
-  .sched-daemon { margin: 0; padding: 8px var(--gutter); font-size: 12px; color: var(--ink-soft); border-bottom: 1px solid var(--line); flex: none; }
+  /* Подложка панели: затемняет и размывает страницу под ней */
+  .sched-backdrop { position: fixed; inset: 0; background: var(--scrim); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); z-index: 20; animation: fade-in .3s ease; }
+  /* Поверх ленты, не всей страницы: список агентов и шапка остаются на месте. Выезжает справа стеклянной плитой */
+  .schedule { position: fixed; top: 0; right: 0; bottom: 0; --gutter: 16px; width: min(480px, 100vw); background: var(--sheet); -webkit-backdrop-filter: blur(14px) saturate(150%); backdrop-filter: blur(14px) saturate(150%); border-left: 1px solid var(--line-strong); box-shadow: var(--shadow-pop); z-index: 21; display: flex; flex-direction: column; min-height: 0; animation: panel-in .45s var(--ease); }
+  .schedule::before { content: ""; position: absolute; left: -1px; top: 0; bottom: 0; width: 1px; background: linear-gradient(to bottom, transparent, var(--copper-glow) 30%, var(--copper-glow) 70%, transparent); pointer-events: none; }
+  .sched-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px var(--gutter); border-bottom: 1px solid var(--line); background: var(--glass-1); flex: none; }
+  .sched-head b { font: 600 16px var(--body); }
+  .sched-head .iconbtn:hover:not(:disabled) { transform: rotate(90deg); color: var(--danger); border-color: var(--danger); box-shadow: none; }
+  .sched-daemon { margin: 0; padding: 10px var(--gutter); font-size: 12px; color: var(--ink-soft); border-bottom: 1px solid var(--line); flex: none; }
   .sched-daemon.bad { color: var(--copper); font-weight: 600; }
-  .sched-warn { margin: 0; padding: 8px var(--gutter); font-size: 12px; color: var(--copper); background: var(--copper-soft); flex: none; }
+  .sched-warn { margin: 0; padding: 10px var(--gutter); font-size: 12px; color: var(--copper); background: var(--copper-soft); flex: none; }
   .sched-list { flex: 1; overflow-y: auto; padding: 4px 0; min-height: 0; }
-  .sched-group > .label { display: block; padding: 12px var(--gutter) 4px; }
-  .sched-empty { color: var(--ink-soft); padding: 12px var(--gutter); font-size: 13px; }
-  /* Главное действие панели — той же меди и того же набора, шо «Отправить» */
-  #scheduleNew { margin: 12px var(--gutter) 4px; align-self: flex-start; flex: none; background: var(--copper); color: var(--on-copper); border-color: var(--copper); font: 700 12px/1.2 var(--label); letter-spacing: .08em; text-transform: uppercase; }
-  #scheduleNew:hover { color: var(--on-copper); filter: brightness(1.08); }
+  .sched-group > .label { display: block; padding: 16px var(--gutter) 8px; }
+  .sched-empty { color: var(--ink-soft); padding: 12px var(--gutter); font-size: 14px; }
+  /* Главное действие панели — та же .send, шо «Отправить» */
+  #scheduleNew { margin: 16px var(--gutter) 8px; align-self: flex-start; flex: none; }
 
-  .job { display: grid; grid-template-columns: auto 1fr; column-gap: 12px; row-gap: 2px; padding: 12px var(--gutter); border-top: 1px solid var(--line); align-items: start; }
+  .job { display: grid; grid-template-columns: auto 1fr; column-gap: 12px; row-gap: 4px; padding: 14px var(--gutter); border-top: 1px solid var(--line); align-items: start; transition: background-color .2s; animation: fade-up .35s var(--ease) backwards; }
+  .job:hover { background: var(--glass-1); }
   .sched-group:first-child .job:first-child { border-top: 0; }
-  .job-toggle { grid-row: 1 / span 5; width: 34px; height: 20px; border-radius: 999px; background: var(--line); position: relative; border: 0; flex: none; margin-top: 2px; padding: 0; }
-  .job-toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--plate); box-shadow: 0 1px 2px #0005; transition: transform .15s; }
-  .job-toggle[aria-checked="true"] { background: var(--copper); }
+  /* Тумблер — стеклянный жёлоб; включён — медь со свечением */
+  .job-toggle { grid-row: 1 / span 5; width: 34px; height: 20px; border-radius: 999px; background: var(--glass-3); box-shadow: inset 0 0 0 1px var(--line-strong); position: relative; border: 0; flex: none; margin-top: 2px; padding: 0; transition: background-color .25s, box-shadow .25s; }
+  .job-toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px #0006; transition: transform .3s var(--ease); }
+  .job-toggle[aria-checked="true"] { background: var(--copper); box-shadow: 0 0 12px -2px var(--copper-glow); }
   .job-toggle[aria-checked="true"]::after { transform: translateX(14px); }
   .job-name { font: 600 14px var(--mono); }
   .job-error { color: var(--danger); font-size: 12px; }
   .job-about { font-size: 12px; color: var(--ink-soft); }
-  .job-about code { font: 11px var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 0 4px; margin-left: 6px; }
+  .job-about code { font: 12px var(--mono); background: var(--field); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 0 4px; margin-left: 6px; }
   .job-line { font-size: 12px; color: var(--ink-soft); }
   .job-line.bad { color: var(--copper); font-weight: 600; }
   .job-line.run { color: var(--done); font-weight: 600; }
-  .job-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
-  .job-actions .ghost { padding: 0 10px; font-size: 12px; min-height: var(--h-sm); }
+  .job-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .job-actions .ghost { padding: 0 10px; min-height: var(--h-sm); }
 
-  .schedule form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 16px var(--gutter) 20px; overflow-y: auto; min-height: 0; }
+  .schedule form { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 12px; padding: 16px var(--gutter) 20px; overflow-y: auto; min-height: 0; }
   .schedule form h3 { grid-column: 1 / -1; margin: 0; font: 600 14px var(--body); }
   .schedule form label { align-content: start; }
   .schedule form label.wide, .schedule form fieldset, .schedule form .sched-actions, .schedule form .hint, .schedule form .sched-error { grid-column: 1 / -1; }
-  .schedule form .hint { padding: 0; margin-top: -6px; } /* подсказка к полю над ней: стоит по левому краю формы и ближе к полю, чем к следующему */
+  .schedule form .hint { padding: 0; margin-top: -10px; } /* подсказка к полю над ней: стоит по левому краю формы и ближе к полю, чем к следующему */
   .schedule form textarea { min-height: 90px; }
   /* margin: 0 — у fieldset браузерные 2px по бокам, рамка выпадала из колонки полей */
-  .sched-cron, .role-ai { margin: 0; border: 1px solid var(--line); border-radius: var(--r); padding: 8px 12px 12px; display: grid; gap: 8px; min-width: 0; }
+  .sched-cron, .role-ai { margin: 0; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--glass-1); box-shadow: 0 1px 0 var(--edge) inset; padding: 8px 16px 16px; display: grid; gap: 12px; min-width: 0; }
   .sched-cron legend, .role-ai legend { padding: 0 4px; margin-left: -4px; }
   .sched-preset { display: flex; gap: 12px; flex-wrap: wrap; }
-  .sched-describe { margin: 0; font-size: 13px; }
+  .sched-describe { margin: 0; font-size: 14px; }
   .sched-describe.bad { color: var(--danger); }
-  .sched-upcoming { margin: 0; padding: 0; list-style: none; font: 12px var(--mono); color: var(--ink-soft); }
-  .sched-error { color: var(--danger); font-size: 13px; margin: 0; }
+  .sched-upcoming { margin: -4px 0 0; padding: 0; list-style: none; font: 12px/1.7 var(--mono); color: var(--ink-soft); }
+  .sched-error { color: var(--danger); font-size: 14px; margin: 0; }
   .sched-actions { display: flex; gap: 8px; }
   .sched-actions button { min-height: var(--h-lg); padding: 0 16px; } /* в одном ряду — одной высоты */
   /* Панель агента живёт на стилях панели расписания; своё — только ниже. Шире расписания: роль — длинный текст, в 480px его читать тесно */
   #agentPanel { width: min(820px, 100vw); }
 
   /* Отчёт о весе переписки: кнопка в шапке — сумма несжатого, панель — диалоги по убыванию веса */
-  #weightBtn.heavy { border-color: var(--copper); color: var(--copper); }
-  .weight-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; width: 100%; padding: 10px var(--gutter); border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; color: inherit; text-align: left; height: auto; }
+  #weightBtn.heavy { border-color: var(--copper); color: var(--copper); box-shadow: 0 0 16px -6px var(--copper-glow); }
+  .weight-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; width: 100%; padding: 10px var(--gutter); border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; color: inherit; text-align: left; height: auto; transition: background-color .2s; animation: fade-up .35s var(--ease) backwards; }
   .sched-group:first-child > .weight-row:first-child { border-top: 0; } /* сверху уже есть линия итога */
-  .weight-row:hover { background: color-mix(in srgb, var(--panel) 70%, transparent); }
+  .weight-row:hover { background: var(--glass-2); }
   .weight-row .names { font: 600 14px var(--mono); overflow-wrap: anywhere; }
   .weight-row .names i { font-style: normal; color: var(--ink-soft); margin: 0 6px; }
-  .weight-row .tokens { font: 600 13px var(--mono); white-space: nowrap; }
+  .weight-row .tokens { font: 600 14px var(--mono); white-space: nowrap; }
   .weight-row.heavy .tokens { color: var(--copper); }
   .weight-row .detail { grid-column: 1 / -1; font-size: 12px; color: var(--ink-soft); }
   #agentForm { flex: 1; align-content: start; }
   /* «Сохранить» и «Удалить» прибиты к низу панели: под длинной ролью они уезжали за экран, а спрятанное пользователь не находит */
-  #agentForm .sched-actions { position: sticky; bottom: -20px; z-index: 1; margin: 4px calc(0px - var(--gutter)) -20px; padding: 12px var(--gutter); background: var(--plate); border-top: 1px solid var(--line); }
+  #agentForm .sched-actions { position: sticky; bottom: -20px; z-index: 1; margin: 4px calc(0px - var(--gutter)) -20px; padding: 12px var(--gutter); background: color-mix(in srgb, var(--bg) 88%, transparent); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border-top: 1px solid var(--line); }
   .schedule form details, .schedule form .role-ai, .schedule form .role-where { grid-column: 1 / -1; min-width: 0; }
-  .schedule form #agentBody { min-height: max(260px, 42vh); font: 13px/1.5 var(--mono); }
+  .schedule form #agentBody { min-height: max(260px, 42vh); font: 14px/1.5 var(--mono); }
   .schedule form #agentAsk { min-height: 56px; }
   /* Доступ агента: пресет и итог в шапке, ниже галочки групп в две колонки; дельта токенов прижата к правому краю строки */
   .access-head { display: grid; grid-template-columns: minmax(0, 220px) 1fr; gap: 12px; align-items: end; }
-  .access-total { margin: 0; min-height: var(--h-lg); display: flex; flex-wrap: wrap; align-items: center; gap: 0 5px; font-size: 13px; color: var(--ink-soft); } /* gap — flex съедает пробел между цифрой и подписью */
+  .access-total { margin: 0; min-height: var(--h-lg); display: flex; flex-wrap: wrap; align-items: center; gap: 0 5px; font-size: 14px; color: var(--ink-soft); } /* gap — flex съедает пробел между цифрой и подписью */
   .access-total b { color: var(--ink); font-weight: 600; }
-  .access-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; }
+  .access-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px; }
   .schedule form .access-groups label.check, .schedule form .access-servers label.check { align-self: auto; min-height: 36px; align-items: start; padding: 6px 0; }
-  .access-groups label.check > span, .settings-list label.check > span { flex: 1; min-width: 0; display: grid; }
-  .access-groups label.check small, .settings-list label.check small { font-size: 12px; line-height: 16px; color: var(--ink-soft); overflow-wrap: anywhere; }
+  label.check > span { flex: 1; min-width: 0; display: grid; gap: 2px; }
+  label.check small { font-size: 12px; line-height: 18px; color: var(--ink-soft); overflow-wrap: anywhere; }
   .access-groups output { font: 12px/20px var(--mono); color: var(--ink-soft); white-space: nowrap; }
   .access-groups output.worse { color: var(--danger); }
   .access-servers { display: flex; flex-wrap: wrap; gap: 0 16px; padding-left: 24px; }
@@ -440,8 +570,8 @@
   .role-ai-note.bad { color: var(--danger); }
   .role-ai-row .keys { margin-left: auto; }
   /* diff ИИ-правки — как в git: «−» красным, «+» зелёным, изменённые слова фоном погуще */
-  .role-diff { max-height: 260px; overflow: auto; font: 12px/1.5 var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
-  .role-diff-head { position: sticky; top: 0; padding: 2px 10px; font: 11px var(--label); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); background: var(--panel); border-bottom: 1px solid var(--line); }
+  .role-diff { max-height: 260px; overflow: auto; font: 12px/1.5 var(--mono); background: var(--field); border: 1px solid var(--line); border-radius: var(--r); animation: fade-up .3s var(--ease); }
+  .role-diff-head { position: sticky; top: 0; padding: 2px 10px; font: 12px var(--label); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); background: color-mix(in srgb, var(--bg) 94%, transparent); border-bottom: 1px solid var(--line); }
   .role-diff-gap { padding: 0 10px; color: var(--ink-soft); background: color-mix(in srgb, var(--line) 45%, transparent); user-select: none; }
   .role-diff-line { display: grid; grid-template-columns: 22px minmax(0, 1fr); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-soft); }
   .role-diff-line::before { content: attr(data-sign); text-align: center; user-select: none; }
@@ -449,48 +579,72 @@
   .role-diff-line.del { color: var(--ink); background: color-mix(in srgb, var(--danger) 14%, transparent); }
   .role-diff-line.add::before { color: var(--done); }
   .role-diff-line.del::before { color: var(--danger); }
-  .role-diff-line.add mark { color: inherit; border-radius: 2px; background: color-mix(in srgb, var(--done) 38%, transparent); }
-  .role-diff-line.del mark { color: inherit; border-radius: 2px; background: color-mix(in srgb, var(--danger) 34%, transparent); }
-  .role-bus { margin: 6px 0 0; padding: 8px 10px; max-height: 180px; overflow: auto; white-space: pre-wrap; font: 12px/1.5 var(--mono); color: var(--ink-soft); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
-  .role-where { margin: 0; font: 11px var(--mono); color: var(--ink-soft); word-break: break-all; padding: 0; }
+  .role-diff-line.add mark { color: inherit; border-radius: 2px; box-shadow: none; background: color-mix(in srgb, var(--done) 38%, transparent); }
+  .role-diff-line.del mark { color: inherit; border-radius: 2px; box-shadow: none; background: color-mix(in srgb, var(--danger) 34%, transparent); }
+  .role-bus { margin: 6px 0 0; padding: 8px 10px; max-height: 180px; overflow: auto; white-space: pre-wrap; font: 12px/1.5 var(--mono); color: var(--ink-soft); background: var(--field); border: 1px solid var(--line); border-radius: var(--r); }
+  .role-where { margin: 0; font: 12px var(--mono); color: var(--ink-soft); word-break: break-all; padding: 0; }
   .sched-actions .push { margin-left: auto; }
-  /* Галочка в ряду с полем стоит по его высоте, а не висит посреди ячейки */
-  .schedule form label.check { display: flex; align-items: center; gap: 8px; align-self: end; min-height: var(--h-lg); font-size: 14px; line-height: 20px; }
-  .schedule form :is(#agentFastLabel, #agentRulesLabel, #schedRulesLabel) { flex-wrap: wrap; align-content: center; gap: 0 8px; }
-  .schedule form :is(#agentFastLabel, #agentRulesLabel, #schedRulesLabel) small { flex-basis: 100%; font-size: 12px; line-height: 16px; color: var(--ink-soft); }
+  /* Галочка в ряду с полем стоит по его высоте, а не висит посреди ячейки. Высота поля — отступами, не min-height: форма — скролл-контейнер,
+     и когда она не влезает в панель, строки grid ужимаются до min-height ячеек — двухстрочная галочка налезала на поле над ней.
+     Отступ в :where() — нулевая специфичность, поля настроек и групп доступа ставят свой */
+  .schedule form label.check { display: flex; align-items: center; gap: 10px; align-self: end; font-size: 14px; line-height: 20px; cursor: pointer; }
+  :where(.schedule form label.check) { padding-block: calc((var(--h-lg) - 20px) / 2); }
+  :where(.schedule form label.check.wide) { padding-block: 0; } /* во всю ширину соседнего поля нет — равнять не с чем */
 
   /* ---- настройки проекта (шестерёнка) ---- */
+  #settingsBtn:hover:not(:disabled) .icon { transform: rotate(60deg); }
+  #settingsBtn .icon, #theme .icon { transition: transform .5s var(--ease); }
+  #theme:hover:not(:disabled) .icon { transform: rotate(180deg); }
   .settings-list, #settingsStatus { grid-column: 1 / -1; }
+  /* Фон — миниатюры 16:9: кадр ролика, на наведении он играет. Выбранная — медная линия по контуру и ромб в углу, без свечения, как открытая вкладка.
+     Радио настоящие (стрелки, скринридер), спрятаны под плиткой; фокус рисует сама плитка */
+  .bg-pick { grid-column: 1 / -1; display: grid; gap: 8px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+  .bg-dim { display: grid; grid-template-columns: auto minmax(0, 1fr) 44px; align-items: center; gap: 4px 16px; margin-top: 4px; }
+  .bg-dim output { font: 12px var(--mono); color: var(--ink-soft); text-align: right; font-variant-numeric: tabular-nums; }
+  .bg-dim .settings-revert { grid-column: 2 / -1; justify-self: start; }
+  .bg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+  .bg-opt { position: relative; aspect-ratio: 16 / 9; border-radius: var(--r); overflow: hidden; cursor: pointer; border: 1px solid var(--line); background: var(--glass-1); box-shadow: 0 1px 0 var(--edge) inset; transition: border-color .2s; }
+  .bg-opt:hover { border-color: var(--line-strong); }
+  .bg-opt input { position: absolute; opacity: 0; pointer-events: none; }
+  .bg-opt video, .bg-opt .bg-none { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transition: scale .5s var(--ease); }
+  .bg-opt:hover video { scale: 1.08; }
+  .bg-none { display: grid; place-items: center; background: radial-gradient(80% 90% at 20% 25%, var(--blob-a), transparent), radial-gradient(80% 90% at 85% 30%, var(--blob-b), transparent), radial-gradient(90% 80% at 55% 100%, var(--blob-c), transparent), var(--bg); }
+  .bg-none span { font: 700 12px/1.2 var(--label); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); text-align: center; padding: 0 6px; }
+  .bg-opt::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 2px transparent; transition: box-shadow .2s; pointer-events: none; }
+  .bg-opt:has(:checked) { border-color: var(--copper); }
+  .bg-opt:has(:checked)::after { box-shadow: inset 0 0 0 1px var(--copper); }
+  .bg-opt::before { content: ""; position: absolute; z-index: 1; top: 7px; right: 7px; width: 8px; height: 8px; rotate: 45deg; border-radius: 2px; background: var(--copper); box-shadow: 0 0 0 2px var(--bg); transform: scale(0); transition: transform .25s var(--ease); }
+  .bg-opt:has(:checked)::before { transform: scale(1); }
+  .bg-opt:has(:focus-visible) { outline: 2px solid var(--copper); outline-offset: 2px; }
   .settings-list { display: grid; gap: 0; }
-  .settings-group-label { padding: 14px 0 2px; }
+  .settings-group-label { margin: 0; padding: 24px 0 0; }
   .settings-group-label:first-child { padding-top: 0; }
-  .settings-field { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--line); }
-  .settings-group-label:first-child + .settings-field { border-top: 0; }
+  .settings-field { display: grid; gap: 8px; padding: 14px 0 16px; border-top: 1px solid var(--line); }
+  .settings-group-label + .settings-field { border-top: 0; padding-top: 10px; } /* заголовок группы — сам разделитель, линия под ним отрывала его от поля */
   .settings-field-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
   .settings-field-name { font-size: 14px; }
   .settings-field.changed .settings-field-name { display: inline-flex; align-items: center; gap: 6px; }
-  .settings-field.changed .settings-field-name::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--copper); flex: none; }
+  .settings-field.changed .settings-field-name::before { content: ""; width: 6px; height: 6px; rotate: 45deg; border-radius: 1px; background: var(--copper); box-shadow: 0 0 6px var(--copper-glow); flex: none; }
   .settings-revert { border: 0; background: none; padding: 0; margin: 0; font-size: 12px; color: var(--copper); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; flex: none; }
   .settings-revert:hover { opacity: .8; }
   .settings-control { display: flex; align-items: center; gap: 8px; }
   .settings-control input[type="number"], .settings-control input[type="text"] { width: 140px; flex: 0 0 140px; }
   .settings-unit { font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
   .settings-field-text .settings-control { display: grid; gap: 4px; align-items: stretch; }
-  .settings-field-text textarea { min-height: 120px; font-size: 13px; line-height: 18px; }
+  .settings-field-text textarea { min-height: 120px; font-size: 14px; line-height: 18px; }
   .settings-count { font-size: 12px; color: var(--ink-soft); justify-self: end; font-variant-numeric: tabular-nums; }
   .settings-count.over { color: var(--danger); }
-  .settings-scope { margin-left: 6px; padding: 0 6px; border: 1px solid var(--line); border-radius: 999px; font-size: 11px; line-height: 16px; color: var(--ink-soft); white-space: nowrap; }
   .settings-field.changed .settings-scope { margin-left: 0; }
   .settings-field .hint { padding: 0; margin: 0; }
   .settings-field-error { color: var(--danger); font-size: 12px; margin: 0; }
   /* Булевы настройки — та же строка с галочкой и подсказкой, шо у групп доступа агента */
-  .schedule form .settings-list label.check { align-self: auto; min-height: 36px; align-items: start; padding: 0; gap: 8px; }
+  .schedule form .settings-list label.check { align-self: auto; min-height: 0; align-items: start; }
   .settings-list label.check > span { gap: 4px; }
 
   /* ---- выпадающие списки ---- */
   /* Нативный select: клавиатура и доступность остаются браузерные. Свой вид самого списка — там, где есть base-select (Chrome 135+);
      в остальных браузерах оформлено только закрытое поле, список системный */
-  form select { cursor: pointer; }
+  form select { cursor: pointer; transition: none; } /* выпадающий список отзывается сразу: задержка на наведении раздражала */
   form select:hover { border-color: color-mix(in srgb, var(--copper) 55%, var(--line)); }
   @supports not (appearance: base-select) {
     form select { appearance: none; padding-right: 30px !important; background-repeat: no-repeat; background-position: right 10px center; background-size: 12px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a97a3' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); }
@@ -501,24 +655,42 @@
     /* Подпись закрытого поля: button и selectedcontent подкладывает setOptions */
     form select > button { display: flex; flex: 1; min-width: 0; }
     form select selectedcontent { display: block; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    form select:open { border-color: var(--copper); }
-    form select::picker-icon { content: ""; flex: none; margin-left: auto; width: 14px; height: 14px; background: var(--ink-soft); mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat; transition: rotate .2s, background-color .15s; }
+    form select:open { border-color: var(--copper); box-shadow: 0 0 0 3px var(--copper-soft), 0 0 24px -8px var(--copper-glow); }
+    form select::picker-icon { content: ""; flex: none; margin-left: auto; width: 14px; height: 14px; background: var(--ink-soft); mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat; transition: rotate .3s var(--ease), background-color .2s; }
     form select:open::picker-icon { rotate: 180deg; background: var(--copper); }
-    form select::picker(select) { background: var(--raised); color: var(--ink); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 4px; margin-block: 6px; box-shadow: var(--shadow-pop); max-height: min(340px, 60vh); overflow-y: auto; scrollbar-width: thin; opacity: 0; transition: opacity .14s, overlay .14s allow-discrete, display .14s allow-discrete; }
-    form select::picker(select):popover-open { opacity: 1; }
-    @starting-style { form select::picker(select):popover-open { opacity: 0; } }
-    form select option { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: var(--r-sm); font: 400 14px/20px var(--body); letter-spacing: 0; text-transform: none; color: var(--ink); white-space: nowrap; cursor: pointer; transition: background-color .1s; }
+    /* Сам список — стеклянный поповер, как у qwatra: размытие под ним. Раскрывается коротким проявлением из центра — список бывает и под полем, и над ним, сдвиг в одну сторону у одного из них «падал» бы; пункты следом лесенкой;
+       закрывается быстрее, чем открывается. Наведение на пункт — без задержек */
+    form select::picker(select) { background: var(--raised); -webkit-backdrop-filter: blur(14px) saturate(150%); backdrop-filter: blur(14px) saturate(150%); color: var(--ink); border: 1px solid var(--line-strong); border-radius: var(--r-lg); padding: 8px; margin-block: 8px; min-width: calc(anchor-size(width) + 24px); box-shadow: var(--shadow-pop); max-height: min(380px, 60vh); overflow-y: auto; scrollbar-width: thin;
+      opacity: 0; scale: .96; transition: opacity .12s ease, scale .12s ease, display .12s allow-discrete, overlay .12s allow-discrete; }
+    form select:open::picker(select) { opacity: 1; scale: 1; transition-duration: .22s; transition-timing-function: var(--ease); }
+    @starting-style { form select:open::picker(select) { opacity: 0; scale: .96; } }
+    form select option { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-radius: var(--r-sm); font: 400 14px/20px var(--body); letter-spacing: 0; text-transform: none; color: var(--ink); white-space: nowrap; cursor: pointer; transition: none; }
+    /* Пункт опускается на место сверху, а не поднимается снизу: сдвиг вниз вылезал за низ списка, и на время лесенки мелькала полоса прокрутки —
+       вылет вверх в прокрутку не попадает. Без sibling-index() — все разом */
+    form select:open option { animation: option-in .26s var(--ease) backwards; animation-delay: calc(min(sibling-index(), 10) * 18ms); }
     form select option:hover, form select option:focus-visible { background: var(--copper-soft); outline: none; }
     form select option:checked { color: var(--copper); font-weight: 600; }
     form select option::checkmark { order: 1; margin-left: auto; content: "✓"; color: var(--copper); }
-    form select optgroup { font: 700 11px/1 var(--label); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); padding-top: 8px; }
-    form select optgroup:not(:first-child) { margin-top: 5px; border-top: 1px solid var(--line); }
-    form select optgroup option { margin-top: 4px; }
-    form select optgroup option + option { margin-top: 0; }
+    form select optgroup { font: 700 12px/1 var(--label); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); padding-top: 10px; }
+    form select optgroup:not(:first-child) { margin-top: 8px; border-top: 1px solid var(--line); }
+    form select optgroup option { margin-top: 6px; }
+    form select option + option, form select optgroup option + option { margin-top: 2px; } /* подсветки соседних пунктов не слипаются */
   }
+
+  /* ---- появление ---- */
+  /* Въезд при загрузке — короткий, со ступенькой: шапка сверху, список слева, форма снизу, лента проявляется. Только backwards — после анимации transform не держится */
+  @keyframes from-top { from { transform: translateY(-100%); opacity: 0; } }
+  @keyframes from-left { from { transform: translateX(-40px); opacity: 0; } }
+  @keyframes from-bottom { from { transform: translateY(24px); opacity: 0; } } /* не на всю высоту: форма и кнопка отправки с первого кадра в пределах экрана */
+  @keyframes fade-in { from { opacity: 0; } }
+  @keyframes fade-up { from { transform: translateY(6px); opacity: 0; } }
+  @keyframes pop-in { from { transform: scale(.6); opacity: 0; } }
+  @keyframes panel-in { from { transform: translateX(40px); opacity: 0; } }
+  @keyframes option-in { from { transform: translateY(-5px); opacity: 0; } }
 
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
+    ::picker(select) { transition: none !important; } /* отдельным правилом: браузер без ::picker выкинул бы весь список селекторов */
     .feed-wrap { scroll-behavior: auto; }
   }
 
@@ -529,8 +701,8 @@
     :root { --h-sm: 32px; --h: 36px; --h-lg: 40px; /* пальцем в 28px не попасть */ --gutter: 12px; --rail-x: 13px; --feed-left: 44px; --tap-curve: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='20'%3E%3Cpath d='M0 2C18 2 10 17 30 17' fill='none' stroke='%23000' stroke-width='2'/%3E%3C/svg%3E"); }
     /* Список агентов — поверх ленты, а не над ней: иначе он выдавливает ленту в ноль и форма уезжает за экран */
     .layout { grid-template-columns: minmax(0, 1fr); }
-    aside { display: none; position: absolute; inset: 0 0 auto 0; z-index: 5; max-height: 75%; background: var(--panel); border-right: 0; border-bottom: 1px solid var(--line); box-shadow: 0 16px 28px -12px #0008; }
-    aside.open { display: block; }
+    aside { display: none; position: absolute; inset: 0 0 auto 0; z-index: 5; max-height: 75%; background: color-mix(in srgb, var(--bg) 60%, transparent); -webkit-backdrop-filter: blur(28px) saturate(160%); backdrop-filter: blur(28px) saturate(160%); border-right: 0; border-image: none; border-bottom: 1px solid var(--line-strong); box-shadow: 0 16px 28px -12px #0008; }
+    aside.open { display: block; animation: from-top .35s var(--ease); }
     #toggleAgents { display: inline-flex; }
     .where { order: 5; flex-basis: 100%; }
     #scheduleBtn { margin-left: auto; }
@@ -544,9 +716,11 @@
     #attachHint, .keys { display: none; } /* перетаскивать и держать пробел на телефоне нечем, а лента и так зажата формой */
     .thumb { max-width: 100%; }
     .schedule form { grid-template-columns: 1fr; }
+    .schedule { animation-name: from-bottom-soft; }
     .access-head, .access-groups { grid-template-columns: 1fr; }
     .job-toggle, .job-actions .ghost { min-height: 32px; }
   }
+  @keyframes from-bottom-soft { from { transform: translateY(24px); opacity: 0; } }
 </style>
 </head>
 <body>
@@ -559,18 +733,23 @@
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></symbol>
   <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></symbol>
+  <symbol id="i-reply" viewBox="0 0 24 24"><path d="m9 17-5-5 5-5"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></symbol>
   <symbol id="i-squeeze" viewBox="0 0 24 24"><path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="m14 10 7-7"/><path d="m3 21 7-7"/></symbol>
   <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></symbol>
   <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></symbol>
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-msgs" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-hourglass" viewBox="0 0 24 24"><path d="M6 2h12"/><path d="M6 22h12"/><path d="M7 2v4l5 6-5 6v4"/><path d="M17 2v4l-5 6 5 6v4"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
   <symbol id="i-edit" viewBox="0 0 24 24"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></symbol>
   <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
 </svg>
 
+<div class="bg-video" id="bgVideo" aria-hidden="true"></div>
 <header class="top">
   <div class="where"><b id="project">…</b><span id="cwd"></span></div>
   <div class="mine" id="mine" title="Открой диалог ответившего агента — его ответы прочитаны: сессия проекта их уже не получит и токены на них не потратит. Не откроешь — сессия увидит счётчик ответов на следующем промпте"><span id="mineText"></span></div>
@@ -596,15 +775,18 @@
       <!-- На виду всегда: спрятанную до выбора пары кнопку пользователь не нашёл. Без пары клик по ней объясняет, как пару выбрать -->
       <button class="squeeze" id="squeeze" type="button"><svg class="icon"><use href="#i-squeeze"/></svg><span>Сжать диалог</span></button>
     </div>
-    <!-- Клик по сообщению выделяет его; панель видна, пока шо-то выделено -->
-    <div class="pair picked-bar" id="marked" hidden>
-      <b id="markedCount"></b>
-      <button class="squeeze danger" id="markedDelete" type="button"><svg class="icon"><use href="#i-trash"/></svg><span>Удалить</span></button>
-      <button class="ghost" id="markedNone" type="button"><svg class="icon"><use href="#i-x"/></svg>Снять выделение</button>
-    </div>
-    <div class="pair" id="pair" hidden>
-      <b id="pairNames"></b><span class="weight" id="pairWeight"></span>
-      <span class="note" id="pairNote" role="status"></span>
+    <!-- Плавающие над лентой справа: пара (вес диалога) и под ней выделение — стопкой, друг на друга не ложатся -->
+    <div class="floats">
+      <div class="pair" id="pair" hidden>
+        <div class="pair-row"><b id="pairNames"></b><span class="weight" id="pairWeight"></span></div>
+        <span class="note" id="pairNote" role="status"></span>
+      </div>
+      <!-- Клик по сообщению выделяет его; панель видна, пока шо-то выделено -->
+      <div class="picked-bar" id="marked" hidden>
+        <b id="markedCount"></b>
+        <button class="squeeze danger" id="markedDelete" type="button"><svg class="icon"><use href="#i-trash"/></svg><span>Удалить</span></button>
+        <button class="ghost" id="markedNone" type="button"><svg class="icon"><use href="#i-x"/></svg>Снять выделение</button>
+      </div>
     </div>
     <!-- Выбран один агент — его диалоги с тобой: у каждого свой контекст агента; рисует renderDialogs -->
     <div class="tabs" id="dialogTabs" role="tablist" aria-label="Диалоги с агентом" hidden></div>
@@ -621,6 +803,7 @@
       <button class="send" id="sendBtn" type="submit"><svg class="icon"><use href="#i-send"/></svg>Отправить</button>
       <div class="attach">
         <input type="file" id="pick" multiple hidden>
+        <span class="filechip refs" id="refsChip" hidden title="Выделенные в ленте сообщения уйдут агенту цитатами вместе с этим сообщением"></span>
         <span id="picked"></span>
         <label class="btw-switch" id="btwWrap" hidden title="Агент сейчас работает. Обычное сообщение дождётся конца его работы, btw — дойдёт посреди хода, между вызовами инструментов"><input type="checkbox" id="btw"> btw — вбросить сейчас</label>
         <label class="btw-switch" id="evolveWrap" hidden title="Когда агент сдаст задачу (DONE), он в той же сессии разберёт, как работал, и предложит правку своей роли: нужное допишет, лишнее уберёт. Черновик с diff откроется в редакторе роли — на диск пойдёт только по «Сохранить»"><input type="checkbox" id="evolve"> самоправка роли</label>
@@ -639,7 +822,7 @@
   </div>
   <p class="sched-daemon" id="scheduleDaemon" role="status"></p>
   <p class="sched-warn" id="scheduleWarn" hidden></p>
-  <button class="ghost" id="scheduleNew" type="button"><svg class="icon"><use href="#i-plus"/></svg>Новая задача</button>
+  <button class="send" id="scheduleNew" type="button"><svg class="icon"><use href="#i-plus"/></svg>Новая задача</button>
   <div class="sched-list" id="scheduleList"></div>
 
   <form id="scheduleForm" hidden>
@@ -677,8 +860,8 @@
     <label id="schedModelLabel"><span class="label">Модель<small>по умолчанию — <span id="schedModelDefault"></span></small></span><input id="schedModel" type="text" placeholder="sonnet" autocomplete="off"></label>
     <label><span class="label">Таймаут, мин</span><input id="schedTimeout" type="number" min="1" max="120" value="60"></label>
     <label class="check"><input type="checkbox" id="schedCatchup"> догонять пропущенное (комп спал)</label>
-    <label class="check" id="schedRulesLabel"><input type="checkbox" id="schedRules"> глобальные правила<small>~/.claude/CLAUDE.md и rules/; +≈3.3к токенов на запуск</small></label>
-    <label class="check"><input type="checkbox" id="schedEnabled" checked> включена</label>
+    <label class="check wide" id="schedRulesLabel"><input type="checkbox" id="schedRules"><span>глобальные правила<small>~/.claude/CLAUDE.md и rules/; +≈3.3к токенов на запуск</small></span></label>
+    <label class="check wide"><input type="checkbox" id="schedEnabled" checked> включена</label>
 
     <label class="wide"><span class="label">Промпт</span><textarea id="schedPrompt" required></textarea></label>
     <p class="hint">длиннее лимита сообщения — уйдёт агенту вложением</p>
@@ -715,8 +898,8 @@
     <label><span class="label">Модель</span><select id="agentModel"></select></label>
     <label class="wide"><span class="label">Описание<small>когда этого агента поднимать; пусто — первая строка роли</small></span><input id="agentAbout" type="text" autocomplete="off"></label>
     <label><span class="label">Effort<small>сколько модель думает</small></span><select id="agentEffort"></select></label>
-    <label class="check" id="agentFastLabel"><input type="checkbox" id="agentFast"> fast mode<small>только Opus; при фоновом подъёме шиной</small></label>
-    <label class="check" id="agentRulesLabel"><input type="checkbox" id="agentRules"> глобальные правила<small>~/.claude/CLAUDE.md и rules/ при фоновом подъёме; +≈3.3к токенов</small></label>
+    <label class="check" id="agentFastLabel"><input type="checkbox" id="agentFast"><span>fast mode<small>только Opus; при фоновом подъёме шиной</small></span></label>
+    <label class="check wide" id="agentRulesLabel"><input type="checkbox" id="agentRules"><span>глобальные правила<small>~/.claude/CLAUDE.md и rules/ при фоновом подъёме; +≈3.3к токенов</small></span></label>
 
     <fieldset class="role-ai">
       <legend class="label">Доступ</legend>
@@ -779,6 +962,19 @@
   <p class="sched-daemon" id="settingsRoot" hidden></p>
   <p class="sched-warn" id="settingsOff" hidden></p>
   <form id="settingsForm">
+    <!-- Фон — настройка браузера, а не проекта: применяется сразу, мимо «Сохранить»; миниатюры рисует renderBgPicker -->
+    <div class="bg-pick">
+      <span class="label" id="bgLabel">Фон</span>
+      <div class="bg-grid" id="bgGrid" role="radiogroup" aria-labelledby="bgLabel"></div>
+      <!-- Затемнение — плотность стекла над видео; тоже настройка браузера. Без видео прячется: над пятнами стекло и так почти прозрачное -->
+      <div class="bg-dim" id="bgDimWrap" hidden>
+        <label class="label" for="bgDim">Затемнение</label>
+        <input type="range" id="bgDim" min="20" max="95" step="5" title="Плотность панелей над видео: меньше — фон виднее, больше — текст контрастнее">
+        <output id="bgDimValue" for="bgDim"></output>
+        <button class="settings-revert" id="bgDimReset" type="button" hidden></button>
+      </div>
+      <p class="hint">Меняется сразу и запоминается в этом браузере для всех проектов.</p>
+    </div>
     <p class="hint">Настройки действуют только в этом проекте и переопределяют значения по умолчанию. Поля с пометкой «все проекты» — общие для всей шины.</p>
     <div class="settings-list" id="settingsList"></div>
     <p class="result" id="settingsStatus" role="status"></p>
@@ -910,7 +1106,7 @@ function agentButton(agent, fresh, me) {
     replies ? el('span', { className: 'badge', title: tr('тебе ответил — открой диалог, и прочитано') }, String(replies)) : '',
     agent.unread && !status.mine ? el('span', { className: 'badge wait', title: tr('лежит в его inbox') }, String(agent.unread)) : '');
   button.dataset.key = agent.key;
-  button.style.setProperty('--h', hueOf(agent.name));
+  button.style.setProperty('--hue', hueOf(agent.name));
   button.setAttribute('aria-pressed', String(filters.agents.has(agent.key)));
   button.addEventListener('click', (e) => pickAgent(agent, e));
   if (!agent.editable) return button;
@@ -1134,6 +1330,7 @@ function summaryNode({ summary, hidden, inPair }) {
 // ---------- выделение и удаление ----------
 
 const marked = new Set(); // id выделенных сообщений
+let refsOff = false; // «×» на чипе: выделенное остаётся под «Удалить», но агенту не уходит — до следующей смены выделения
 
 function renderMarked() {
   $('marked').hidden = !marked.size;
@@ -1143,11 +1340,29 @@ function renderMarked() {
     node.classList.toggle('picked', on);
     node.querySelector('.pick').setAttribute('aria-pressed', String(on));
   }
+  if (!marked.size) refsOff = false;
+  renderRefs();
 }
 
 function togglePick(id) {
   if (!marked.delete(id)) marked.add(id);
+  refsOff = false;
   renderMarked();
+}
+
+/** Выделенное уходит агенту цитатами с ближайшим сообщением — чип в форме говорит об этом заранее; «×» — отправить без них. */
+function renderRefs() {
+  const chip = $('refsChip');
+  chip.hidden = !marked.size || refsOff;
+  $('attachHint').hidden = picked.length > 0 || !chip.hidden;
+  if (chip.hidden) return chip.replaceChildren();
+  const drop = el('button', { type: 'button', title: tr('Отправить без них'), ariaLabel: tr('Отправить без выделенных') }, icon('x'));
+  drop.addEventListener('click', () => {
+    refsOff = true;
+    renderRefs();
+    $('text').focus();
+  });
+  chip.replaceChildren(icon('reply'), tr('К выделенным: {n}', { n: marked.size }), drop);
 }
 
 /** Листья идут через hl() — подсветка поиска живёт и внутри разметки. Узлы строит el(): HTML из текста сообщения не исполняется. */
@@ -1196,7 +1411,7 @@ function messageNode(m, { fresh, unread, covered, cont, me }) {
     togglePick(m.id);
   });
   node.dataset.id = m.id;
-  node.style.setProperty('--h', hueOf(m.from));
+  node.style.setProperty('--hue', hueOf(m.from));
   return node;
 }
 
@@ -1485,7 +1700,14 @@ function renderPair(matched) {
   const info = L.pairInfo(matched.filter((m) => L.pairOf(m) === pair), state.summaries);
   $('pairNames').replaceChildren(names[0], el('i', {}, '↔'), names[1]);
   // Вызов модели сам стоит ≈3–4к токенов (замер на haiku): на коротком диалоге сводка дороже, чем десяток его чтений
-  $('pairWeight').textContent = tr('{total} сообщ. · агент прочтёт {tail}, ≈{weight} токенов', { total: info.total, tail: info.tail, weight: L.short(info.weight) }) + (info.early ? tr(' · сжимать рано: сама сводка стоит ≈3–4к токенов') : '');
+  const full = tr('{total} сообщ. · агент прочтёт {tail}, ≈{weight} токенов', { total: info.total, tail: info.tail, weight: L.short(info.weight) }) + (info.early ? tr(' · сжимать рано: сама сводка стоит ≈3–4к токенов') : '');
+  // На виду — иконки с цифрами: сообщений · агент прочтёт и токены · часы «сжимать рано». Полная фраза — в подсказке и для читалки
+  $('pairWeight').replaceChildren(
+    el('span', { className: 'stat' }, icon('msgs'), String(info.total)),
+    el('span', { className: 'stat read' }, icon('eye'), `${info.tail} · ≈${L.short(info.weight)}`),
+    info.early ? el('span', { className: 'stat early' }, icon('hourglass')) : '',
+    el('span', { className: 'sr' }, full));
+  $('pairWeight').title = full;
   $('pairWeight').className = `weight${info.heavy ? ' heavy' : ''}`;
   if (!$('squeeze').dataset.busy) {
     $('squeeze').disabled = !info.canSqueeze;
@@ -2044,7 +2266,9 @@ $('composer').addEventListener('submit', async (e) => {
   // Пишешь агенту, чья вкладка открыта, — сообщение уходит в неё; другому — в его текущий диалог
   const target = L.dialogTarget(filters, state.agents);
   if (target && filters.dialog && target.agent === body.to) body.dialog = filters.dialog.d;
-  if (!body.text.trim() && !body.files.length) return say(tr('Пустое сообщение не отправляю.'), true);
+  const refs = marked.size && !refsOff ? [...marked] : [];
+  if (refs.length) body.refs = refs;
+  if (!body.text.trim() && !body.files.length && !refs.length) return say(tr('Пустое сообщение не отправляю.'), true);
   if (uploading) return say(tr('Файл ещё грузится — секунду.'), true);
   $('sendBtn').disabled = true;
   try {
@@ -2062,6 +2286,10 @@ $('composer').addEventListener('submit', async (e) => {
     $('evolve').checked = false; // галочка — на одно сообщение: самоправка стоит отдельного запуска
     picked = [];
     renderPicked();
+    if (refs.length) {
+      marked.clear(); // указание отработало — выделение больше не висит над лентой
+      renderMarked();
+    }
   } catch (err) {
     say(tr('Не отправлено: {why}', { why: err.message }), true);
   } finally {
@@ -2082,7 +2310,7 @@ function renderPicked() {
     });
     return el('span', { className: 'filechip' }, icon('file'), f.name, el('small', {}, L.sizeOf(f.size)), drop);
   }));
-  $('attachHint').hidden = picked.length > 0;
+  $('attachHint').hidden = picked.length > 0 || !$('refsChip').hidden;
 }
 
 async function addFiles(list, pasted = false) {
@@ -2169,6 +2397,7 @@ $('squeeze').addEventListener('click', async () => {
     $('pair').hidden = false;
     $('pairNames').textContent = tr('Пара не выбрана');
     $('pairWeight').textContent = '';
+    $('pairWeight').title = '';
     return note(tr(NO_PAIR_HINT));
   }
   button.dataset.busy = '1';
@@ -2323,6 +2552,112 @@ $('theme').addEventListener('click', () => {
   try { localStorage.setItem('bus-theme', document.documentElement.dataset.theme); } catch {}
 });
 try { if (localStorage.getItem('bus-theme')) document.documentElement.dataset.theme = localStorage.getItem('bus-theme'); } catch {}
+
+// ---------- видеофон ----------
+// Выбор живёт в localStorage, как тема: это вкус пользователя, а не настройка проекта. '0' — без видео, пятна
+const STILL = matchMedia('(prefers-reduced-motion: reduce)');
+let bgName = '0';
+let bgList = null; // ролики с сервера (/api/bg); грузим, когда впервые открыли ⚙
+
+function bgClip(src, props = {}) {
+  const node = Object.assign(document.createElement('video'), { muted: true, loop: true, playsInline: true, src, ...props });
+  node.setAttribute('muted', ''); // свойство muted Chrome для автоплея не считает, пока нет атрибута
+  return node;
+}
+
+/** Новый ролик проявляется поверх старого и только потом старый уходит — без чёрного кадра между ними. Не загрузился — назад к пятнам. */
+function setBackground(name, save = true) {
+  bgName = name;
+  if (save) try { localStorage.setItem('bus-bg', name); } catch {}
+  const layer = $('bgVideo');
+  const old = [...layer.querySelectorAll('video')];
+  const drop = () => old.forEach((node) => { node.classList.remove('on'); setTimeout(() => node.remove(), 900); });
+  syncBgPicker();
+  if (name === '0') {
+    document.documentElement.classList.remove('has-video');
+    return drop();
+  }
+  const node = bgClip(`/bg/${name}.mp4`, { preload: 'auto', autoplay: !STILL.matches && !document.hidden });
+  node.addEventListener('loadeddata', () => {
+    if (bgName !== name) return node.remove(); // пока грузился, выбрали другой
+    node.classList.add('on');
+    document.documentElement.classList.add('has-video');
+    drop();
+  }, { once: true });
+  node.addEventListener('error', () => {
+    node.remove();
+    if (bgName === name) setBackground('0', true); // и запомнить: иначе id удалённого ролика слал бы 404 на каждом F5
+  }, { once: true });
+  layer.append(node);
+}
+
+// Фон за скрытой вкладкой не крутим: декодер видео ел бы батарею впустую. «Меньше движения» в системе переключают и на ходу
+function syncBgPlay() {
+  const node = $('bgVideo').querySelector('video.on');
+  if (!node) return;
+  if (document.hidden || STILL.matches) node.pause();
+  else node.play().catch(() => {});
+}
+document.addEventListener('visibilitychange', syncBgPlay);
+STILL.addEventListener('change', syncBgPlay);
+
+function syncBgPicker() {
+  for (const input of $('bgGrid').querySelectorAll('input')) input.checked = input.value === bgName;
+  $('bgDimWrap').hidden = bgName === '0';
+}
+
+/** Затемнение: плотность стекла над видео в процентах. Плотности в CSS написаны для 65 % (DIM_BASE, --dim = 1), по умолчанию — 40 %: фон виден явнее. Сразу и в localStorage, как фон. */
+const DIM_BASE = 65;
+const DIM_DEFAULT = 40;
+function setDim(value, save = true) {
+  const input = $('bgDim');
+  const dim = Math.min(+input.max, Math.max(+input.min, Math.round(Number(value) / 5) * 5 || DIM_DEFAULT));
+  document.documentElement.style.setProperty('--dim', String(dim / DIM_BASE));
+  input.value = dim;
+  input.style.setProperty('--fill', `${((dim - input.min) / (input.max - input.min)) * 100}%`);
+  $('bgDimValue').textContent = `${dim} %`;
+  $('bgDimReset').textContent = tr('↺ по умолчанию: {value}', { value: `${DIM_DEFAULT} %` });
+  $('bgDimReset').hidden = dim === DIM_DEFAULT;
+  if (save) try { if (dim === DIM_DEFAULT) localStorage.removeItem('bus-dim'); else localStorage.setItem('bus-dim', dim); } catch {}
+}
+$('bgDim').addEventListener('input', (e) => setDim(e.target.value));
+$('bgDimReset').addEventListener('click', () => { setDim(DIM_DEFAULT); $('bgDim').focus(); });
+try { setDim(localStorage.getItem('bus-dim') || DIM_DEFAULT, false); } catch { setDim(DIM_DEFAULT, false); }
+
+/** Плитки: «Без видео» и кадр каждого ролика; на наведении и фокусе ролик в плитке играет. Выбор — сразу, мимо «Сохранить». */
+async function renderBgPicker() {
+  if (!bgList) {
+    try {
+      bgList = (await getJson('/api/bg')).items;
+    } catch {
+      bgList = [];
+    }
+  }
+  const tile = (value, label, face) => {
+    const input = el('input', { type: 'radio', name: 'bg', value, onchange: () => setBackground(value) });
+    input.setAttribute('aria-label', label);
+    const opt = el('label', { className: 'bg-opt', title: label }, input, face);
+    const clip = face.tagName === 'VIDEO' ? face : null;
+    if (clip) {
+      const play = () => { if (!STILL.matches) clip.play().catch(() => {}); };
+      const stop = () => { if (!opt.matches(':hover') && !input.matches(':focus-visible')) clip.pause(); }; // фокус от клика мышью ролик не держит
+      opt.addEventListener('pointerenter', play);
+      opt.addEventListener('pointerleave', stop);
+      input.addEventListener('focus', play);
+      input.addEventListener('blur', stop);
+    }
+    return opt;
+  };
+  $('bgGrid').replaceChildren(
+    tile('0', tr('Без видео'), el('span', { className: 'bg-none' }, el('span', {}, tr('Без видео')))),
+    ...bgList.map((name) => tile(name, tr('Видео {n}', { n: name }), bgClip(`/bg/${name}.mp4#t=0.5`, { preload: 'metadata' }))),
+  );
+  syncBgPicker();
+  setDim($('bgDim').value, false); // подпись сброса — на языке вкладки
+}
+
+const BG_DEFAULT = '6'; // ещё не выбирали — этот ролик; нет его в папке — откат на пятна, как у любого незагрузившегося
+try { setBackground(localStorage.getItem('bus-bg') || BG_DEFAULT, false); } catch { setBackground(BG_DEFAULT, false); }
 
 // ---------- расписание ----------
 
@@ -2832,6 +3167,7 @@ async function openSettings() {
   $('settings').hidden = false;
   $('settingsBtn').setAttribute('aria-expanded', 'true');
   settingsSay('');
+  renderBgPicker();
   try {
     applySettingsResponse(await getJson('/api/settings')); // у GET нет limits — пороги страницы не трогаются
   } catch (err) {

@@ -632,7 +632,29 @@ function senderOf(entry, snapshot) {
   return from;
 }
 
-function sendFromPage({ to: key, type, text, files, btw, evolve, dialog }) {
+const REFS_MAX = 20;
+
+/**
+ * Выделенные в ленте сообщения — цитатами под текстом: агент видит, на шо указал пользователь, и не ищет их в history.
+ * По времени, как в ленте; вложения — путями, агент откроет, если нужно. Блок по-русски: журнал и промпты агентам не переводятся.
+ */
+function quoteRefs(refs) {
+  if (refs === undefined || refs === null) return '';
+  if (!Array.isArray(refs) || refs.length > REFS_MAX || refs.some((id) => typeof id !== 'string')) throw new bus.BusError(tr('Процитировать можно до {n} сообщений.', { n: REFS_MAX }));
+  const found = [...new Set(refs)].map((id) => messages.get(id));
+  if (found.some((m) => !m)) throw new bus.BusError(tr('Выделенное сообщение уже удалено — обнови выделение.'));
+  if (!found.length) return '';
+  const order = new Map([...messages.keys()].map((id, i) => [id, i])); // при равном t — порядок журнала: у сообщений одной секунды время одно
+  found.sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : order.get(a.id) - order.get(b.id)));
+  const quote = (m) => [
+    `**${m.from} → ${m.to}** · ${String(m.t).slice(0, 16)} · ${m.type}`,
+    ...String(m.text || '').split(/\r?\n/),
+    ...(m.files.length ? [`вложения: ${m.files.map((f) => `${f.name} — ${f.path}`).join('; ')}`] : []),
+  ].map((line) => `> ${line}`.trimEnd()).join('\n');
+  return `К этим сообщениям:\n\n${found.map(quote).join('\n\n')}`;
+}
+
+function sendFromPage({ to: key, type, text, files, btw, evolve, dialog, refs }) {
   const snapshot = collectAgents();
   const entry = snapshot.agents.find((a) => a.key === String(key || ''));
   if (!entry) throw new bus.BusError(tr('Такого агента в шине нет.'));
@@ -653,7 +675,10 @@ function sendFromPage({ to: key, type, text, files, btw, evolve, dialog }) {
   if (taken.some((u) => !u)) throw new bus.BusError(tr('Загруженный файл не найден: сервер перезапускали или прошёл час. Приложи заново.'));
   const items = taken.map((u) => ({ src: u.file, name: u.name }));
   // Поле ввода длину не режет. Сообщение шины — до message.maxLength символов, поэтому длинный текст едет вложением, как промпт расписания: целиком
-  const raw = String(text || '');
+  // Цитаты — до проверки длины: с ними длинное целиком уедет в message.md, а превью останется первой строкой текста пользователя
+  const typed = String(text || '');
+  const quoted = quoteRefs(refs);
+  const raw = quoted ? [typed.trim(), quoted].filter(Boolean).join('\n\n') : typed;
   const limits = settings.get(from.root || snapshot.here.root);
   const maxLength = limits['message.maxLength'];
   const long = bus.clean(raw, maxLength).length > maxLength; // обрезанный clean() длиннее лимита на «…»
@@ -819,6 +844,43 @@ function serveFile(res, url) {
     'Cache-Control': 'private, max-age=3600',
   });
   pipeline(fs.createReadStream(real), res, () => {});
+}
+
+// ---------- видеофон страницы ----------
+
+const BG_DIR = path.join(__dirname, '..', 'assets', 'bg');
+
+/** Ролики фона — то, шо реально лежит в assets/bg: имена 1.mp4, 2.mp4…; папки нет — пусто, страница оставит только «Без видео». */
+function backgrounds() {
+  try {
+    return fs.readdirSync(BG_DIR).filter((f) => /^\d{1,2}\.mp4$/.test(f)).map((f) => f.slice(0, -'.mp4'.length)).sort((a, b) => a - b);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Имя — только из списка папки, путь из запроса не собираем. Range обязателен: без 206 Chrome не перематывает ролик
+ * и на каждом круге loop качает его заново. Кэш на сутки — ролики не меняются, а no-store гонял бы мегабайты при каждом F5.
+ */
+function serveBackground(req, res, name) {
+  if (!backgrounds().includes(name)) return reply(res, 404, { error: tr('Нет такого фона.') });
+  const file = path.join(BG_DIR, `${name}.mp4`);
+  const size = fs.statSync(file).size;
+  const head = { 'Content-Type': 'video/mp4', 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' };
+  const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+  if (range && (range[1] || range[2])) {
+    const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+    const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    if (start > end || start >= size) {
+      res.writeHead(416, { ...head, 'Content-Range': `bytes */${size}` });
+      return res.end();
+    }
+    res.writeHead(206, { ...head, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 });
+    return pipeline(fs.createReadStream(file, { start, end }), res, () => {});
+  }
+  res.writeHead(200, { ...head, 'Content-Length': size });
+  pipeline(fs.createReadStream(file), res, () => {});
 }
 
 // ---------- настройки проекта ----------
@@ -1397,6 +1459,9 @@ async function handle(req, res, port) {
     if (url.pathname === '/api/schedule') return reply(res, 200, scheduleState());
     if (url.pathname === '/api/settings') return reply(res, 200, settingsState());
     if (url.pathname === '/api/ping') return reply(res, 200, { app: 'bus-ui', cwd });
+    if (url.pathname === '/api/bg') return reply(res, 200, { items: backgrounds() });
+    const bg = /^\/bg\/(\d{1,2})\.mp4$/.exec(url.pathname);
+    if (bg) return serveBackground(req, res, bg[1]);
     if (url.pathname === '/api/events') return subscribe(res);
     // <img> заголовок не пошлёт, поэтому токен — в адресе: чужая страница вложение даже картинкой не подтянет
     if (url.pathname === '/api/file') return url.searchParams.get('k') === token ? serveFile(res, url) : reply(res, 403, { error: tr('Нет токена страницы. Обнови вкладку.') });

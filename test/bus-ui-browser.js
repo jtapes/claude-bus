@@ -248,13 +248,15 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     await page.goto(url);
     await page.waitForSelector('.msg');
 
+    // SSE перерисует ленту раньше, чем ответ POST допишет итог в #result: читать его — дождавшись нужной строки
+    const resultWith = async (text) => { await page.locator('#result', { hasText: text }).waitFor({ timeout: 10000 }).catch(() => {}); return page.locator('#result').textContent(); };
     const agentButton = (name) => page.locator(`.agent[data-key="${name}"], .agent[data-key^="${name}@"]`);
     const texts = () => page.locator('.msg .text').allTextContents();
     const overflow = (p) => p.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
 
     await scenario('E1 страница: грузится без ошибок в консоли, все агенты машины в списке (и «не в шине»), лента с перепиской, цвета проводов у агентов разные', async () => {
       const names = await page.locator('.agent .name').allTextContents();
-      const hues = await page.locator('.agent').evaluateAll((list) => list.map((n) => n.style.getPropertyValue('--h')));
+      const hues = await page.locator('.agent').evaluateAll((list) => list.map((n) => n.style.getPropertyValue('--hue')));
       const off = await page.locator('.agent.off .name').allTextContents();
       return [errors.length === 0 && ['shop', 'dima', 'masha', 'loner', 'qa', 'landing'].every((n) => names.includes(n)) && !names.includes('user') && new Set(hues).size === hues.length && off.join() === 'loner' && (await page.locator('.msg').count()) >= 10 && (await overflow(page)) <= 0, JSON.stringify({ errors, names, hues })];
     });
@@ -470,7 +472,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       await card.locator('.run-mark.wait', { hasText: 'остановлен' }).waitFor({ timeout: 20000 });
       await card.locator('.live').waitFor({ state: 'detached' });
       await agentButton('masha').locator('.live-last').waitFor({ state: 'detached' });
-      const stopNote = await page.locator('#result').textContent();
+      const stopNote = await resultWith('masha остановлен');
       await page.locator('#btwWrap').waitFor({ state: 'hidden' });
 
       fs.writeFileSync(fakeMode, 'ok');
@@ -479,7 +481,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       fs.writeFileSync(session, '{}\n');
       await card.locator('.run-mark button', { hasText: 'Продолжить' }).click();
       await card.locator('.run-mark.ok', { hasText: 'отработал' }).waitFor({ timeout: 20000 });
-      const resumeNote = await page.locator('#result').textContent();
+      const resumeNote = await resultWith('продолжает прежнюю сессию');
       bus(shop, ['autowake', 'off']);
       return [btwHiddenIdle && /masha работает\d+:\d\d/.test(running) && btwReset && notInInbox && stopNote.includes('masha остановлен') && resumeNote.includes('продолжает прежнюю сессию') && inboxOf('masha') === ''
         && liveRows === 2 && liveText.includes('смотрю форму логина') && liveMono && liveLast === 'Grep loginForm' && liveOpen === 1 && !livePicked, JSON.stringify({ btwHiddenIdle, running, btwReset, notInInbox, stopNote, resumeNote, liveRows, liveText, liveMono, liveLast, liveOpen, livePicked })];
@@ -675,11 +677,45 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       page.once('dialog', (d) => d.accept());
       await page.click('#markedDelete');
       await target.waitFor({ state: 'detached', timeout: 10000 });
-      const result = await page.locator('#result').textContent();
+      const result = await resultWith('Удалено сообщений');
       return [bar === 'Выделено: 1' && hiddenAfterSecond && hiddenAfterEsc && keptAfterDismiss && !read(journal).includes('удали из браузера') && read(journal).includes('привет из браузера') && result.includes('Удалено сообщений: 1') && (await page.locator('#marked').isHidden()), JSON.stringify({ bar, hiddenAfterSecond, hiddenAfterEsc, keptAfterDismiss, result })];
     });
 
     const journalRecords = () => read(journal).split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    await scenario('E48 выделенное — агенту цитатой: есть выделение — в форме медный чип «К выделенным: N»; отправка несёт текст и блок «К этим сообщениям:» с автором, временем и текстом, выделение снимается; «×» на чипе — уходит без цитат, выделение остаётся; удалённое выделенное — отказ', async () => {
+      bus(shop, ['send', 'dima', 'done', 'цитата раз'], quiet);
+      bus(shop, ['--as', 'dima', 'send', 'shop', 'question', 'цитата два\nвторая строка'], quiet);
+      const byId = async (text) => { const node = page.locator('.msg', { hasText: text }); await node.waitFor(); return page.locator(`.msg[data-id="${await node.getAttribute('data-id')}"]`); }; // после отправки тот же текст есть и в цитате
+      const two = await byId('цитата два');
+      const one = await byId('цитата раз');
+      const chipBefore = await page.locator('#refsChip').isHidden();
+      await two.locator('.text').click();
+      await one.locator('.text').click();
+      const chip = (await page.locator('#refsChip').textContent()).trim();
+      await page.selectOption('#to', { label: 'dima' });
+      await page.selectOption('#type', 'TASK');
+      await page.fill('#text', 'глянь сюда');
+      await page.press('#text', 'Enter');
+      await page.locator('.msg .text', { hasText: 'глянь сюда' }).waitFor();
+      const sent = journalRecords().find((r) => String(r.text).startsWith('глянь сюда'));
+      const want = /^глянь сюда\n\nК этим сообщениям:\n\n> \*\*shop → dima\*\* · \d{4}-\d\d-\d\d \d\d:\d\d · DONE\n> цитата раз\n\n> \*\*dima → shop\*\* · \d{4}-\d\d-\d\d \d\d:\d\d · QUESTION\n> цитата два\n> вторая строка$/;
+      const clearedAfterSend = (await page.locator('#marked').isHidden()) && (await page.locator('#refsChip').isHidden()) && (await page.locator('.msg.picked').count()) === 0;
+
+      await one.locator('.text').click();
+      await page.click('#refsChip button');
+      const offKeepsMark = (await page.locator('#refsChip').isHidden()) && (await page.locator('#marked').isVisible());
+      await page.fill('#text', 'без цитат');
+      await page.press('#text', 'Enter');
+      await page.locator('.msg .text', { hasText: 'без цитат' }).waitFor();
+      const plain = journalRecords().find((r) => r.text === 'без цитат');
+      const markStays = await page.locator('.msg.picked').count();
+      await page.keyboard.press('Escape');
+
+      const refused = await page.evaluate(() => post('/api/send', { to: document.getElementById('to').value, type: 'TASK', text: 'x', refs: ['нет-такого'] }).then(() => 'ушло', (e) => e.message));
+      return [chipBefore && chip === 'К выделенным: 2' && Boolean(sent) && want.test(sent.text) && clearedAfterSend && offKeepsMark && Boolean(plain) && markStays === 1 && refused === 'Выделенное сообщение уже удалено — обнови выделение.',
+        JSON.stringify({ chipBefore, chip, sent: sent && sent.text, clearedAfterSend, offKeepsMark, plain: Boolean(plain), markStays, refused })];
+    });
+
     await scenario('E21 диалоги: «Очистить всё» больше нет; у выбранного агента вкладки над лентой, «+» открывает пустой диалог, отправка уходит в него с d, агент в history видит только его; клик по первой вкладке возвращает старую переписку', async () => {
       await unpick();
       const clearGone = (await page.locator('#clear').count()) === 0 && (await page.locator('#dialogTabs').isHidden());
@@ -715,7 +751,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const second = page.locator('#dialogTabs .tab', { hasText: 'в новом диалоге' });
       await second.locator('.close').click();
       await second.waitFor({ state: 'detached', timeout: 10000 });
-      const closedNote = await page.locator('#result').textContent();
+      const closedNote = await resultWith('закрыт');
       const keptInJournal = read(journal).includes('в новом диалоге');
       const counter = await page.locator('#dialogHistoryBtn small').textContent();
       bus(shop, ['--as', 'masha', 'send', 'shop', 'done', 'ответ в закрытый'], quiet);
@@ -739,7 +775,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       page.once('dialog', (d) => d.accept());
       await row.locator('button.danger').click();
       await row.waitFor({ state: 'detached', timeout: 10000 });
-      const result = await page.locator('#result').textContent();
+      const result = await resultWith('удалён');
       const noHistory = (await page.locator('#dialogHistoryBtn').count()) === 0 && (await page.locator('#dialogHistory').isHidden());
       bus(shop, ['--as', 'masha', 'send', 'shop', 'done', 'ответ после удаления'], quiet);
       await page.locator('.msg .text', { hasText: 'ответ после удаления' }).waitFor();
@@ -1343,6 +1379,84 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         && ru.startsWith('ru | Отправить | EN | черновик не теряется | ru | ') && ru.includes('просьба сделать') && serverRu === 'Такого агента в шине нет.' && presetRu === 'каждый день в …|каждый день в …|понедельник'
         && ruAfterReload.trim() === 'Отправить' && enAfterReload.trim() === 'Send' && !pageErrors.length;
       return [ok, JSON.stringify({ startEn, leftEn, panelEn, serverEn, describeEn, presetEn, ru, serverRu, presetRu, ruAfterReload, enAfterReload, pageErrors })];
+    });
+
+    await scenario('E47 видеофон: сервер отдаёт только ролики из assets/bg и режет их по Range; в ⚙ плитки «Без видео» + ролики, выбор ставит видео сразу и переживает F5, «Без видео» возвращает пятна', async () => {
+      const bg = await (await rawContext({ viewport: { width: 1280, height: 800 } })).newPage();
+      const pageErrors = [];
+      bg.on('pageerror', (e) => pageErrors.push(e.message));
+      await bg.goto(url);
+      await bg.waitForSelector('.msg');
+      const server = await bg.evaluate(async () => {
+        const status = async (path, headers) => { const r = await fetch(path, { headers }); return `${r.status} ${r.headers.get('content-range') || ''}`.trim(); };
+        return {
+          list: (await (await fetch('/api/bg')).json()).items.join(','),
+          range: await status('/bg/2.mp4', { Range: 'bytes=0-99' }),
+          past: await status('/bg/2.mp4', { Range: 'bytes=999999999-' }),
+          foreign: [await status('/bg/10.mp4'), await status('/bg/..%2F2.mp4'), await status('/bg/2.mp4.bak')].join(','),
+        };
+      });
+      // Chromium из Playwright может не уметь H.264: тогда ролик не грузится, и страница обязана тихо вернуться к пятнам
+      const h264 = await bg.evaluate(() => document.createElement('video').canPlayType('video/mp4; codecs="avc1.42E01E"') !== '');
+      await bg.click('#settingsBtn');
+      await bg.waitForSelector('.bg-opt input[value="2"]');
+      const tiles = await bg.evaluate(() => [...document.querySelectorAll('#bgGrid input')].map((i) => i.value + (i.checked ? '*' : '')).join(','));
+      await bg.click('.bg-opt:has(input[value="2"])');
+      const videoOn = () => bg.evaluate(() => ({ has: document.documentElement.classList.contains('has-video'), on: [...document.querySelectorAll('#bgVideo video.on')].map((v) => v.getAttribute('src')).join(',') }));
+      const settle = async (want) => { for (let i = 0; i < 40 && (await videoOn()).has !== want; i++) await wait(100); await wait(1000); return videoOn(); };
+      const picked = await settle(h264);
+      const saved = await bg.evaluate(() => localStorage.getItem('bus-bg'));
+      await bg.reload();
+      await bg.waitForSelector('.msg');
+      const reloaded = await settle(h264);
+      await bg.click('#settingsBtn');
+      await bg.waitForSelector('.bg-opt input[value="0"]');
+      const checkedAfterReload = await bg.evaluate(() => document.querySelector('#bgGrid input:checked').value);
+      await bg.click('.bg-opt:has(input[value="0"])');
+      const off = await settle(false);
+      const offSaved = await bg.evaluate(() => localStorage.getItem('bus-bg'));
+      await bg.close();
+      const want = h264 ? { has: true, on: '/bg/2.mp4' } : { has: false, on: '' };
+      const ok = server.list === '2,3,5,6,7,9' && server.range === '206 bytes 0-99/816705' && server.past === '416 bytes */816705' && server.foreign === '404,404,404'
+        && tiles === '0,2,3,5,6*,7,9' && saved === (h264 ? '2' : '0') && JSON.stringify(picked) === JSON.stringify(want) && JSON.stringify(reloaded) === JSON.stringify(want)
+        && checkedAfterReload === (h264 ? '2' : '0') && JSON.stringify(off) === JSON.stringify({ has: false, on: '' }) && offSaved === '0' && !pageErrors.length;
+      return [ok, JSON.stringify({ server, h264, tiles, picked, saved, reloaded, checkedAfterReload, off, offSaved, pageErrors })];
+    });
+
+    await scenario('E47a затемнение: ползунок в ⚙ виден только с видеофоном, двигает плотность стекла сразу, переживает F5; по умолчанию 40 %, «↺ по умолчанию» возвращает его и чистит localStorage', async () => {
+      const bg = await (await rawContext({ viewport: { width: 1280, height: 800 } })).newPage();
+      const pageErrors = [];
+      bg.on('pageerror', (e) => pageErrors.push(e.message));
+      await bg.goto(url);
+      await bg.waitForSelector('.msg');
+      await wait(1500); // ролик по умолчанию успел загрузиться или откатиться к пятнам
+      await bg.click('#settingsBtn');
+      await bg.waitForSelector('.bg-opt');
+      const state = () => bg.evaluate(() => ({
+        video: document.documentElement.classList.contains('has-video'),
+        shown: !document.querySelector('#bgDimWrap').hidden,
+        dim: getComputedStyle(document.documentElement).getPropertyValue('--dim').trim(),
+        out: document.querySelector('#bgDimValue').textContent,
+        reset: !document.querySelector('#bgDimReset').hidden,
+        saved: localStorage.getItem('bus-dim'),
+        alpha: getComputedStyle(document.querySelector('.top')).backgroundColor.match(/\/ ([\d.]+)\)$/)?.[1] || '',
+      }));
+      const before = await state();
+      await bg.evaluate(() => { const i = document.querySelector('#bgDim'); i.value = 60; i.dispatchEvent(new Event('input')); });
+      const moved = await state();
+      await bg.reload();
+      await bg.waitForSelector('.msg');
+      await wait(1500);
+      const reloaded = await state();
+      await bg.click('#settingsBtn');
+      if (reloaded.shown) await bg.click('#bgDimReset');
+      else await bg.evaluate(() => document.querySelector('#bgDimReset').click());
+      const reset = await state();
+      await bg.close();
+      const ok = before.shown === before.video && before.dim.startsWith('0.615') && before.out === '40 %' && (!before.video || before.alpha === '0.4') && !before.reset && before.saved === null
+        && moved.dim.startsWith('0.923') && moved.out === '60 %' && moved.reset && moved.saved === '60' && (!moved.video || moved.alpha === '0.6')
+        && reloaded.dim === moved.dim && reloaded.out === '60 %' && reset.dim.startsWith('0.615') && !reset.reset && reset.saved === null && !pageErrors.length;
+      return [ok, JSON.stringify({ before, moved, reloaded, reset, pageErrors })];
     });
 
     await scenario('E16 сервер погас: над лентой встаёт красная полоса с тем, как поднять его заново', async () => {
