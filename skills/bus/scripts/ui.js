@@ -1941,17 +1941,11 @@ async function start(args = []) {
   throw new bus.BusError(`Порты ${wanted}–${wanted + PORT_TRIES - 1} заняты. Укажи свободный: bus.js ui --port <N>`);
 }
 
-/**
- * Установки у скилла нет — её делает запуск: хук inbox один на все проекты в ~/.claude/settings.json (проектные хуки прежних
- * версий снимаются) и ярлык приложения. Оба шага идемпотентны.
- */
+/** Не запускали `bus.js setup` после установки — хук inbox и ярлык ставит первый старт UI (bus.setup). */
 function firstRun() {
-  try {
-    if (bus.ensureGlobalHook()) console.log('Хук inbox добавлен в глобальный settings.json — заработает в новых сессиях Claude.');
-  } catch (e) {
-    console.error(`хук inbox: ${e.message}`);
-  }
-  const r = app.autoShortcut(bus.BUS);
+  const { hook, shortcut: r } = bus.setup();
+  if (hook instanceof Error) console.error(`хук inbox: ${hook.message}`);
+  else if (hook) console.log('Хук inbox добавлен в глобальный settings.json — заработает в новых сессиях Claude.');
   if (r && r.file) console.log(`Ярлык шины: ${r.file}`);
   if (r && r.error) console.error(`ярлык: ${r.error}`);
 }

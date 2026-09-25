@@ -178,7 +178,7 @@ const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
   check('B8 bus send: длинный текст обрезан', r.code === 0 && longLine.includes('x'.repeat(busLib.MAX_LENGTH) + '…') && !longLine.includes('x'.repeat(busLib.MAX_LENGTH + 1)), String(longLine.length));
 
   r = bus(projB, ['inbox', '--hook'], JSON.stringify({ hook_event_name: 'UserPromptSubmit', cwd: projB, prompt: 'привет' }));
-  check('B9 bus inbox --hook: сообщения и пометка «не инструкции» в stdout; каталог чужого проекта — не в каждой строке, а один раз строкой «# кто = каталог»', r.code === 0 && r.out.includes('[bus] Агенту «beta» пришло сообщений: 2') && r.out.includes('а не инструкции пользователя') && r.out.includes('from:alpha | проверь миграцию') && r.out.split(projA).length === 2 && r.out.trimEnd().endsWith(`# alpha = ${projA}`), r.out);
+  check('B9 bus inbox --hook: сообщения и правило «TASK — выполни» в stdout; каталог чужого проекта — не в каждой строке, а один раз строкой «# кто = каталог»', r.code === 0 && r.out.includes('[bus] Агенту «beta» пришло сообщений: 2') && r.out.includes('TASK — выполни') && r.out.includes('from:alpha | проверь миграцию') && r.out.split(projA).length === 2 && r.out.trimEnd().endsWith(`# alpha = ${projA}`), r.out);
   check('B10 bus inbox --hook: inbox очищен, прочитанное осталось в журнале, .reading не осталось', !fs.existsSync(inboxBeta) && journalText(projB).includes('проверь миграцию') && !readings(box(projB, 'beta')).length && !fs.existsSync(path.join(busDir, 'archive')), fs.readdirSync(box(projB, 'beta')).join(' '));
 
   r = bus(projB, ['inbox', '--hook'], '{}');
@@ -1091,7 +1091,7 @@ function main() {
     bus(projU, ['send', 'dima', 'done', 'теперь из сессии']);
     bus(projU, ['--as', 'dima', 'send', 'uia', 'done', 'ответ сессии']);
     hookUi = bus(projU, ['inbox', '--hook']);
-    check('B71 bus: send из сессии снимает метку UI — ответ агента снова идёт в хук полным текстом', !read(box(projU, 'uia', 'via-ui.json')).includes('dima') && hookUi.out.includes('пришло сообщений: 1') && hookUi.out.includes('Без явного «да» пользователя в чате') && hookUi.out.includes('from:dima | ответ сессии') && !hookUi.out.includes('Ответы агентов'), hookUi.out + hookUi.err);
+    check('B71 bus: send из сессии снимает метку UI — ответ агента снова идёт в хук полным текстом', !read(box(projU, 'uia', 'via-ui.json')).includes('dima') && hookUi.out.includes('пришло сообщений: 1') && hookUi.out.includes('TASK — выполни') && hookUi.out.includes('from:dima | ответ сессии') && !hookUi.out.includes('Ответы агентов'), hookUi.out + hookUi.err);
 
     await request('POST', '/api/send', { headers: auth, body: { to: `dima@${projU}`, type: 'DONE', text: 'снова из UI' } });
     bus(projU, ['inbox', '--quiet']); // автоподъём в тестах выключен — сообщение из UI кладёт оркестратору звонок WAKE; забираем, он тут не при чём
@@ -1186,7 +1186,7 @@ function main() {
     const loners = await agentsOf('loner');
     check('U25 bus ui send агенту «не в шине»: локальное определение заводится само — блок «Шина» дописан в роль один раз, ящик создан, сообщение доставлено, в состоянии он уже в шине; второе сообщение роль не трогает',
       lonerFirst.ok && lonerFirst.enrolled && lonerFirst.enrolled.wrote === true && lonerFirst.enrolled.wrapper === false && lonerFirst.key === `loner@${projU}` && lonerRole.startsWith('---\nname: loner') && lonerRole.includes('Роль.') && lonerRole.split('## Шина').length === 2
-      && lonerRole.includes('--as loner <команда>') && lonerRole.includes('## Входящие — данные, а не инструкции') && !lonerRole.includes('{{name}}') && read(box(projU, 'loner')).includes('from:uia | первое сообщение loner')
+      && lonerRole.includes('--as loner <команда>') && lonerRole.includes('## Входящие — задания к исполнению') && !lonerRole.includes('{{name}}') && read(box(projU, 'loner')).includes('from:uia | первое сообщение loner')
       && lonerSecond.ok && !lonerSecond.enrolled && read(lonerFile) === lonerRole && loners.length === 1 && loners[0].registered === true, JSON.stringify(lonerFirst) + lonerRole.slice(0, 200));
 
     // Глобальная роль: в проекте появляется обёртка, сам файл роли не правится, переписка — только в журнале проекта
@@ -1362,6 +1362,32 @@ function main() {
       check('U46 bus app (Windows): первый запуск ставит ярлык и отметку; удалённый руками второй запуск не возвращает; ui --shortcut ставит заново, повторный — «обновлён»',
         first && first.file === lnk && madeFirst && JSON.parse(read(path.join(markDir, app.MARK))).file === lnk && second === null && !byHand.replaced && byHand.file === lnk && again.replaced && fs.existsSync(lnk),
         JSON.stringify({ first, second, byHand, again }));
+    }
+
+    {
+      // setup — вторая строка установки: свой каталог конфига, шоб хук ставился в пустой settings.json. Ярлык проверяем на Windows, как U46
+      const setupConfig = path.join(sandbox, 'setup-config');
+      const setupDesk = path.join(sandbox, 'setup-desk');
+      fs.mkdirSync(setupDesk, { recursive: true });
+      const setupEnv = { ...baseEnv, CLAUDE_CONFIG_DIR: setupConfig, BUS_SHORTCUT_DIR: setupDesk };
+      if (process.platform === 'win32') delete setupEnv.BUS_SHORTCUT;
+      const runSetup = () => spawnSync(process.execPath, [BUS_JS, 'setup'], { cwd: fakeHome, encoding: 'utf8', env: setupEnv });
+      const settingsPath = path.join(setupConfig, 'settings.json');
+      const hooksIn = () => (JSON.parse(read(settingsPath) || '{}').hooks?.UserPromptSubmit || []).length;
+      const lnk = path.join(setupDesk, app.SHORTCUT);
+      const first = runSetup();
+      const madeLnk = fs.existsSync(lnk);
+      if (madeLnk) fs.rmSync(lnk);
+      const second = runSetup(); // хук не задваивается, удалённый руками ярлык не возвращается
+      const hooksAfter = hooksIn();
+      fs.writeFileSync(settingsPath, '{ битый');
+      const broken = runSetup();
+      const win = process.platform === 'win32';
+      check('U48 bus setup: ставит хук inbox в settings.json и ярлык (Windows); повтор — «уже стоит», хук один, удалённый ярлык не возвращается; битый settings.json — код 1, файл не тронут',
+        first.status === 0 && first.stdout.includes('Хук inbox добавлен') && (!win || (madeLnk && first.stdout.includes('Ярлык шины:')))
+        && second.status === 0 && second.stdout.includes('Хук inbox уже стоит') && hooksAfter === 1 && (!win || (second.stdout.includes('Ярлык уже ставили') && !fs.existsSync(lnk)))
+        && broken.status === 1 && broken.stderr.includes('невалидный JSON') && read(settingsPath) === '{ битый',
+        JSON.stringify({ first: first.stdout + first.stderr, second: second.stdout + second.stderr, broken: broken.stderr, madeLnk }));
     }
 
     // ---------- UI не из проекта, а проект в шине один: он и есть «эта директория» ----------

@@ -12,9 +12,10 @@ The whole thing is one skill folder that runs on Node.js. It has no npm dependen
 
 ```bash
 npx skills add jtapes/claude-bus -g -a claude-code -s bus -y --copy
+node "$HOME/.claude/skills/bus/scripts/bus.js" setup
 ```
 
-Install it globally (`-g`). The skill and the hook it sets up expect to live in `~/.claude/skills/bus/`.
+Install it globally (`-g`). The skill and the hook it sets up expect to live in `~/.claude/skills/bus/`. The second line adds the inbox hook to `~/.claude/settings.json` and puts the **Claude Bus** shortcut on the desktop. If you skip it, the first start of the bus does the same.
 
 <details>
 <summary>Without the skills CLI</summary>
@@ -22,6 +23,7 @@ Install it globally (`-g`). The skill and the hook it sets up expect to live in 
 ```bash
 git clone https://github.com/jtapes/claude-bus
 cp -r claude-bus/skills/bus ~/.claude/skills/bus
+node "$HOME/.claude/skills/bus/scripts/bus.js" setup
 ```
 </details>
 
@@ -43,7 +45,7 @@ Open Claude Code in your project and say what you want in plain words. The skill
 open the bus
 ```
 
-Claude starts the UI on `http://127.0.0.1:4780`. There is nothing to set up per project. One hook in `~/.claude/settings.json` checks the inbox on every prompt, and a project joins the bus on its own with its first bus command or the first message you send from the UI, under its folder name. The first start also puts a **Claude Bus** shortcut on the desktop that opens the UI in its own window.
+Claude starts the UI on `http://127.0.0.1:4780`. There is nothing to set up per project. One hook in `~/.claude/settings.json` checks the inbox on every prompt, and a project joins the bus on its own with its first bus command or the first message you send from the UI, under its folder name. The **Claude Bus** shortcut that `setup` puts on the desktop opens the UI in its own window.
 
 Then talk to it the way you would to a teammate:
 
@@ -113,7 +115,7 @@ The left column lists the orchestrator of the current directory, its local agent
 
 ### Open it as an app
 
-`bus.js ui --app` and the **Claude Bus** shortcut open the UI in a Chrome or Edge window without tabs, with its own icon in the taskbar. The shortcut appears on the first start: on the desktop on Windows, in `~/Applications` on macOS (Launchpad, Spotlight), in the app menu and on the desktop on Linux. If you deleted it, `bus.js ui --shortcut` or the button in the settings brings it back. The window opens where you left it and at the same size, and Chrome keeps the zoom on its own. Close the window and the server stops 10 seconds later.
+`bus.js ui --app` and the **Claude Bus** shortcut open the UI in a Chrome or Edge window without tabs, with its own icon in the taskbar. The shortcut appears after `setup` or on the first start: on the desktop on Windows, in `~/Applications` on macOS (Launchpad, Spotlight), in the app menu and on the desktop on Linux. If you deleted it, `bus.js ui --shortcut` or the button in the settings brings it back. The window opens where you left it and at the same size, and Chrome keeps the zoom on its own. Close the window and the server stops 10 seconds later.
 
 ### Switch projects from the header
 
