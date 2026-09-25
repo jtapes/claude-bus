@@ -39,6 +39,12 @@ const LOCK = path.join(BUS, 'agents.lock');
 // Тип — это команда шине, а не наклейка: новый заводится только вместе с новым if в этом файле, остальное пишется словами в тексте
 const TYPES = ['TASK', 'QUESTION', 'DONE'];
 const ASK_TYPES = ['TASK', 'QUESTION']; // ждут ответа: отправитель-субагент получает метку ожидания. Будит получателя-субагента любой тип
+const RUN_ENV = /^([a-z0-9][a-z0-9-]{0,30}):([0-9a-z]{4,20}-[0-9a-z]{2,10})$/; // BUS_RUN «агент:id» — ставит раннер wake.js фоновому claude
+/** id фонового запуска, из которого пишет этот агент: по нему UI подписывает расход токенов на сообщении. Чужое имя в BUS_RUN — не его запуск. */
+function runOf(from) {
+  const m = RUN_ENV.exec(process.env.BUS_RUN || '');
+  return m && isSubagent(from) && m[1] === from.name ? m[2] : '';
+}
 const NAME = /^[a-z0-9][a-z0-9-]{0,30}$/;
 const RESERVED = ['files', 'scheduler', 'schedule', 'clear']; // служебные папки .claude/bus/ и отправитель отчётов расписания — ящик агента лёг бы поверх; clear — «history clear» снёс бы журнал вместо показа переписки с таким агентом
 const settings = require('./settings.js');
@@ -59,6 +65,7 @@ const SECRET_FILE = /^(\.env(\..*)?|.*\.pem|id_rsa.*)$/i;
 // Без абсолютного пути: конфиг переносится между машинами. ${CLAUDE_CONFIG_DIR:-...} — на случай,
 // когда каталог конфига переопределён: путь в хуке должен совпадать с CONFIG_DIR выше.
 const HOOK_COMMAND = 'node "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/bus/scripts/bus.js" inbox --hook';
+const ORCHESTRATOR_HOOK_COMMAND = 'node "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/bus/scripts/bus.js" orchestrator --hook';
 const HOOK_MARK = 'skills/bus/scripts/bus.js';
 
 const USAGE = `Использование: node bus.js [--as <имя>] <команда>
@@ -73,6 +80,8 @@ const USAGE = `Использование: node bus.js [--as <имя>] <кома
   autowake [on|off]           автоподъём субагентов в фоне (claude -p --agent): состояние, включить, выключить
   settings [get <ключ> | set <ключ> <значение> | reset [ключ]]   настройки проекта: лимиты подъёма, сообщений, расписания; менять — только оркестратор
                               agent.promptGlobal / agent.prompt — твой текст всем субагентам (всех проектов / этого); многострочный — set <ключ> - <<'EOF' … EOF
+                              orchestrator.* — роль оркестратора: prompt, model, effort, fast (всех проектов), project* — свои этого проекта
+  orchestrator                что получит сессия проекта: модель, effort, fast (в .claude/settings.local.json) и промпт (хук SessionStart)
   stop <имя>                  остановить субагента, работающего в фоне (завис, ушёл не туда); только оркестратор
   resume <имя>                продолжить остановленного или упавшего субагента в той же сессии claude; только оркестратор
   files [prune <дней>] [--global]   вложения каталога (--global — домашней шины): сколько и мегабайт; prune — удалить старше N дней
@@ -88,7 +97,7 @@ const USAGE = `Использование: node bus.js [--as <имя>] <кома
 --as <имя> — действовать от имени локального или глобального агента; без флага «я» — проект по текущему каталогу.
 Тип обязателен: ${TYPES.join(', ')}; любой поднимает получателя-субагента`;
 
-const COMMANDS = 'send, broadcast, inbox, history, tokens, agents, ui, stop, resume, init, add, remove, log, files, autowake, settings, schedule, setup';
+const COMMANDS = 'send, broadcast, inbox, history, tokens, agents, ui, stop, resume, init, add, remove, log, files, autowake, settings, orchestrator, schedule, setup';
 
 class BusError extends Error {}
 
@@ -227,15 +236,25 @@ function readSettings(file) {
   }
 }
 
+// Хуки шины: входящие — на каждый промпт, роль оркестратора — на старте сессии, после /clear и сжатия (resume — она уже в истории)
+const HOOKS = [
+  { event: 'UserPromptSubmit', group: { hooks: [{ type: 'command', command: HOOK_COMMAND, shell: 'bash', timeout: 5 }] } },
+  { event: 'SessionStart', group: { matcher: 'startup|clear|compact', hooks: [{ type: 'command', command: ORCHESTRATOR_HOOK_COMMAND, shell: 'bash', timeout: 5 }] } },
+];
+
+/** Недостающие хуки шины — в файл настроек. → true, если что-то дописано. */
 function installHook(file) {
   const settings = readSettings(file);
   settings.hooks = settings.hooks || {};
-  const groups = settings.hooks.UserPromptSubmit || [];
-  if (!Array.isArray(groups)) throw new BusError(`Не трогаю ${file}: hooks.UserPromptSubmit — не массив.`);
-  if (groups.some(isBusHook)) return false;
-
-  groups.push({ hooks: [{ type: 'command', command: HOOK_COMMAND, shell: 'bash', timeout: 5 }] });
-  settings.hooks.UserPromptSubmit = groups;
+  let added = false;
+  for (const { event, group } of HOOKS) {
+    const groups = settings.hooks[event] || [];
+    if (!Array.isArray(groups)) throw new BusError(`Не трогаю ${file}: hooks.${event} — не массив.`);
+    if (groups.some(isBusHook)) continue;
+    settings.hooks[event] = [...groups, group];
+    added = true;
+  }
+  if (!added) return false;
   // Атомарно: это settings.json самого Claude — оборванный посреди записи, он сломал бы конфиг целиком
   writeAtomic(file, JSON.stringify(settings, null, 2) + '\n');
   return true;
@@ -293,7 +312,7 @@ function setupCommand() {
   if (hook instanceof Error) {
     console.error(`Хук inbox не поставлен: ${hook.message}`);
     process.exitCode = 1;
-  } else console.log(hook ? `Хук inbox добавлен в ${GLOBAL_SETTINGS} — заработает в новых сессиях Claude.` : `Хук inbox уже стоит в ${GLOBAL_SETTINGS}.`);
+  } else console.log(hook ? `Хуки шины (inbox, роль оркестратора) добавлены в ${GLOBAL_SETTINGS} — заработают в новых сессиях Claude.` : `Хуки шины уже стоят в ${GLOBAL_SETTINGS}.`);
   if (shortcut && shortcut.file) console.log(`Ярлык шины: ${shortcut.file} — открывает UI отдельным окном.`);
   else if (shortcut && shortcut.error) console.error(`Ярлык не поставлен: ${shortcut.error}. Повторить — bus.js ui --shortcut`);
   else if (fs.existsSync(path.join(BUS, require('./app.js').MARK))) console.log('Ярлык уже ставили; удалённый вернёт bus.js ui --shortcut.');
@@ -301,20 +320,143 @@ function setupCommand() {
 
 /**
  * Переписка личная: .claude/bus/ — в .git/info/exclude репозитория, .gitignore проекта не трогаем.
- * Уже игнорируется или не git — ничего. → true, если строка дописана.
+ * Уже игнорируется или не git — ничего. rel — что исключить, от корня проекта; probe — файл внутри для check-ignore. → true, если строка дописана.
  */
-function excludeLocal(root) {
+function excludeLocal(root, rel = '.claude/bus/', probe = path.join('.claude', 'bus', 'inbox.md')) {
   const { spawnSync } = require('child_process');
   const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true });
-  if (git('check-ignore', '-q', path.join('.claude', 'bus', 'inbox.md')).status !== 1) return false; // 0 — уже, 128 — не git или git нет
+  if (git('check-ignore', '-q', probe).status !== 1) return false; // 0 — уже, 128 — не git или git нет
   const prefix = git('rev-parse', '--show-prefix');
   const where = git('rev-parse', '--git-path', 'info/exclude');
   if (prefix.status !== 0 || where.status !== 0) return false;
   const file = path.resolve(root, where.stdout.trim());
   const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.appendFileSync(file, `${text && !text.endsWith('\n') ? '\n' : ''}/${prefix.stdout.trim()}.claude/bus/\n`);
+  fs.appendFileSync(file, `${text && !text.endsWith('\n') ? '\n' : ''}/${prefix.stdout.trim()}${rel}\n`);
   return true;
+}
+
+// ---------- оркестратор: модель, effort, fast и промпт ----------
+
+// Поле итога settings.orchestrator() → ключ в .claude/settings.local.json проекта (его читает любая сессия claude в каталоге)
+const ORCHESTRATOR_KEYS = [['model', 'model'], ['effort', 'effortLevel'], ['fast', 'fastMode']];
+const appliedFile = (me) => path.join(me.box, 'orchestrator-applied.json');
+
+/**
+ * Модель, effort и fast оркестратора → .claude/settings.local.json проекта. Что писала шина, помнит <ящик>/orchestrator-applied.json:
+ * значение в шине сняли — ключ уходит из файла, только если там всё ещё записанное шиной (своё пользователя не трогаем).
+ * Зовут: сохранение в карандаше и шестерёнке, подключение проекта, хук SessionStart. Битый settings.local.json — BusError, файл цел.
+ * → итог settings.orchestrator() или null (каталог не в шине).
+ */
+function syncOrchestrator(root, values = settings.get(root)) {
+  const me = orchestratorOf(root);
+  if (!me) return null;
+  const want = settings.orchestrator(root, values);
+  const file = settingsFile(me.root);
+  const had = fs.existsSync(file);
+  const data = readSettings(file);
+  const applied = readJson(appliedFile(me), {}) || {};
+  const next = {};
+  let changed = false;
+  for (const [field, key] of ORCHESTRATOR_KEYS) {
+    const value = want[field];
+    if (value !== null && value !== '') {
+      if (data[key] !== value) changed = true;
+      data[key] = next[key] = value;
+    } else if (key in applied && key in data && data[key] === applied[key]) {
+      delete data[key];
+      changed = true;
+    }
+  }
+  if (changed) {
+    if (Object.keys(data).length) writeAtomic(file, JSON.stringify(data, null, 2) + '\n');
+    else if (had) fs.unlinkSync(file);
+    if (!had) excludeLocal(me.root, '.claude/settings.local.json', path.join('.claude', 'settings.local.json'));
+  }
+  if (JSON.stringify(next) !== JSON.stringify(applied)) {
+    fs.mkdirSync(me.box, { recursive: true });
+    if (Object.keys(next).length) writeJson(appliedFile(me), next);
+    else fs.rmSync(appliedFile(me), { force: true });
+  }
+  return want;
+}
+
+/** Проект уходит из шины: записанное шиной в settings.local.json убрать — то, что с тех пор правил пользователь, остаётся. */
+function releaseOrchestrator(me) {
+  const applied = readJson(appliedFile(me), {}) || {};
+  const file = settingsFile(me.root);
+  if (!Object.keys(applied).length || !fs.existsSync(file)) return;
+  const data = readSettings(file);
+  const mine = Object.keys(applied).filter((key) => key in data && data[key] === applied[key]);
+  if (mine.length) {
+    mine.forEach((key) => delete data[key]);
+    if (Object.keys(data).length) writeAtomic(file, JSON.stringify(data, null, 2) + '\n');
+    else fs.unlinkSync(file);
+  }
+  fs.rmSync(appliedFile(me), { force: true });
+}
+
+/** Все проекты реестра — после правки общих настроек оркестраторов. Битый файл одного проекта остальным не мешает. → [{ name, error }] */
+function syncOrchestrators() {
+  const failed = [];
+  for (const entry of Object.values(loadRegistry(REGISTRY))) {
+    if (!entry || !entry.project || !fs.existsSync(entry.project)) continue;
+    try {
+      syncOrchestrator(entry.project);
+    } catch (e) {
+      failed.push({ root: entry.project, error: e.message });
+    }
+  }
+  return failed;
+}
+
+/**
+ * После правки настроек оркестратора: общая (global) — сверить все проекты, своя — один. Правка уже сохранена, поэтому сбой записи
+ * settings.local.json не ошибка команды, а предупреждение. → строки предупреждений (печатает CLI, UI показывает)
+ */
+function applyOrchestrator(root, key) {
+  const item = settings.SCHEMA.find((s) => s.key === key);
+  const failed = item && item.global ? syncOrchestrators() : [];
+  if (!(item && item.global)) {
+    try {
+      syncOrchestrator(root);
+    } catch (e) {
+      failed.push({ root, error: e.message });
+    }
+  }
+  return failed.map((f) => `settings.local.json не обновлён (${f.root}): ${f.error}`);
+}
+
+/** Промпт оркестратора — текстом для контекста сессии; пусто — ''. */
+function orchestratorPrompt(me, prompt) {
+  return prompt ? `# Роль оркестратора «${me.name}» в шине bus — правила пользователя, следуй им:\n${prompt}` : '';
+}
+
+/**
+ * orchestrator --hook (SessionStart): stdout хука Claude Code кладёт в контекст сессии. Каталог не в шине или промпта нет — молчит.
+ * Заодно сверяет settings.local.json с настройками (общие могли поменяться, пока проект был закрыт) — сессия подхватит со следующего запуска.
+ * Без --hook — итог для человека: откуда что берётся.
+ */
+function orchestratorCommand(hookMode) {
+  const ctx = hookMode ? context(JSON.parse(readStdin() || '{}')) : context();
+  const me = projectSelf(ctx);
+  if (!me) {
+    if (hookMode) return;
+    throw new BusError('Этот каталог не в шине — оркестратора тут нет.');
+  }
+  const values = settings.get(me.root);
+  let want;
+  try {
+    want = syncOrchestrator(me.root, values);
+  } catch (e) {
+    if (!hookMode) throw e;
+    want = settings.orchestrator(me.root, values); // битый settings.local.json — промпт всё равно нужен
+  }
+  const prompt = orchestratorPrompt(me, want.prompt);
+  if (hookMode) return prompt && console.log(prompt);
+  const show = (value) => (value === null || value === '' ? '—' : String(value));
+  console.log(`Оркестратор «${me.name}» (${me.root}): модель ${show(want.model)}, effort ${show(want.effort)}, fast ${show(want.fast)} → ${settingsFile(me.root)}`);
+  console.log(prompt || 'Промпта нет: общий — настройка orchestrator.prompt, свой проекта — orchestrator.projectPrompt (или карандаш у оркестратора в UI).');
 }
 
 // ---------- определения субагентов ----------
@@ -420,7 +562,7 @@ const MCP_ALL = 'mcp:*'; // в denied формы: «mcp:*» — все серв�
 const MCP_RESOURCE_TOOLS = ['ListMcpResourcesTool', 'ReadMcpResourceTool', 'ReadMcpResourceDirTool']; // без серверов они ни к чему
 const MCP_SERVER = /^[A-Za-z0-9_.-]{1,64}$/;
 
-/** Строка disallowedTools → { denied, extra }: denied — ключи групп и «mcp:…», extra — шо дописано руками и в группы не легло; оно сохраняется дословно. */
+/** Строка disallowedTools → { denied, extra }: denied — ключи групп и «mcp:…», extra — что дописано руками и в группы не легло; оно сохраняется дословно. */
 function parseDenied(line) {
   const left = new Set(String(line || '').split(/,(?![^()]*\))/).map((t) => t.trim()).filter(Boolean));
   const denied = [];
@@ -538,7 +680,7 @@ function checkRole({ description, model, effort = '', body, denied }) {
   const role = checkBody(body);
   // Описание в форме необязательно, а Claude Code без description определение не берёт — пустое заменяет первая строка роли
   const about = description.replace(/\s+/g, ' ').trim() || firstRoleLine(role);
-  if (!about) throw new BusError('Пустое описание, и в роли нет строки с текстом, шобы взять его оттуда.');
+  if (!about) throw new BusError('Пустое описание, и в роли нет строки с текстом, чтобы взять его оттуда.');
   return { description: about, model: model.trim(), effort, body: role, denied: checkDenied(denied) };
 }
 
@@ -660,7 +802,7 @@ const cut = (text, max = MAX_LENGTH) => (text.length > max ? text.slice(0, max) 
 /**
  * Текст сообщения: секреты режутся, переносы строк остаются — лента UI рендерит markdown. Отступ в начале строки живёт (до 8 пробелов:
  * вложенные списки, код), остальной whitespace внутри строки — один пробел, пустых строк подряд — не больше одной.
- * Настоящие переносы едут только в журнал (JSON экранирует их сам). Всё, шо пишется строкой, идёт через escapeBreaks() или oneLine().
+ * Настоящие переносы едут только в журнал (JSON экранирует их сам). Всё, что пишется строкой, идёт через escapeBreaks() или oneLine().
  */
 function clean(text, max = MAX_LENGTH) {
   const { redact } = require('./lib/redact.js');
@@ -857,7 +999,8 @@ function deliver(from, to, type, text, attachments = [], { ui = false, btw = fal
   const learns = evolve && isSubagent(to);
   if (learns) require('./wake.js').setEvolve(to.box, { id, from: from.name, role: roleFileOf(to), journal: busDirOf(to) });
 
-  journalAppend(from, to, { id, t: stamp(), from: from.name, fk: KIND_CODE[from.kind], to: to.name, tk: KIND_CODE[to.kind], type, text, ...(d ? { d } : {}), ...(files.length ? { files } : {}), ...(ui ? { ui: true } : {}), ...(injected ? { btw: true } : {}), ...(learns ? { evolve: true } : {}) }, 'fr', 'tr');
+  const run = runOf(from);
+  journalAppend(from, to, { id, t: stamp(), from: from.name, fk: KIND_CODE[from.kind], to: to.name, tk: KIND_CODE[to.kind], type, text, ...(d ? { d } : {}), ...(run ? { run } : {}), ...(files.length ? { files } : {}), ...(ui ? { ui: true } : {}), ...(injected ? { btw: true } : {}), ...(learns ? { evolve: true } : {}) }, 'fr', 'tr');
   appendRotating(AUDIT, `${stamp()} | ${from.name} -> ${to.name} | ${type}${injected ? ' btw' : ''} | ${text.replace(/\s+/g, ' ').slice(0, AUDIT_LENGTH)}\n`, ROTATE_BYTES);
   return { id, btw: injected };
 }
@@ -879,7 +1022,7 @@ function newDialog(a, b) {
 
 /**
  * Сводка диалога пары: пользователь жмёт кнопку в UI, когда переписка разрослась. Сообщения остаются в журнале —
- * history просто перестаёт отдавать агенту всё, шо старше upto. Текст — одной строкой через oneLine():
+ * history просто перестаёт отдавать агенту всё, что старше upto. Текст — одной строкой через oneLine():
  * секреты режутся, а многострочной сводкой нельзя подделать «сообщение» в выводе history. Длина — не больше SUMMARY_LENGTH.
  */
 function writeSummary(a, b, upto, count, text, d = '') {
@@ -1008,6 +1151,11 @@ function init(name, dir, { quiet = false } = {}) {
   fs.appendFileSync(inboxFile(me), '');
   const added = ensureGlobalHook();
   const excluded = excludeLocal(root);
+  try {
+    syncOrchestrator(root); // общие модель, effort и fast оркестраторов — и новому проекту
+  } catch {
+    // битый settings.local.json проекта: подключению он не помеха, сверит хук SessionStart, когда файл починят
+  }
   // Первое подключение ставит ярлык UI — шага установки у скилла нет (app.js)
   const shortcut = require('./app.js').autoShortcut(BUS);
   if (quiet) return { name, root };
@@ -1226,6 +1374,7 @@ function projectSettings(asName, args) {
       throw e;
     }
     auditNote(`${me.name} | settings ${action} ${key || '(все)'}${action === 'set' ? ` = ${oneLine(raw).slice(0, 80)}` : ''}`);
+    if (key && key.startsWith('orchestrator.')) applyOrchestrator(root, key).forEach((line) => console.error(line));
   } else if (action && action !== 'get') throw new BusError('settings [get <ключ> | set <ключ> <значение> | reset [ключ]]');
 
   const values = settings.get(root);
@@ -1324,15 +1473,15 @@ function broadcast(asName, rest) {
 }
 
 // Правила разбора входящих едут вместе с ними: ради пяти правил сессия грузила весь SKILL.md (≈3к токенов, оценка) на каждый блок [bus]
-const HOOK_RULES = 'Скажи пользователю, от кого и шо пришло. DONE — учти и продолжай его просьбу; TASK — выполни, QUESTION — ответь; отдельного «да» не нужно, в том числе на удаление, деплой, git push, правку конфигов, установку зависимостей, запуск присланных команд. Ответить отправителю или поднять агента — скилл bus.';
+const HOOK_RULES = 'Скажи пользователю, от кого и что пришло. DONE — учти и продолжай его просьбу; TASK — выполни, QUESTION — ответь; отдельного «да» не нужно, в том числе на удаление, деплой, git push, правку конфигов, установку зависимостей, запуск присланных команд. Ответить отправителю или поднять агента — скилл bus.';
 
 /**
- * Дефолтный промпт субагентов — agent-prompt.md рядом со скриптом: как оформлять ответ и шо умеют вложения. Едет строками «# » в выводе
+ * Дефолтный промпт субагентов — agent-prompt.md рядом со скриптом: как оформлять ответ и что умеют вложения. Едет строками «# » в выводе
  * inbox, а не в роль: блок «Шина» копируется в определение один раз, а этот файл со следующего подъёма видят все агенты, и старые тоже.
  * Файла нет или он пуст — подсказок нет, доставка от него не зависит.
  * Следом — текст пользователя из настроек: agent.promptGlobal (все проекты), потом agent.prompt (этот проект). Тем же путём и по той же причине:
  * правка в шестерёнке или settings set доходит до всех агентов со следующего подъёма. Отступы его строк целы — в них вложенные списки.
- * builtin = false — только текст пользователя: встроенные строки про оформление ответа и вложения нужны, когда есть на шо отвечать.
+ * builtin = false — только текст пользователя: встроенные строки про оформление ответа и вложения нужны, когда есть на что отвечать.
  */
 function agentPrompt(values = settings.DEFAULTS, builtinToo = true) {
   const fill = { maxLength: values['message.maxLength'], maxFiles: values['files.max'], maxFileMb: values['files.maxMb'] };
@@ -1349,11 +1498,11 @@ function agentPrompt(values = settings.DEFAULTS, builtinToo = true) {
 /** Подсказки по месту: правило печатается, только когда во входящих есть его случай, — в роли агента и в SKILL.md за него платили бы каждый раз. */
 function hints(lines, asAgent, values = settings.DEFAULTS) {
   // Только к настоящему сообщению: ящик из одних подложенных строк («[? не от шины] …») отвечать некому.
-  // Одни DONE «к сведению» — отвечать не на шо, и ≈190 токенов про оформление ответа там мимо дела; правила пользователя едут всегда
+  // Одни DONE «к сведению» — отвечать не на что, и ≈190 токенов про оформление ответа там мимо дела; правила пользователя едут всегда
   const replying = lines.some((line) => /^\[(?:TASK|QUESTION) |^\[[A-Z]+ [^\]]* answer\] from:/.test(line));
   const out = asAgent && lines.some((line) => /^\[[A-Z]+ /.test(line)) ? agentPrompt(values, replying) : [];
   if (lines.some((line) => line.includes(' | файлы: '))) out.push('# файлы: путь после «| файлы:» — вложения к сообщению. Без них задачу не понять — открой Read-ом (картинки он тоже показывает); картинка стоит 1–1.5к токенов.');
-  // Заказчика в строке нет, когда агент спрашивал по своей воле или уточнял у самого заказчика, — ссылаться на «конец строки» тогда не на шо
+  // Заказчика в строке нет, когда агент спрашивал по своей воле или уточнял у самого заказчика, — ссылаться на «конец строки» тогда не на что
   const answers = asAgent ? lines.filter((line) => / answer\] from:/.test(line)) : [];
   if (answers.some((line) => line.includes(' | заказчик: '))) out.push('# тег answer — ответ на твой вопрос, в конце строки «заказчик: <имя> «его задача»»: доделай задачу и отправь итог DONE заказчику. Спрошенному на его DONE не отвечай.');
   if (answers.some((line) => !line.includes(' | заказчик: '))) out.push('# тег answer без «заказчик:» — ответ на твой вопрос: доделай задачу и отправь итог DONE тому, кто её ставил. Спрошенному на его DONE не отвечай.');
@@ -1490,7 +1639,7 @@ function history(asName, args) {
   const dirs = new Map(tail.filter((m) => m.dir).map((m) => [m.who, m.dir]));
   if (dirs.size) console.log(`# ${[...dirs].map(([who, dir]) => `${who} = ${dir}`).join('; ')}`);
   if (tail.length) console.log(tail.map((m) => historyLine(m, me.root)).join('\n'));
-  // Сколько этот вывод стоил контексту и сколько несжатого осталось за кадром — шоб было видно, когда диалог пора сжимать.
+  // Сколько этот вывод стоил контексту и сколько несжатого осталось за кадром — чтоб было видно, когда диалог пора сжимать.
   // Лёгкий диалог, показанный целиком, строку не получает: сжимать там нечего, а 25–30 токенов на каждый history — есть
   const L = weight();
   const unpacked = L.tokensOf(found.map((m) => m.r));
@@ -1517,7 +1666,7 @@ function tokens(asName, args) {
   if (!rows.length) return console.log(peer ? `Переписки с «${peer}» нет.` : 'История пуста.');
 
   rows.sort((a, b) => b.tokens + b.summary - (a.tokens + a.summary) || a.name.localeCompare(b.name));
-  console.log(`# вес переписки ${everyone ? 'каталога' : me.name} — оценка (символы/3); несжатое — то, шо отдаёт history`);
+  console.log(`# вес переписки ${everyone ? 'каталога' : me.name} — оценка (символы/3); несжатое — то, что отдаёт history`);
   for (const row of rows) {
     const packed = row.total - row.fresh;
     console.log(`${row.name}: ${row.total} сообщ.${packed ? `, в сводке ${packed}` : ''} · несжатых ${row.fresh} ≈${L.short(row.tokens)} ток.${row.summary ? ` · сводка ≈${L.short(row.summary)}` : ''}${row.tokens >= limits['ui.heavyTokens'] ? ' — пора сжать: UI → «Сжать диалог»' : ''}`);
@@ -1599,7 +1748,7 @@ function listAgents(asName) {
   const load = agentLoads(ctx);
   for (const n of names) {
     const a = describe(ctx, n);
-    // Вывод читает модель: без выравнивания, путь внутри каталога — относительный, счётчик и вес — только когда есть шо читать
+    // Вывод читает модель: без выравнивания, путь внутри каталога — относительный, счётчик и вес — только когда есть что читать
     const rel = path.relative(ctx.start, a.where);
     const where = rel.startsWith('..') || path.isAbsolute(rel) ? a.where : rel.split(path.sep).join('/') || '.';
     const count = unread(a);
@@ -1685,6 +1834,7 @@ function remove(name, force) {
         throw new BusError(`«${target.name}» — другой проект (${target.where}), его каталог на месте. Снять всё равно: bus.js remove ${target.name} --force`);
       }
       uninstallHook(target.where);
+      if (fs.existsSync(target.where)) releaseOrchestrator(target);
     }
 
     const left = drain(target).length;
@@ -1710,9 +1860,10 @@ function main(argv) {
   const asAt = argv.slice(0, 2).indexOf('--as');
   const asName = asAt >= 0 ? argv.splice(asAt, 2)[1] : null;
   const [command, ...args] = argv;
-  const hookMode = command === 'inbox' && args.includes('--hook');
-  // Фоновый подъём агента идёт в каталоге проекта, и хук проекта срабатывает в нём тоже — входящие оркестратора не его
-  if (hookMode && process.env.BUS_WAKE) return;
+  const hookMode = (command === 'inbox' || command === 'orchestrator') && args.includes('--hook');
+  // Фоновый подъём агента идёт в каталоге проекта, и хук проекта срабатывает в нём тоже — входящие и роль оркестратора не его.
+  // BUS_ORCHESTRATOR=1 — headless-задача расписания: она и есть оркестратор, роль ей нужна, а входящие — нет
+  if (hookMode && process.env.BUS_WAKE && !(command === 'orchestrator' && process.env.BUS_ORCHESTRATOR)) return;
   const fail = (e) => {
     // Хук не должен ни мешать промпту, ни шуметь: сообщения останутся в inbox до следующего раза
     if (hookMode) return;
@@ -1736,6 +1887,7 @@ function main(argv) {
     else if (command === 'files') files(asName, args);
     else if (command === 'autowake') autowake(asName, args[0]);
     else if (command === 'settings') projectSettings(asName, args);
+    else if (command === 'orchestrator') orchestratorCommand(hookMode);
     else if (command === 'stop') stopAgent(asName, args[0]);
     else if (command === 'resume') resumeAgent(asName, args[0]);
     else if (command === 'remove') remove(args.find((a) => a !== '--force'), args.includes('--force'));
@@ -1756,6 +1908,7 @@ module.exports = {
   loadRegistry, context, contextOf, describe, projectSelf, attach, attachPlan, ensureGlobalHook, setup, isSubagent, journalFile, findDefinition, isWrapper, enroll, init,
   splitDefinition, joinDefinition, readRole, checkBody, readJournal, roleFileOf, createAgent, updateAgent, syncWrapper, deleteAgent, isInside,
   readStdin, writeAtomic, appendRotating, clean, oneLine, checkAttachments, deliver, journalNote, writeSummary, newDialog, currentDialog, isDialogPair, checkDialog, rewriteJournal, auditNote, autoWake, orchestratorOf, requireAlive, drain, unread,
+  syncOrchestrator, applyOrchestrator,
 };
 
 if (require.main === module) main(process.argv.slice(2));

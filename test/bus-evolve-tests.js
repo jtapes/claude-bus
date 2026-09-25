@@ -118,7 +118,7 @@ function main() {
     && asWord.code === 0 && !fs.existsSync(box('learner', 'wake-evolve.json')) && !fs.existsSync(box('peer', 'wake-evolve.json')), fromAgent.err + toProject.err + toAll.err + asWord.err);
 
   const noWake = bus(proj, ['send', 'peer', 'TASK', '--evolve', 'автоподъём выключен']);
-  check('V2a send --evolve при выключенном автоподъёме: метка снята, сказано, шо самоправки не будет, и обычный wake: — чат поднимет агента сам',
+  check('V2a send --evolve при выключенном автоподъёме: метка снята, сказано, что самоправки не будет, и обычный wake: — чат поднимет агента сам',
     noWake.code === 0 && noWake.out.includes('самоправки роли не будет') && noWake.out.includes('wake: peer local') && !fs.existsSync(box('peer', 'wake-evolve.json')), noWake.out + noWake.err);
   fs.rmSync(box('peer', 'inbox.md'), { force: true });
 

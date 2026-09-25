@@ -1,7 +1,7 @@
 /**
  * Шина отдельным окном: Chrome или Edge в режиме --app — окно без вкладок, своя иконка в панели задач, зум по Ctrl как в браузере.
  * Сервер тот же — bus.js ui на 127.0.0.1, окно лишь открывает его адрес; нет Chrome или Edge — обычная вкладка (решает ui.js).
- * Ярлык приложения: Windows — .lnk на рабочем столе (conhost --headless запускает node без консольного окна), macOS —
+ * Ярлык приложения: Windows — .lnk на рабочем столе и в «Пуске» (conhost --headless запускает node без консольного окна), macOS —
  * Claude Bus.app в ~/Applications (Launchpad, Spotlight), Linux — .desktop в меню приложений и на рабочем столе.
  */
 
@@ -18,6 +18,7 @@ const SHORTCUT = 'Claude Bus.lnk'; // имя без языка: ярлык ст�
 const APP_NAME = 'Claude Bus';
 const DESKTOP_FILE = 'claude-bus.desktop';
 const MARK = 'app-shortcut.json'; // в каталоге шины: ярлык уже ставили — удалённый руками сам не вернётся
+const MARK_V = 2; // 2 — у ярлыка Windows есть AppUserModelID окна; ярлык прошлой версии autoShortcut обновит сам
 const PLATFORMS = ['win32', 'darwin', 'linux']; // где умеем ярлык
 
 /** Где искать браузер с режимом --app: сначала Chrome, потом Edge (на Windows он есть почти всегда). */
@@ -46,7 +47,7 @@ function findBrowser({ platform = process.platform, env = process.env, exists = 
 // и следующее окно открывается таким же: флагами, если браузер запускается заново, а уже запущенный Chrome флаги окна
 // пропускает — тогда страница сама берёт GET /api/window и делает resizeTo/moveTo. Зум Chrome помнит сам — по хосту 127.0.0.1.
 const WINDOW = 'app-window.json'; // в каталоге шины
-const APP_QUERY = '/?app=1'; // по нему страница знает, шо она в окне, а не во вкладке
+const APP_QUERY = '/?app=1'; // по нему страница знает, что она в окне, а не во вкладке
 
 /** Геометрия от страницы: целые в разумных пределах, иначе null. Свёрнутое окно Windows уводит в -32000 — такое не берём. */
 function cleanWindow(g) {
@@ -65,8 +66,11 @@ function saveWindow(busDir, g) {
   return true;
 }
 
-/** Окно за экраном (отключили монитор) Chrome не прижимает — страница вернёт его сама, см. keepOnScreen в ui.html. */
-const appArgs = (url, win = null) => [`--app=${url.replace(/\/$/, '')}${APP_QUERY}`, win ? `--window-size=${win.w},${win.h}` : '--window-size=1400,900', ...(win ? [`--window-position=${win.x},${win.y}`] : [])];
+/**
+ * Окно за экраном (отключили монитор) Chrome не прижимает — страница вернёт его сама, см. keepOnScreen в ui.html.
+ * Профиль всегда Default: от профиля зависит AppUserModelID окна (см. appUserModelId), иначе ярлык с окном не сойдётся.
+ */
+const appArgs = (url, win = null) => ['--profile-directory=Default', `--app=${url.replace(/\/$/, '')}${APP_QUERY}`, win ? `--window-size=${win.w},${win.h}` : '--window-size=1400,900', ...(win ? [`--window-position=${win.x},${win.y}`] : [])];
 
 /** → путь браузера, если окно открыто; null — браузера с --app нет, пусть открывают вкладку. win — из loadWindow. */
 function openApp(url, win = null) {
@@ -81,11 +85,22 @@ function openApp(url, win = null) {
 }
 
 // ---------- Windows: .lnk через PowerShell ----------
+// Окну --app Chrome даёт AppUserModelID «<браузер>.<хост>_<путь>» (порт не входит), а команды и иконки для закрепления
+// не даёт. Нет ярлыка с тем же ID — «Закрепить на панели задач» закрепит голый chrome.exe с иконкой Chrome. Поэтому ярлык
+// несёт этот ID и лежит ещё и в «Пуске» (там Windows его ищет): закрепляется наш ярлык с bus.ico, окно встаёт под него.
+const APP_IDS = { 'chrome.exe': 'Chrome', 'msedge.exe': 'MSEdge' }; // стабильные каналы; другой BUS_APP_BROWSER — без ID
+
+/** → ID окна шины у этого браузера; null — какой ID он даст, не знаем. */
+function appUserModelId(browser) {
+  const base = browser && APP_IDS[path.win32.basename(browser).toLowerCase()];
+  return base ? `${base}.127.0.0.1_/` : null;
+}
 
 /** Что пишем в ярлык. Путь к node — текущий: сменил установку node — пересоздай ярлык (bus.js ui --shortcut). */
-function shortcutPlan({ node = process.execPath, env = process.env, home = os.homedir() } = {}) {
+function shortcutPlan({ node = process.execPath, env = process.env, home = os.homedir(), browser = findBrowser({ platform: 'win32', env }) } = {}) {
   const system = env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows';
   return {
+    appId: appUserModelId(browser),
     target: path.win32.join(system, 'System32', 'conhost.exe'),
     args: `--headless "${node}" "${BUS_JS}" ui --app`,
     cwd: home,
@@ -94,33 +109,64 @@ function shortcutPlan({ node = process.execPath, env = process.env, home = os.ho
   };
 }
 
-/** Скрипт PowerShell: рабочий стол берём у Windows — он бывает перенесён в OneDrive. dir — свой каталог вместо рабочего стола (тесты). */
+// ID ярлыку WScript.Shell не ставит — ставим через IPropertyStore. PROPVARIANT: vt 31 (VT_LPWSTR), строка по смещению 8.
+const SET_APP_ID = `Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices;
+public static class BusLnk {
+  [StructLayout(LayoutKind.Sequential, Pack = 4)] public struct PK { public Guid f; public int p; }
+  [StructLayout(LayoutKind.Explicit, Size = 24)] public struct PV { [FieldOffset(0)] public ushort vt; [FieldOffset(8)] public IntPtr p; }
+  [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  public interface IPS { [PreserveSig] int GetCount(out uint c); [PreserveSig] int GetAt(uint i, out PK k); [PreserveSig] int GetValue(ref PK k, out PV v); [PreserveSig] int SetValue(ref PK k, ref PV v); [PreserveSig] int Commit(); }
+  [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+  static extern void SHGetPropertyStoreFromParsingName(string path, IntPtr bc, int flags, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out IPS ps);
+  public static void SetAppId(string file, string id) {
+    var iid = typeof(IPS).GUID; IPS ps;
+    SHGetPropertyStoreFromParsingName(file, IntPtr.Zero, 2, ref iid, out ps); // 2 — GPS_READWRITE
+    var k = new PK { f = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), p = 5 }; // PKEY_AppUserModel_ID
+    var v = new PV { vt = 31, p = Marshal.StringToCoTaskMemUni(id) };
+    try { Marshal.ThrowExceptionForHR(ps.SetValue(ref k, ref v)); Marshal.ThrowExceptionForHR(ps.Commit()); }
+    finally { Marshal.FreeCoTaskMem(v.p); Marshal.ReleaseComObject(ps); }
+  }
+}
+'@`;
+
+/**
+ * Скрипт PowerShell: рабочий стол и «Пуск» берём у Windows — рабочий стол бывает перенесён в OneDrive.
+ * dir — свой каталог вместо рабочего стола, «Пуск» тогда — dir\Programs (тесты). Выводит «было|путь» по строке на ярлык.
+ */
 function shortcutScript(plan, dir) {
   const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
   return [
     '$ErrorActionPreference = "Stop"',
     '[Console]::OutputEncoding = [Text.Encoding]::UTF8',
-    `$dir = ${dir ? q(dir) : "[Environment]::GetFolderPath('Desktop')"}`,
-    `$file = Join-Path $dir ${q(SHORTCUT)}`,
-    '$was = [int](Test-Path -LiteralPath $file)',
-    '$s = (New-Object -ComObject WScript.Shell).CreateShortcut($file)',
-    `$s.TargetPath = ${q(plan.target)}`,
-    `$s.Arguments = ${q(plan.args)}`,
-    `$s.WorkingDirectory = ${q(plan.cwd)}`,
-    `$s.IconLocation = ${q(plan.icon)}`,
-    `$s.Description = ${q(plan.description)}`,
-    '$s.Save()',
-    '[Console]::Out.Write("$was|$file")',
+    ...(plan.appId ? [SET_APP_ID] : []),
+    dir ? `$dirs = @(${q(dir)}, ${q(path.win32.join(dir, 'Programs'))})` : "$dirs = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs'))",
+    '$out = foreach ($dir in $dirs) {',
+    '  $null = New-Item -ItemType Directory -Force -Path $dir',
+    `  $file = Join-Path $dir ${q(SHORTCUT)}`,
+    '  $was = [int](Test-Path -LiteralPath $file)',
+    '  $s = (New-Object -ComObject WScript.Shell).CreateShortcut($file)',
+    `  $s.TargetPath = ${q(plan.target)}`,
+    `  $s.Arguments = ${q(plan.args)}`,
+    `  $s.WorkingDirectory = ${q(plan.cwd)}`,
+    `  $s.IconLocation = ${q(plan.icon)}`,
+    `  $s.Description = ${q(plan.description)}`,
+    '  $s.Save()',
+    ...(plan.appId ? [`  [BusLnk]::SetAppId($file, ${q(plan.appId)})`] : []),
+    '  "$was|$file"',
+    '}',
+    '[Console]::Out.Write($out -join "`n")',
   ].join('\n');
 }
 
+/** → { file — на рабочем столе, replaced, also: [ярлык в «Пуске»] }. */
 function windowsShortcut(env) {
   const script = shortcutScript(shortcutPlan({ env }), env.BUS_SHORTCUT_DIR || '');
   const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: 30000 });
   if (r.error) throw new Error(r.error.message);
   if (r.status !== 0) throw new Error((r.stderr || '').trim().split('\n')[0] || `powershell вышел с кодом ${r.status}`);
-  const [was, ...rest] = r.stdout.trim().split('|');
-  return { file: rest.join('|'), replaced: was === '1' };
+  const [first, ...rest] = r.stdout.trim().split(/\r?\n/).map((line) => line.split('|'));
+  return { file: first.slice(1).join('|'), replaced: first[0] === '1', also: rest.map((line) => line.slice(1).join('|')) };
 }
 
 // ---------- Linux: .desktop ----------
@@ -232,7 +278,18 @@ function makeShortcut({ env = process.env, platform = process.platform, home = o
 function autoShortcut(busDir, env = process.env) {
   if (!PLATFORMS.includes(process.platform) || env.BUS_SHORTCUT === '0') return null;
   const mark = path.join(busDir, MARK);
-  if (fs.existsSync(mark)) return null;
+  if (fs.existsSync(mark)) {
+    // ярлык прошлой версии (Windows: без ID окна — закреплялся иконкой Chrome) обновляем тихо, если его не удалили
+    const was = readJson(mark, {});
+    if (process.platform !== 'win32' || (was.v || 1) >= MARK_V || !was.file || !fs.existsSync(was.file)) return null;
+    try {
+      makeShortcut({ env });
+      fs.writeFileSync(mark, JSON.stringify({ ...was, v: MARK_V, at: new Date().toISOString() }) + '\n');
+    } catch {
+      // не вышло — остаётся старый, попробуем на следующем старте
+    }
+    return null;
+  }
   let result;
   try {
     result = { file: makeShortcut({ env }).file };
@@ -241,11 +298,11 @@ function autoShortcut(busDir, env = process.env) {
   }
   try {
     fs.mkdirSync(busDir, { recursive: true });
-    fs.writeFileSync(mark, JSON.stringify({ ...result, at: new Date().toISOString() }) + '\n'); // и при сбое: не пробовать на каждом старте
+    fs.writeFileSync(mark, JSON.stringify({ ...result, v: MARK_V, at: new Date().toISOString() }) + '\n'); // и при сбое: не пробовать на каждом старте
   } catch {
     // без отметки попробуем в следующий раз — не беда
   }
   return result;
 }
 
-module.exports = { SHORTCUT, DESKTOP_FILE, APP_NAME, MARK, WINDOW, PLATFORMS, browserCandidates, findBrowser, cleanWindow, loadWindow, saveWindow, appArgs, openApp, shortcutPlan, shortcutScript, desktopEntry, execArg, macLauncher, macPlist, makeShortcut, autoShortcut };
+module.exports = { SHORTCUT, DESKTOP_FILE, APP_NAME, MARK, WINDOW, PLATFORMS, browserCandidates, findBrowser, appUserModelId, cleanWindow, loadWindow, saveWindow, appArgs, openApp, shortcutPlan, shortcutScript, desktopEntry, execArg, macLauncher, macPlist, makeShortcut, autoShortcut };

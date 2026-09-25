@@ -156,7 +156,7 @@
   /**
    * Текст сообщения → блоки для ленты: heading{level,inline} | para{inline} | list{items:[{depth,marker,inline}]} | quote{inline} | code{text} | hr.
    * Подмножество markdown, которым пишут агенты; всё непонятное — обычный абзац, перенос внутри абзаца остаётся переносом.
-   * Без DOM: узлы строит страница через el(), так шо HTML из текста не исполняется по построению.
+   * Без DOM: узлы строит страница через el(), так что HTML из текста не исполняется по построению.
    */
   function markdown(text) {
     const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
@@ -231,7 +231,7 @@
   /**
    * Клик — переписка одного агента (повторный клик по нему же снимает фильтр). Двойной клик (repeat) и Ctrl/Shift+клик (add) —
    * добавить агента к выбранным или убрать. before — выбор до первого клика двойного: второй клик достраивает его,
-   * а не то, шо первый уже успел переключить.
+   * а не то, что первый уже успел переключить.
    */
   function nextSelection(current, key, { add = false, repeat = false, before = null } = {}) {
     if (add || (repeat && before)) {
@@ -350,7 +350,7 @@
     else if (w) notes.push({ tone: 'bad', text: w.state === 'limit' ? (w.until ? tr('лимит для агентов до {until} — тебе ответит', { until: clock(w.until) }) : tr('лимит для агентов — тебе ответит')) : tr('упал {at}: {reason}', { at: clock(w.at), reason: w.reason }), title: `${w.reason}\n${tr('Подробности — wake.log в ящике агента')}` });
     // Самоправка роли: идёт разбор после сданной задачи, черновик ждёт пользователя в редакторе, разбор не вышел
     if (w && w.evolve === 'running') notes.push({ tone: 'run', text: tr('разбирает свою работу…'), title: tr('Самоправка роли: агент в той же сессии готовит правку своей роли') });
-    else if (agent.proposal) notes.push({ tone: 'wait', text: tr('предлагает правку роли'), title: tr('Открой роль карандашом: черновик агента и diff уже в форме. На диск пойдёт только по «Сохранить»') });
+    else if (agent.proposal) notes.push({ tone: 'wait', text: tr('предлагает правку роли'), title: tr('Открой роль карандачтом: черновик агента и diff уже в форме. На диск пойдёт только по «Сохранить»') });
     else if (w && w.evolve === 'failed') notes.push({ tone: 'bad', text: tr('самоправка не вышла'), title: `${w.evolveReason || ''}\n${tr('Подробности — wake.log в ящике агента')}` });
     else if (w && w.evolve === 'same') notes.push({ tone: 'ok', text: tr('роль менять нечего'), title: tr('Самоправка роли: агент разобрал свою работу и правок не предложил') });
     if (load >= showLoadFrom) notes.push({ tone: 'load', text: tr('переписка ≈{n} ток.', { n: short(load) }), title: tr('несжатая переписка агента, оценка') });
@@ -375,8 +375,8 @@
     const mark = { key: agent.key, name: agent.name, since: 0, action: '', title: '' };
     const spent = (w.ms >= 1000 ? tr(' · {sec} с', { sec: Math.round(w.ms / 1000) }) : '') + (w.tokens ? tr(' · ≈{n} ток.', { n: short(w.tokens) }) : '');
     if (w.state === 'running') return { ...mark, tone: 'run', text: tr('{name} работает', { name: agent.name }), since: w.startedAt || w.at, action: 'stop', title: tr('Завис или ушёл не туда — останови: сессия сохранится, её можно продолжить') };
-    if (w.state === 'stopped') return { ...mark, tone: 'wait', text: tr('{name} остановлен {at}', { name: agent.name, at: clock(w.at) }) + spent, action: 'resume', title: tr('Продолжить ту же сессию: агент помнит, шо успел сделать') };
-    if (w.state === 'failed') return { ...mark, tone: 'bad', text: tr('{name} упал {at}: {reason}', { name: agent.name, at: clock(w.at), reason: w.reason }), action: 'resume', title: tr('Продолжить ту же сессию: агент помнит, шо успел сделать') };
+    if (w.state === 'stopped') return { ...mark, tone: 'wait', text: tr('{name} остановлен {at}', { name: agent.name, at: clock(w.at) }) + spent, action: 'resume', title: tr('Продолжить ту же сессию: агент помнит, что успел сделать') };
+    if (w.state === 'failed') return { ...mark, tone: 'bad', text: tr('{name} упал {at}: {reason}', { name: agent.name, at: clock(w.at), reason: w.reason }), action: 'resume', title: tr('Продолжить ту же сессию: агент помнит, что успел сделать') };
     if (w.state === 'ok') return { ...mark, tone: 'ok', text: tr('{name} отработал {at}', { name: agent.name, at: clock(w.at) }) + spent };
     return null;
   }
@@ -416,7 +416,7 @@
 
   /**
    * Почему агенту нельзя написать, или '' — если можно. Пользователь кликнул по backend «не в шине», строка подсветилась, а «Кому» молча
-   * осталось на оркестраторе — сообщение ушло не тому, и «агент не ответил». Теперь клик по такому агенту объясняет, шо делать.
+   * осталось на оркестраторе — сообщение ушло не тому, и «агент не ответил». Теперь клик по такому агенту объясняет, что делать.
    * Агент «не в шине» без agent.blocked не заблокирован: сервер заведёт его сам при первом сообщении.
    */
   function blockedNote(agent) {
@@ -478,7 +478,87 @@
     return { tabs: open, history, current };
   }
 
-  const AGENT_NAME = /^[a-z0-9][a-z0-9-]{0,30}$/; // то же правило, шо NAME и RESERVED в bus.js
+  // ---------- лимиты аккаунта и окно контекста: пороги — как в hooks/statusline.js ----------
+
+  const CTX_WARN_TOKENS = 300000; // как в statusline: дальше окно считаем перегруженным — вкладка оранжевая
+  const LIMITS_STALE_MS = 60 * 60 * 1000; // снимок старше часа — цифры тусклые: ни statusline, ни подъёмы его не обновляли
+  const levelOf = (pct) => (pct >= 80 ? 'high' : pct >= 50 ? 'mid' : 'low');
+
+  /** 2д3ч / 3ч12м / 45м / 30с */
+  function duration(sec) {
+    const s = Math.max(0, Math.floor(sec));
+    const d = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    if (d > 0) return tr('{d}д{h}ч', { d, h });
+    if (h > 0) return tr('{h}ч{m}м', { h, m });
+    if (m > 0) return tr('{m}м', { m });
+    return tr('{s}с', { s });
+  }
+
+  /** Время сброса окна: ЧЧ:ММ в ближайшие сутки (5ч-окно за полночью — не «26.09»), иначе ДД.ММ. */
+  function resetClock(epochSec, now = Date.now()) {
+    const d = new Date(epochSec * 1000);
+    if (d.getTime() - now < 86400 * 1000) return clock(d.getTime());
+    return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}`;
+  }
+
+  /**
+   * Снимок лимитов (rate-limits.js, поле rateLimits в /api/state) → { windows, stale, age } или null — снимка нет.
+   * windows: [{ key, label, pct, level: low | mid | high, left: «2ч10м», at: «18:30», reset }]. reset — окно сброшено уже после снимка:
+   * сколько потрачено в новом, снимок не знает.
+   */
+  function rateLimits(snapshot, now = Date.now()) {
+    if (!snapshot || typeof snapshot !== 'object') return null;
+    const windows = [];
+    for (const [key, label] of [['five_hour', tr('5ч')], ['seven_day', tr('7д')]]) {
+      const w = snapshot[key];
+      if (!w || !Number.isFinite(w.used_percentage)) continue;
+      const left = Number.isFinite(w.resets_at) ? w.resets_at - Math.floor(now / 1000) : null;
+      if (left !== null && left <= 0) {
+        windows.push({ key, label, pct: 0, level: 'low', left: '', at: '', reset: true });
+        continue;
+      }
+      const pct = Math.round(w.used_percentage);
+      windows.push({ key, label, pct, level: levelOf(pct), left: left ? duration(left) : '', at: left ? resetClock(w.resets_at, now) : '', reset: false });
+    }
+    if (!windows.length) return null;
+    const age = Math.max(0, now - (Number(snapshot.at) || 0));
+    return { windows, stale: age > LIMITS_STALE_MS, age };
+  }
+
+  /**
+   * Окно контекста последнего запуска агента в диалоге: agent.contexts (wake.contexts, ключ «проект#d»).
+   * → { pct, tokens, window, level, warn, at } или null — в этом диалоге агента ещё не поднимали.
+   */
+  function tabContext(agent, boss, d) {
+    const c = agent && agent.contexts && agent.contexts[`${boss}#${d || ''}`];
+    if (!c || !Number.isFinite(c.tokens) || !(c.window > 0)) return null;
+    const pct = Math.min(100, Math.round((c.tokens / c.window) * 100));
+    return { pct, tokens: c.tokens, window: c.window, level: levelOf(pct), warn: c.tokens > CTX_WARN_TOKENS, at: c.at };
+  }
+
+  /**
+   * Расход фонового запуска, из которого ушло сообщение агента (m.run → agent.runs, wake.runs). Цифра — без чтения из кэша, как у отметки запуска.
+   * → { text: «≈23.3к», title, live } или null — сообщение не из фонового запуска (сессия, UI, агент через Agent) или запуск уже забыт.
+   */
+  function messageUsage(m, agents) {
+    const agent = m && m.run && (agents || []).find((a) => a.key === m.fromKey);
+    const u = agent && agent.runs && agent.runs[m.run];
+    if (!u || !Number.isFinite(u.tokens)) return null;
+    const lines = [
+      tr('Расход фонового запуска агента: ≈{n} ток.', { n: short(u.tokens) }) + (u.live ? tr(' · агент ещё работает') : ''),
+      tr('вход {input} · запись в кэш {write} · выход {output}', { input: short(u.input || 0), write: short(u.cacheWrite || 0), output: short(u.output || 0) }),
+      tr('чтение из кэша {n} — почти бесплатно, в цифру не входит', { n: short(u.cacheRead || 0) }),
+    ];
+    if (u.context > 0 && u.window > 0) lines.push(tr('контекст ≈{n} из {w} ({pct}%)', { n: short(u.context), w: short(u.window), pct: Math.min(100, Math.round((u.context / u.window) * 100)) }));
+    const tail = [u.ms >= 1000 ? tr('{sec} с', { sec: Math.round(u.ms / 1000) }) : '', u.cost > 0 ? `$${u.cost.toFixed(u.cost < 0.1 ? 3 : 2)}` : ''].filter(Boolean);
+    if (tail.length) lines.push(tail.join(' · '));
+    lines.push(tr('Несколько сообщений из одного запуска показывают его общий расход'));
+    return { text: `≈${short(u.tokens)}`, title: lines.join('\n'), live: Boolean(u.live) };
+  }
+
+  const AGENT_NAME = /^[a-z0-9][a-z0-9-]{0,30}$/; // то же правило, что NAME и RESERVED в bus.js
   const validAgentName = (name) => AGENT_NAME.test(String(name || '')) && !['files', 'scheduler', 'schedule', 'clear'].includes(name);
 
   /** Можно ли выбрать агента в «Кому»: есть от чьего имени писать (agent.from), а сам он в шине или заведётся при первом сообщении. */
@@ -502,7 +582,7 @@
   }
 
   /**
-   * Шо делает короткое нажатие пробела на элементе под фокусом. Нажатие перехватывается (иначе при удержании в поле сыпались бы
+   * Что делает короткое нажатие пробела на элементе под фокусом. Нажатие перехватывается (иначе при удержании в поле сыпались бы
    * пробелы, а кнопка кликалась бы после диктовки), поэтому тап страница доигрывает сама: type — напечатать пробел,
    * click — нажать, none — ничего; skip — не перехватывать вовсе: список пробелом открывается, а программно его не открыть.
    */
@@ -620,13 +700,13 @@
     return { hunks, added: ops.filter((op) => op.kind === 'add').length, removed: ops.filter((op) => op.kind === 'del').length };
   }
 
-  /** Шо стало с подъёмом:r.auto — started | busy | limit | off | failed, r.wake — оркестратор, которому ушёл запасной звонок. */
+  /** Что стало с подъёмом:r.auto — started | busy | limit | off | failed, r.wake — оркестратор, которому ушёл запасной звонок. */
   function raisedNote(r) {
     if (r.auto === 'started') return tr('{to} поднят в фоне — ответ придёт в ленту, статус виден у него в списке слева.', { to: r.to });
     if (r.auto === 'busy') return tr('{to} уже работает в фоне — новое сообщение заберёт сам.', { to: r.to });
     const why = r.auto === 'off' ? tr('автоподъём выключен') : r.reason || tr('фоновый запуск не удался');
     return r.wake
-      ? tr('{to} не поднят: {why}. Позвонил оркестратору {wake} — он поднимет агента на твоём следующем промпте в его сессии.', { to: r.to, why, wake: r.wake })
+      ? tr('{to} не поднят: {why}. Уведомил оркестратора {wake} — он поднимет агента на твоём следующем промпте в его сессии.', { to: r.to, why, wake: r.wake })
       : tr('{to} не поднят: {why}. Сообщение ждёт в его inbox.', { to: r.to, why });
   }
 
@@ -647,7 +727,7 @@
 
   // ---------- расписание ----------
 
-  const SCHEDULE_MINUTE_STEPS = [5, 10, 15, 20, 30]; // варианты «каждые N минут» в форме — те же, шо примет сервер без --force
+  const SCHEDULE_MINUTE_STEPS = [5, 10, 15, 20, 30]; // варианты «каждые N минут» в форме — те же, что примет сервер без --force
   const SCHEDULE_HOUR_STEPS = [1, 2, 3, 4, 6, 8, 12]; // варианты «каждые N часов»
   const SCHEDULE_NAME = /^[a-z0-9][a-z0-9-]{0,30}$/; // как NAME в scheduler.js
 
@@ -812,7 +892,7 @@
 
   // ---------- настройки проекта (шестерёнка) ----------
 
-  const SETTINGS_MODEL = /^[A-Za-z0-9._[\]-]{1,60}$/; // то же правило, шо MODEL в settings.js — сервер его не отдаёт, дублируем для формы
+  const SETTINGS_MODEL = /^[A-Za-z0-9._[\]-]{1,60}$/; // то же правило, что MODEL в settings.js — сервер его не отдаёт, дублируем для формы
 
   /**
    * Патч для POST /api/settings из формы: только правки — форма против последних значений с сервера (saved).
@@ -829,14 +909,15 @@
   }
 
   /**
-   * Клиентская проверка одного поля формы настроек — та же, шо сервер (settings.js: parse), шобы 999 не улетало впустую запросом.
+   * Клиентская проверка одного поля формы настроек — та же, что сервер (settings.js: parse), чтобы 999 не улетало впустую запросом.
    * form — текущие значения остальных полей (для atLeast); raw — как есть из инпута, ещё не приведённое. → текст ошибки или ''.
    */
   function settingsFieldError(item, raw, form) {
     if (item.type === 'bool') return '';
+    if (item.type === 'choice') return item.options.includes(String(raw)) ? '' : tr('{key}: одно из {list}.', { key: item.key, list: item.options.map((o) => o || tr('пусто')).join(', ') });
     if (item.type === 'model') {
       const model = String(raw).trim();
-      return SETTINGS_MODEL.test(model) ? '' : tr('{key}: имя модели — латиница, цифры, точка и дефис, до 60 символов.', { key: item.key });
+      return (!model && item.optional) || SETTINGS_MODEL.test(model) ? '' : tr('{key}: имя модели — латиница, цифры, точка и дефис, до 60 символов.', { key: item.key });
     }
     if (item.type === 'text') {
       const n = String(raw).trim().length;
@@ -921,7 +1002,7 @@
   }
 
   /**
-   * Шо вставить в сообщение за «@»: путь от корня проекта (rel — через «/», у папки «/» в конце). Адресат из другого проекта
+   * Что вставить в сообщение за «@»: путь от корня проекта (rel — через «/», у папки «/» в конце). Адресат из другого проекта
    * шины (agentRoot не base) относительный путь не найдёт — ему абсолютный. С пробелами — в кавычках.
    */
   function mentionPath(rel, { base = '', agentRoot = null } = {}) {
@@ -935,7 +1016,7 @@
 
   return {
     dirKey, dirName, dirGroups, atToken, fileScore, fileMatches, mentionPath,
-    ORCH_HUE, hue, assignHues, pairKey, pairOf, selectedPair, threadKey, threadOf, viewPair, viewThread, covered, tokensOf, summaryTokens, weightReport, sizeOf, short, passes, splitByQuery, markdown, markdownInline, unreadIds, readTarget, nextSelection, feedItems, pairInfo, groupAgents, agentStatus, clock, elapsed, runMark, liveLines, liveLast, canBtw, canEvolve, wakeActionNote, blockedNote, writable, nameOf, dictated, spaceTap, voiceNote, lineDiff, raisedNote, sentNote, dialogTarget, dialogTitle, dialogTabs, validAgentName,
+    ORCH_HUE, hue, assignHues, duration, rateLimits, tabContext, messageUsage, pairKey, pairOf, selectedPair, threadKey, threadOf, viewPair, viewThread, covered, tokensOf, summaryTokens, weightReport, sizeOf, short, passes, splitByQuery, markdown, markdownInline, unreadIds, readTarget, nextSelection, feedItems, pairInfo, groupAgents, agentStatus, clock, elapsed, runMark, liveLines, liveLast, canBtw, canEvolve, wakeActionNote, blockedNote, writable, nameOf, dictated, spaceTap, voiceNote, lineDiff, raisedNote, sentNote, dialogTarget, dialogTitle, dialogTabs, validAgentName,
     SCHEDULE_MINUTE_STEPS, SCHEDULE_HOUR_STEPS, buildScheduleCron, scheduleCronPreset, scheduleTarget, scheduleNextLabel, scheduleLastNote, scheduleDaemonNote, scheduleBadge, scheduleGroups, validScheduleName, isFrequentError,
     ACCESS_PRESETS, accessPreset, accessDenied, accessFromDenied, accessWeight, accessDeltaLabel,
     setThresholds, settingsDirty, settingsFieldError,

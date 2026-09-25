@@ -175,6 +175,16 @@ function main() {
   check('P4a schedule и настройки проекта: порог отказа и модель headless-сессии — из настроек каталога, предупреждение о цене — чаще 15 минут; после сброса — прежние 5 минут и sonnet',
     tooOften.code === 1 && tooOften.all.includes('Слишком часто') && allowed.code === 0 && !allowed.out.includes('Часто:') && allowed.out.includes('headless-сессия (haiku)') && warned.code === 0 && warned.out.includes('Часто:') && /often.*сессия \(haiku\)/.test(oftenList.out)
     && relaxed.code === 0 && relaxed.out.includes('headless-сессия (sonnet)'), tooOften.all + allowed.all + warned.all + oftenList.out + relaxed.all);
+  // Headless-задача — сессия оркестратора: его модель сильнее schedule.model, своя модель задачи — сильнее обеих
+  bus(proj, ['settings', 'set', 'schedule.model', 'haiku']);
+  bus(proj, ['settings', 'set', 'orchestrator.projectModel', 'opus']);
+  const bossModel = sched(['add', 'often', '*/10 * * * *', '--force', 'на модели оркестратора']);
+  const ownModel = sched(['add', 'often', '*/10 * * * *', '--force', '--model', 'haiku', 'своя модель']);
+  bus(proj, ['settings', 'reset', 'orchestrator.projectModel']);
+  bus(proj, ['settings', 'reset']);
+  fs.rmSync(path.join(proj, '.claude', 'settings.local.json'), { force: true });
+  check('P4b schedule: headless-задача без своей модели идёт на модели оркестратора проекта, а не schedule.model; --model задачи сильнее',
+    bossModel.code === 0 && bossModel.out.includes('headless-сессия (opus)') && ownModel.code === 0 && ownModel.out.includes('headless-сессия (haiku)'), bossModel.all + ownModel.all);
   sched(['rm', 'often']);
 
   pm2Reset();

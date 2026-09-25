@@ -634,7 +634,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     L.nameOf('image.png', true, when) === 'screenshot-20260919-070509.png' && L.nameOf('image.png', false, when) === 'image.png' && L.nameOf('макет.png', true, when) === 'макет.png'
     && L.sentNote({ kind: 'project', to: 'shop' }).includes('следующем промпте') && !L.sentNote({ kind: 'project', to: 'shop' }).includes('поднят')
     && L.sentNote({ kind: 'local', to: 'dima', needsWake: true, auto: 'started' }).includes('поднят в фоне') && L.raisedNote({ to: 'dima', auto: 'busy' }).includes('уже работает')
-    && L.raisedNote({ to: 'dima', auto: 'off', wake: 'shop' }).includes('автоподъём выключен') && L.raisedNote({ to: 'dima', auto: 'off', wake: 'shop' }).includes('оркестратору shop')
+    && L.raisedNote({ to: 'dima', auto: 'off', wake: 'shop' }).includes('автоподъём выключен') && L.raisedNote({ to: 'dima', auto: 'off', wake: 'shop' }).includes('оркестратора shop')
     && L.raisedNote({ to: 'dima', auto: 'limit', reason: 'лимит 6', wake: null }).includes('ждёт в его inbox'), '');
 
   // Пороги веса переписки настраиваются шестерёнкой (ui.showLoadFrom/ui.heavyTokens) — L.setThresholds меняет их для pairInfo/weightReport/agentStatus
@@ -1271,19 +1271,21 @@ function main() {
     const winEnv = { LOCALAPPDATA: 'C:\\L', PROGRAMFILES: 'C:\\P', 'PROGRAMFILES(X86)': 'C:\\X' };
     const chrome = 'C:\\P\\Google\\Chrome\\Application\\chrome.exe';
     const edge = 'C:\\X\\Microsoft\\Edge\\Application\\msedge.exe';
-    const plan = app.shortcutPlan({ node: 'C:\\n\\node.exe', env: { SystemRoot: 'C:\\W' }, home: "D:\\team\\o'neil" });
+    const plan = app.shortcutPlan({ node: 'C:\\n\\node.exe', env: { SystemRoot: 'C:\\W' }, home: "D:\\team\\o'neil", browser: chrome });
     const script = app.shortcutScript(plan, "C:\\d'x");
-    check('U44 bus app: окно — Chrome, без него Edge, нет обоих или BUS_APP_BROWSER=none — null (откроется вкладка); ярлык — conhost --headless node bus.js ui --app, кавычки в путях экранированы для PowerShell',
+    check('U44 bus app: окно — Chrome, без него Edge, нет обоих или BUS_APP_BROWSER=none — null (откроется вкладка); ярлык — conhost --headless node bus.js ui --app, на рабочем столе и в «Пуске», с AppUserModelID окна браузера (чужой браузер — без ID), кавычки в путях экранированы для PowerShell',
       app.findBrowser({ platform: 'win32', env: winEnv, exists: (f) => f === chrome || f === edge }) === chrome && app.findBrowser({ platform: 'win32', env: winEnv, exists: (f) => f === edge }) === edge
       && app.findBrowser({ platform: 'win32', env: winEnv, exists: () => false }) === null && app.findBrowser({ env: { BUS_APP_BROWSER: 'none' } }) === null
       && app.findBrowser({ platform: 'linux', env: { PATH: '/usr/bin' }, exists: (f) => f === '/usr/bin/chromium' }) === '/usr/bin/chromium' && app.appArgs('http://127.0.0.1:1').includes('--app=http://127.0.0.1:1/?app=1')
       && plan.target === 'C:\\W\\System32\\conhost.exe' && plan.args === `--headless "C:\\n\\node.exe" "${BUS_JS}" ui --app` && plan.icon.endsWith('bus.ico,0') && fs.existsSync(plan.icon.slice(0, -2))
-      && script.includes("$dir = 'C:\\d''x'") && script.includes("$s.WorkingDirectory = 'D:\\team\\o''neil'") && app.shortcutScript(plan).includes("GetFolderPath('Desktop')")
+      && script.includes("$dirs = @('C:\\d''x', 'C:\\d''x\\Programs')") && script.includes("$s.WorkingDirectory = 'D:\\team\\o''neil'") && app.shortcutScript(plan).includes("GetFolderPath('Programs')")
+      && script.includes("[BusLnk]::SetAppId($file, 'Chrome.127.0.0.1_/')") && !app.shortcutScript({ ...plan, appId: null }).includes('BusLnk')
+      && app.appUserModelId(chrome) === 'Chrome.127.0.0.1_/' && app.appUserModelId(edge) === 'MSEdge.127.0.0.1_/' && app.appUserModelId('C:\\B\\brave.exe') === null
       && app.autoShortcut(path.join(sandbox, 'no-shortcut'), { BUS_SHORTCUT: '0' }) === null && !fs.existsSync(path.join(sandbox, 'no-shortcut', app.MARK)), script);
     const winDir = path.join(sandbox, 'app-window');
     const winArgs = app.appArgs('http://127.0.0.1:1/', { x: -1920, y: 40, w: 1280, h: 800 });
     check('U44b bus app: окно открывается с прошлыми размером и местом (адрес с ?app=1 — по нему страница шлёт геометрию); без сохранённого — 1400×900; кривое, свёрнутое и нецелое не пишется',
-      winArgs.join(' ') === '--app=http://127.0.0.1:1/?app=1 --window-size=1280,800 --window-position=-1920,40' && app.appArgs('http://127.0.0.1:1').join(' ') === '--app=http://127.0.0.1:1/?app=1 --window-size=1400,900'
+      winArgs.join(' ') === '--profile-directory=Default --app=http://127.0.0.1:1/?app=1 --window-size=1280,800 --window-position=-1920,40' && app.appArgs('http://127.0.0.1:1').join(' ') === '--profile-directory=Default --app=http://127.0.0.1:1/?app=1 --window-size=1400,900'
       && app.loadWindow(winDir) === null && app.saveWindow(winDir, { x: 10, y: 20, w: 1300, h: 850, extra: 1 }) && JSON.stringify(app.loadWindow(winDir)) === '{"x":10,"y":20,"w":1300,"h":850}'
       && [null, 'x', { x: -32000, y: -32000, w: 160, h: 28 }, { x: 0, y: 0, w: 1300.5, h: 850 }, { x: 0, y: 0, w: 1300, h: '850' }, { x: 0, y: 0, w: 99999, h: 850 }].every((g) => !app.saveWindow(winDir, g))
       && JSON.stringify(app.loadWindow(winDir)) === '{"x":10,"y":20,"w":1300,"h":850}', JSON.stringify(winArgs));
@@ -1359,8 +1361,13 @@ function main() {
       const second = app.autoShortcut(markDir, deskEnv); // удалили руками — сам не возвращается
       const byHand = app.makeShortcut({ env: deskEnv });
       const again = app.makeShortcut({ env: deskEnv });
-      check('U46 bus app (Windows): первый запуск ставит ярлык и отметку; удалённый руками второй запуск не возвращает; ui --shortcut ставит заново, повторный — «обновлён»',
-        first && first.file === lnk && madeFirst && JSON.parse(read(path.join(markDir, app.MARK))).file === lnk && second === null && !byHand.replaced && byHand.file === lnk && again.replaced && fs.existsSync(lnk),
+      const oldDir = path.join(sandbox, 'shortcut-old'); // отметка первой версии — ярлык без ID окна: обновляется сам, тихо
+      fs.mkdirSync(oldDir, { recursive: true });
+      fs.writeFileSync(path.join(oldDir, app.MARK), JSON.stringify({ file: lnk }));
+      const migrated = app.autoShortcut(oldDir, deskEnv) === null && JSON.parse(read(path.join(oldDir, app.MARK))).v === 2;
+      check('U46 bus app (Windows): первый запуск ставит ярлык и отметку; удалённый руками второй запуск не возвращает; ui --shortcut ставит заново, повторный — «обновлён»; копия в «Пуске»; ярлык по отметке без v: 2 обновляется тихо',
+        first && first.file === lnk && madeFirst && JSON.parse(read(path.join(markDir, app.MARK))).file === lnk && second === null && !byHand.replaced && byHand.file === lnk && again.replaced && fs.existsSync(lnk)
+          && again.also[0] === path.join(desk, 'Programs', app.SHORTCUT) && fs.existsSync(again.also[0]) && JSON.parse(read(path.join(markDir, app.MARK))).v === 2 && migrated,
         JSON.stringify({ first, second, byHand, again }));
     }
 
@@ -1373,19 +1380,20 @@ function main() {
       if (process.platform === 'win32') delete setupEnv.BUS_SHORTCUT;
       const runSetup = () => spawnSync(process.execPath, [BUS_JS, 'setup'], { cwd: fakeHome, encoding: 'utf8', env: setupEnv });
       const settingsPath = path.join(setupConfig, 'settings.json');
-      const hooksIn = () => (JSON.parse(read(settingsPath) || '{}').hooks?.UserPromptSubmit || []).length;
+      const hooksIn = (event = 'UserPromptSubmit') => (JSON.parse(read(settingsPath) || '{}').hooks?.[event] || []).length;
       const lnk = path.join(setupDesk, app.SHORTCUT);
       const first = runSetup();
       const madeLnk = fs.existsSync(lnk);
       if (madeLnk) fs.rmSync(lnk);
       const second = runSetup(); // хук не задваивается, удалённый руками ярлык не возвращается
       const hooksAfter = hooksIn();
+      const startAfter = JSON.parse(read(settingsPath) || '{}').hooks?.SessionStart || [];
       fs.writeFileSync(settingsPath, '{ битый');
       const broken = runSetup();
       const win = process.platform === 'win32';
-      check('U48 bus setup: ставит хук inbox в settings.json и ярлык (Windows); повтор — «уже стоит», хук один, удалённый ярлык не возвращается; битый settings.json — код 1, файл не тронут',
-        first.status === 0 && first.stdout.includes('Хук inbox добавлен') && (!win || (madeLnk && first.stdout.includes('Ярлык шины:')))
-        && second.status === 0 && second.stdout.includes('Хук inbox уже стоит') && hooksAfter === 1 && (!win || (second.stdout.includes('Ярлык уже ставили') && !fs.existsSync(lnk)))
+      check('U48 bus setup: ставит хуки inbox и роли оркестратора (SessionStart: startup|clear|compact) в settings.json и ярлык (Windows); повтор — «уже стоят», каждого по одному, удалённый ярлык не возвращается; битый settings.json — код 1, файл не тронут',
+        first.status === 0 && first.stdout.includes('Хуки шины (inbox, роль оркестратора) добавлены') && (!win || (madeLnk && first.stdout.includes('Ярлык шины:')))
+        && second.status === 0 && second.stdout.includes('Хуки шины уже стоят') && hooksAfter === 1 && startAfter.length === 1 && startAfter[0].matcher === 'startup|clear|compact' && startAfter[0].hooks[0].command.endsWith('bus.js" orchestrator --hook') && (!win || (second.stdout.includes('Ярлык уже ставили') && !fs.existsSync(lnk)))
         && broken.status === 1 && broken.stderr.includes('невалидный JSON') && read(settingsPath) === '{ битый',
         JSON.stringify({ first: first.stdout + first.stderr, second: second.stdout + second.stderr, broken: broken.stderr, madeLnk }));
     }
@@ -2045,7 +2053,7 @@ function main() {
     const resetFromPage = (await request('POST', '/api/settings', { headers: auth, body: { reset: true } })).json();
     const stateAfterReset = (await request('GET', '/api/state')).json();
     check('U31a bus ui настройки: форма строится по схеме с подписями и пояснениями; без токена — 403; ошибка приходит с ключом поля и ничего не пишет; сохранённое видно в /api/state и в расписании; null возвращает дефолт, reset — все',
-      formBefore.root === projU && formBefore.schema.length === Object.keys(formBefore.values).length && formBefore.defaults === undefined && formBefore.schema.every((item) => item.default !== undefined) && formBefore.schema.every((item) => item.label && item.hint && formBefore.groups.some((g) => g.key === item.group)) && formBefore.values['wake.perHour'] === 6
+      formBefore.root === projU && formBefore.schema.every((item) => item.key in formBefore.values) && !formBefore.schema.some((item) => item.key.startsWith('orchestrator.project')) && formBefore.schema.some((item) => item.key === 'orchestrator.effort' && item.type === 'choice' && item.options.includes('high')) && formBefore.defaults === undefined && formBefore.schema.every((item) => item.default !== undefined) && formBefore.schema.every((item) => item.label && item.hint && formBefore.groups.some((g) => g.key === item.group)) && formBefore.values['wake.perHour'] === 6
       && saveNoToken.status === 403 && saveBad.status === 400 && saveBad.json().field === 'wake.perHour' && nothingSaved
       && saved.ok === true && saved.values['wake.perHour'] === 3 && saved.limits.heavyTokens === 4000 && saved.limits.maxFileBytes === 2 * 1024 * 1024
       && stateAfterSave.heavyTokens === 4000 && stateAfterSave.maxFileBytes === 2 * 1024 * 1024 && scheduleAfterSave.defaultModel === 'haiku'

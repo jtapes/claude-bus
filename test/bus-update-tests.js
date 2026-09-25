@@ -16,7 +16,7 @@ module.exports = async function busUpdateTests({ sandbox, check, HOOKS }) {
   fs.mkdirSync(root, { recursive: true });
 
   // Подставной GitHub: releases/latest, дерево тега и raw-файлы. Что отдавать — меняет сценарий через fake
-  const fake = { latest: { status: 200, body: { tag_name: 'v1.1.0', body: 'Шо нового: кнопка', html_url: 'https://github.com/o/r/releases/tag/v1.1.0' } }, files: {}, tamper: null, extraTree: [] };
+  const fake = { latest: { status: 200, body: { tag_name: 'v1.1.0', body: 'Что нового: кнопка', html_url: 'https://github.com/o/r/releases/tag/v1.1.0' } }, files: {}, tamper: null, extraTree: [] };
   const hits = [];
   const server = http.createServer((req, res) => {
     hits.push(req.url);
@@ -73,7 +73,7 @@ module.exports = async function busUpdateTests({ sandbox, check, HOOKS }) {
 
     const dir = mkSkill(oldFiles);
     const available = await update.check({ dir });
-    check('W2 bus update check: релиз новее — available с версиями, заметками и ссылкой', available.state === 'available' && available.current === '1.0.0' && available.latest === '1.1.0' && available.tag === 'v1.1.0' && available.notes === 'Шо нового: кнопка' && available.url.startsWith('https://github.com/'), JSON.stringify(available));
+    check('W2 bus update check: релиз новее — available с версиями, заметками и ссылкой', available.state === 'available' && available.current === '1.0.0' && available.latest === '1.1.0' && available.tag === 'v1.1.0' && available.notes === 'Что нового: кнопка' && available.url.startsWith('https://github.com/'), JSON.stringify(available));
 
     fake.latest.body = { ...fake.latest.body, tag_name: 'v1.0.0' };
     const same = await update.check({ dir });

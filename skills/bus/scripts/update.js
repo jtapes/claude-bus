@@ -34,7 +34,7 @@ function compare(a, b) {
   return 0;
 }
 
-/** release.json папки скилла или null: нет файла, битый JSON, кривая версия или repo — считаем, шо метки нет. */
+/** release.json папки скилла или null: нет файла, битый JSON, кривая версия или repo — считаем, что метки нет. */
 function release(dir = SKILL_DIR) {
   try {
     const r = JSON.parse(fs.readFileSync(path.join(dir, 'release.json'), 'utf8'));
@@ -84,16 +84,16 @@ async function check({ dir = SKILL_DIR } = {}) {
 async function listFiles(repo, tag) {
   const tree = await getJson(`${API}/repos/${repo}/git/trees/${encodeURIComponent(tag)}?recursive=1`, FILE_TIMEOUT_MS);
   if (!tree || !Array.isArray(tree.tree)) throw new BusError(tr('GitHub вернул не дерево файлов релиза.'));
-  if (tree.truncated) throw new BusError(tr('Дерево релиза пришло не целиком — не ставлю.'));
+  if (tree.truncated) throw new BusError(tr('Дерево релиза пришло не целиком — установка отменена.'));
   const files = [];
   for (const entry of tree.tree) {
     if (typeof entry.path !== 'string' || !entry.path.startsWith(PREFIX)) continue;
     const rel = entry.path.slice(PREFIX.length);
     if (entry.type === 'tree') continue;
-    if (entry.type !== 'blob' || entry.mode === '120000' || !safeRel(rel) || !/^[0-9a-f]{40}$/.test(entry.sha)) throw new BusError(tr('В релизе подозрительный путь: {path}. Не ставлю.', { path: entry.path.slice(0, 120) }));
+    if (entry.type !== 'blob' || entry.mode === '120000' || !safeRel(rel) || !/^[0-9a-f]{40}$/.test(entry.sha)) throw new BusError(tr('В релизе подозрительный путь: {path}. Установка отменена.', { path: entry.path.slice(0, 120) }));
     files.push({ rel, sha: entry.sha, url: `${RAW}/${repo}/${encodeURIComponent(tag)}/${entry.path.split('/').map(encodeURIComponent).join('/')}` });
   }
-  if (!files.some((f) => f.rel === 'release.json')) throw new BusError(tr('В релизе нет release.json — после такой установки обновления бы кончились. Не ставлю.'));
+  if (!files.some((f) => f.rel === 'release.json')) throw new BusError(tr('В релизе нет release.json — после такой установки обновления бы кончились. Установка отменена.'));
   return files;
 }
 
@@ -140,7 +140,7 @@ async function install({ dir = SKILL_DIR, tag } = {}) {
       } catch (e) {
         throw new BusError(tr('Не скачался {path}: {why}', { path: file.rel, why: e.name === 'TimeoutError' ? tr('таймаут') : e.message }));
       }
-      if (blobSha(buf) !== file.sha) throw new BusError(tr('{path} скачался битым: хеш не сходится с релизом. Ничего не поменял.', { path: file.rel }));
+      if (blobSha(buf) !== file.sha) throw new BusError(tr('{path} скачался повреждённым: хеш не сходится с релизом. Ничего не поменял.', { path: file.rel }));
       fs.mkdirSync(path.dirname(path.join(stage, file.rel)), { recursive: true });
       fs.writeFileSync(path.join(stage, file.rel), buf);
     }));

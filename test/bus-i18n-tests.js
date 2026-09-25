@@ -41,7 +41,7 @@ module.exports = async function busI18nTests({ check, HOOKS }) {
   check('bus i18n: в словаре нет ключей, которых нет в коде', !dead.length, dead.join('\n        '));
   check('bus i18n: ключ tr/N — строка в одинарных кавычках, иначе тест его не видит', !templates.length, templates.join('\n        '));
   const skewed = Object.keys(I.EN).filter((key) => placeholders(key) !== placeholders(I.EN[key]));
-  check('bus i18n: плейсхолдеры {x} в переводе те же, шо в исходной строке', !skewed.length, skewed.join('\n        '));
+  check('bus i18n: плейсхолдеры {x} в переводе те же, что в исходной строке', !skewed.length, skewed.join('\n        '));
   const russian = Object.keys(I.EN).filter((key) => CYRILLIC.test(I.EN[key].replace(/## Шина/g, ''))); // «## Шина» — буквальный заголовок блока в файле роли
   check('bus i18n: в английских строках нет кириллицы', !russian.length, russian.join('\n        '));
   const edges = Object.keys(I.EN).filter((key) => /^\s/.test(key) !== /^\s/.test(I.EN[key]) || /\s$/.test(key) !== /\s$/.test(I.EN[key]));

@@ -39,14 +39,15 @@ const IDLE_TICKS = 3; // столько проходов подряд без в�
 const CATCHUP_MAX_MS = 7 * 24 * 60 * 60 * 1000; // пропуск старше недели не догоняем
 const NAME = /^[a-z0-9][a-z0-9-]{0,30}$/;
 const settings = require('./settings.js');
-const MODEL = settings.MODEL; // та же проверка, шо у настройки schedule.model: «opus[1m]» проходит и там, и в задаче
+const MODEL = settings.MODEL; // та же проверка, что у настройки schedule.model: «opus[1m]» проходит и там, и в задаче
 // Дефолты; проект переопределяет их настройками schedule.* (settings.js, шестерёнка в UI). Глобальные задачи (root = null) живут на дефолтах
 const DEFAULT_TIMEOUT_MIN = settings.DEFAULTS['schedule.timeoutMin'];
 const MAX_TIMEOUT_MIN = settings.SCHEMA.find((item) => item.key === 'schedule.timeoutMin').max;
 const WARN_GAP_MIN = 15; // чаще — задача принимается, но с ценой в токенах за сутки; порог не настройка: пользователь убрал его из формы 21.09.2026
 const INLINE_MARGIN = 300; // длиннее «лимит сообщения − запас» — промпт уходит агенту вложением: сообщение шины — одна строка до message.maxLength символов
 const conf = (root) => settings.get(root);
-const modelOf = (job) => job.model || conf(job.root)['schedule.model'];
+// Headless-задача проекта — это сессия оркестратора: без своей модели идёт на модели оркестратора, потом — на schedule.model
+const modelOf = (job) => job.model || (job.root && settings.orchestrator(job.root, conf(job.root)).model) || conf(job.root)['schedule.model'];
 const FEED_REPORT = 600; // отчёт headless-запуска в ленте; целиком — в логе задачи
 const LOG_REPORT = 4000;
 const WAKE_TOKENS = 20000; // первый ход фонового подъёма без урезанного доступа (access-weights.json, замер 21.09.2026 — 19.7к), для оценки цены частого расписания
@@ -197,7 +198,7 @@ function saveJob(root, input, { force = false, overwrite = force } = {}) {
   if (gap < limits['schedule.minGapMin'] && !force) throw Object.assign(new bus.BusError(`Слишком часто: ${costNote(gap)}. Уверен — повтори с --force.`), { code: 'frequent' });
   const warning = gap < WARN_GAP_MIN ? `Часто: ${costNote(gap)}.` : '';
 
-  // Промпт режется тем же redact, шо и сообщения: файл задачи уходит агенту текстом или вложением
+  // Промпт режется тем же redact, что и сообщения: файл задачи уходит агенту текстом или вложением
   const { redact } = require('./lib/redact.js');
   const job = { name, root, cron: parsed.expr, to, enabled: input.enabled !== false, model, timeout, catchup: Boolean(input.catchup), rules: Boolean(input.rules), prompt: redact(prompt) };
   writeAtomic(jobFile(root, name), serialize(job));
@@ -300,8 +301,8 @@ function runForAgent(job) {
 function headlessPrompt(job) {
   return [
     `Тебя запустил планировщик шины bus: задача «${job.name}» по расписанию (${cron.describe(job.cron)}). Каталог: ${cwdOf(job.root)}.`,
-    'Ты работаешь в фоне, без чата: вопросы задавать некому — шо неясно, реши сам по месту или опиши в итоге.',
-    'Твой итоговый ответ уйдёт пользователю в ленту шины: закончи коротким итогом — шо сделано, шо нет и почему.',
+    'Ты работаешь в фоне, без чата: вопросы задавать некому — что неясно, реши сам по месту или опиши в итоге.',
+    'Твой итоговый ответ уйдёт пользователю в ленту шины: закончи коротким итогом — что сделано, что нет и почему.',
     '',
     'Задача:',
     job.prompt,
@@ -321,7 +322,7 @@ function reportToFeed(job, report) {
 async function runHeadless(job) {
   if (!wake.enabled()) return { state: 'skipped', reason: 'автоподъём выключен (bus.js autowake on)' };
   // Глобальные CLAUDE.md и rules/ — про чат с пользователем, в фоне это ≈3.3к токенов шума на запуск; нужны задаче — rules: true в её файле
-  const r = await wake.runClaude({ cwd: cwdOf(job.root), model: modelOf(job), settings: job.rules ? null : wake.headlessSettings(dirOf(job.root)), prompt: headlessPrompt(job), timeoutMs: job.timeout * 60000 });
+  const r = await wake.runClaude({ cwd: cwdOf(job.root), model: modelOf(job), settings: job.rules ? null : wake.headlessSettings(dirOf(job.root)), prompt: headlessPrompt(job), timeoutMs: job.timeout * 60000, orchestrator: Boolean(job.root) });
   reportToFeed(job, r.ok ? r.report : `СБОЙ: ${r.reason}`);
   return { state: r.ok ? 'ok' : 'failed', ms: r.ms, tokens: r.tokens, cost: r.cost, reason: r.reason, report: r.report };
 }
@@ -366,7 +367,7 @@ function daemonAlive() {
 
 /**
  * Один проход: какие задачи пора запускать. prev — время прошлого прохода: задачи с catchup догоняют пропущенное
- * (комп спал, демон лежал) одним запуском. launch — чем запускать (тесты подставляют свой).
+ * (компьютер спал, демон лежал) одним запуском. launch — чем запускать (тесты подставляют свой).
  * → число включённых задач
  */
 function tick(now, prev, fired, launch = spawnRun) {
@@ -455,7 +456,7 @@ function installStartup() {
 
 const removeStartup = () => STARTUP_FILE && fs.rmSync(STARTUP_FILE, { force: true });
 
-/** → строка о том, шо сделано. pm2 не стоит — BusError с подсказкой. */
+/** → строка о том, что сделано. pm2 не стоит — BusError с подсказкой. */
 function startDaemon() {
   if (daemonAlive()) return 'демон уже работает';
   pm2(['delete', PM2_NAME]); // остановленная или упавшая запись с тем же именем не дала бы стартовать

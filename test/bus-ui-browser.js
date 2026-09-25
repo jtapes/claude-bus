@@ -98,7 +98,7 @@ const defFile = (root, name) => {
 };
 const read = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '');
 
-// Настройки проекта (шестерёнка): та же свёртка каталога в ключ, шо rootKey в settings.js — иначе тест смотрит не туда
+// Настройки проекта (шестерёнка): та же свёртка каталога в ключ, что rootKey в settings.js — иначе тест смотрит не туда
 const settingsFile = path.join(configDir, 'bus', 'settings.json');
 const settingsKey = (root) => {
   const resolved = path.resolve(root).split(path.sep).join('/').replace(/\/+$/, '');
@@ -261,6 +261,17 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const bosses = hues.filter((h) => h.boss).map((h) => h.hue);
       const off = await page.locator('.agent.off .name').allTextContents();
       return [errors.length === 0 && ['shop', 'dima', 'masha', 'loner', 'qa', 'landing'].every((n) => names.includes(n)) && !names.includes('user') && new Set(wires).size === wires.length && bosses.length > 0 && bosses.every((h) => h === '52') && !wires.includes('52') && off.join() === 'loner' && (await page.locator('.msg').count()) >= 10 && (await overflow(page)) <= 0, JSON.stringify({ errors, names, hues })];
+    });
+
+    await scenario('E1c как в мессенджере: сообщения оркестратора этого каталога — справа, агентов — слева; свои сдвинуты не больше чем на 60px', async () => {
+      const got = await page.evaluate(() => {
+        const feed = document.querySelector('#feed');
+        const left = feed.getBoundingClientRect().left + parseFloat(getComputedStyle(feed).paddingLeft);
+        return [...feed.querySelectorAll('.msg')].map((m) => { const r = m.getBoundingClientRect(); return { mine: m.classList.contains('from-me'), from: m.querySelector('.who').textContent, x: Math.round(r.left - left), right: Math.round(r.right - left) }; });
+      });
+      const mine = got.filter((m) => m.mine), agents = got.filter((m) => !m.mine);
+      const boss = new Set(mine.map((m) => m.from));
+      return [mine.length > 0 && agents.length > 0 && boss.size === 1 && agents.every((m) => !boss.has(m.from) && m.x === 0) && mine.every((m) => m.x > 0 && m.x <= 61), JSON.stringify(got.slice(0, 6))];
     });
 
     await scenario('E1b порядок загрузки: сначала подписка на события, потом состояние — иначе сообщение, разосланное в этот зазор, до вкладки не доходит', async () => {
@@ -757,6 +768,40 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         JSON.stringify({ clearGone, tabsBefore, tabsAfter, othersVisible, d: sent.d, history, newHidden })];
     });
 
+    await scenario('E52 лимиты аккаунта в шапке — плашка с окнами 5ч/7д из снимка rate-limits.json; на вкладке диалога — кольцо и процент окна контекста последнего запуска агента, от 300к — медная плашка; без запуска — пусто; на ответе агента из фонового запуска — плашка расхода перед временем, у сообщения пользователя — нет', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      fs.mkdirSync(path.join(configDir, 'cache'), { recursive: true });
+      fs.writeFileSync(path.join(configDir, 'cache', 'rate-limits.json'), JSON.stringify({ five_hour: { used_percentage: 42, resets_at: now + 7800 }, seven_day: { used_percentage: 91, resets_at: now + 200000 } }));
+      const d = (journalRecords().find((r) => r.text === 'в новом диалоге') || {}).d;
+      const mashaBox = path.join(shop, '.claude', 'bus', 'masha');
+      fs.writeFileSync(path.join(mashaBox, 'wake-context.json'), JSON.stringify({ 'shop#': { tokens: 45000, window: 200000, at: Date.now() }, [`shop#${d}`]: { tokens: 320000, window: 1000000, at: Date.now() } }));
+      await page.locator('#limits .win').nth(1).waitFor({ timeout: 10000 });
+      await page.locator('#dialogTabs .tab .ctx').nth(1).waitFor({ timeout: 10000 });
+      const wins = await page.locator('#limits .win').allTextContents();
+      const high = await page.locator('#limits .win').nth(1).locator('.meter.lvl-high').count();
+      const ctx = await page.locator('#dialogTabs .tab .ctx').allTextContents();
+      const warn = await page.locator('#dialogTabs .tab .ctx.warn').count();
+      const title = await page.locator('#dialogTabs .tab .ctx').first().getAttribute('title');
+      if (process.env.BUS_SHOT) await page.waitForTimeout(600).then(() => page.screenshot({ path: path.join(process.env.BUS_SHOT, 'e52-limits.png') })); // после pop-in плашки
+      // Плашка расхода на ответе агента: сообщение из фонового запуска (BUS_RUN) и его цифры в wake-runs.json ящика
+      fs.writeFileSync(path.join(mashaBox, 'wake-runs.json'), JSON.stringify({ 'abcd1234-ab12': { tokens: 23300, input: 12, cacheWrite: 21000, cacheRead: 160000, output: 2288, context: 22600, window: 200000, cost: 0.0421, ms: 13000, at: Date.now() } }));
+      bus(shop, ['--as', 'masha', 'send', 'shop', 'done', 'ответ из фона с расходом'], { ...quiet, BUS_RUN: 'masha:abcd1234-ab12' });
+      await page.locator('#dialogTabs .tab', { hasText: 'в новом диалоге' }).locator('.open').click(); // ответ ушёл в диалог, из которого masha читала
+      const replyCard = page.locator('.msg', { hasText: 'ответ из фона с расходом' });
+      await replyCard.locator('.usage').waitFor({ timeout: 10000 });
+      const usageText = await replyCard.locator('.usage').textContent();
+      const usageTitle = await replyCard.locator('.usage').getAttribute('title');
+      const userCardUsage = await page.locator('.msg', { hasText: 'в новом диалоге' }).first().locator('.usage').count();
+      const beforeTime = await replyCard.locator('.meta').evaluate((meta) => { const u = meta.querySelector('.usage'); const t = meta.querySelector('time'); return Boolean(u && t && u.nextElementSibling === t); });
+      if (process.env.BUS_SHOT) await replyCard.screenshot({ path: path.join(process.env.BUS_SHOT, 'e52-usage.png') });
+      fs.rmSync(path.join(mashaBox, 'wake-context.json'), { force: true });
+      await page.locator('#dialogTabs .tab').first().locator('.open').click();
+      await page.locator('#dialogTabs .tab .ctx').first().waitFor({ state: 'detached', timeout: 10000 });
+      return [wins.length === 2 && /^5ч42%2ч\d+м$/.test(wins[0]) && wins[1].startsWith('7д91%') && high === 1 && ctx.join() === '23%,32%' && warn === 1 && title.includes('≈45к из 200к')
+        && usageText === '≈23.3к' && usageTitle.includes('контекст ≈22.6к из 200к (11%)') && usageTitle.includes('$0.042') && userCardUsage === 0 && beforeTime,
+        JSON.stringify({ wins, high, ctx, warn, title, usageText, usageTitle, userCardUsage, beforeTime })];
+    });
+
     await scenario('E32 «×» закрывает вкладку в историю, журнал цел; ответ агента в закрытый диалог открывает его сам; из истории — открыть и стереть (после confirm): стёрт только этот диалог, ответы снова идут в первый', async () => {
       const second = page.locator('#dialogTabs .tab', { hasText: 'в новом диалоге' });
       await second.locator('.close').click();
@@ -921,7 +966,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       return [en === 'Rewrite with AI' && ru === 'Переписать с ИИ', `${en} | ${ru}`];
     });
 
-    await scenario('E35c самоправка роли: галочка в форме — только субагенту, сообщение с ней помечено в ленте и галочка снимается; агент с черновиком подписан в списке; редактор открывается с черновиком в форме, diff и пояснением агента; «Отклонить правку агента» возвращает роль с диска и сносит черновик', async () => {
+    await scenario('E35c самоправка роли: галочка в форме — только субагенту, сообщение с ней помечено в ленте, галочка не снимается ни отправкой, ни сменой получателя, а проекту не уходит; агент с черновиком подписан в списке; редактор открывается с черновиком в форме, diff и пояснением агента; «Отклонить правку агента» возвращает роль с диска и сносит черновик', async () => {
       await page.selectOption('#to', { label: 'landing' });
       const hiddenForProject = await page.locator('#evolveWrap').isHidden();
       await page.selectOption('#to', { label: 'tester' });
@@ -931,7 +976,10 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       await page.fill('#text', 'задача с самоправкой из браузера');
       await page.click('#sendBtn');
       await page.locator('.msg', { hasText: 'задача с самоправкой из браузера' }).locator('.btw-tag', { hasText: 'самоправка' }).waitFor();
-      const reset = !(await page.isChecked('#evolve'));
+      await page.selectOption('#to', { label: 'landing' });
+      await page.selectOption('#to', { label: 'tester' });
+      const kept = await page.isChecked('#evolve');
+      await page.uncheck('#evolve'); // дальше сообщения tester-у — без самоправки
       const testerBox = path.join(shop, '.claude', 'bus', 'tester');
       const marked = fs.existsSync(path.join(testerBox, 'wake-evolve.json'));
       fs.rmSync(path.join(testerBox, 'wake-evolve.json'), { force: true });
@@ -952,8 +1000,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const diffHidden = await page.locator('#agentAiDiff').isHidden();
       await page.click('#agentCancel');
       await row.locator('.note', { hasText: 'предлагает правку роли' }).waitFor({ state: 'detached', timeout: 15000 });
-      return [hiddenForProject && reset && marked && body === '# Роль\n\nВыучил новое правило.' && about === 'черновик: когда поднимать' && note.includes('Агент предлагает правку своей роли') && note.includes('поправил дважды') && adds.includes('Выучил новое правило.')
-        && !onDisk.includes('Выучил новое правило.') && onDisk.includes(back.split('\n').pop()) && diffHidden && !fs.existsSync(path.join(testerBox, 'role-proposal.json')) && read(roleFile('tester')) === onDisk, JSON.stringify({ hiddenForProject, reset, marked, body, about, note, adds, back })];
+      return [hiddenForProject && kept && marked && body === '# Роль\n\nВыучил новое правило.' && about === 'черновик: когда поднимать' && note.includes('Агент предлагает правку своей роли') && note.includes('поправил дважды') && adds.includes('Выучил новое правило.')
+        && !onDisk.includes('Выучил новое правило.') && onDisk.includes(back.split('\n').pop()) && diffHidden && !fs.existsSync(path.join(testerBox, 'role-proposal.json')) && read(roleFile('tester')) === onDisk, JSON.stringify({ hiddenForProject, kept, marked, body, about, note, adds, back })];
     });
 
     await scenario('E35a диктовка в панели агента: фокус на кнопке — удержание пробела диктует в просьбу к ИИ, а не в сообщение за панелью; статус — в заметке панели; подсказка про пробел видна', async () => {
@@ -1106,7 +1154,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         && tooLong.includes('не длиннее 2000') && over && saveBlocked && keptAfterReset === expected && cleared, JSON.stringify({ scope, localScopes, counter, changed, savedGlobal, inProject, afterReload, tooLong, over, saveBlocked, keptAfterReset, cleared })];
     });
 
-    // ---------- расписание: свой сервер с заглушками pm2 и автозагрузки, шобы не тронуть настоящую систему ----------
+    // ---------- расписание: свой сервер с заглушками pm2 и автозагрузки, чтобы не тронуть настоящую систему ----------
     const schedStartup = path.join(sandbox, 'sched-startup');
     fs.mkdirSync(schedStartup, { recursive: true });
     // pm2() зовёт `${PM2_CMD} ${args}` через shell:true — «rem» встроен в cmd.exe и делает вызов комментарием: код 0 без спавна нового процесса,
@@ -1283,7 +1331,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       return [cards > 0 && after === cards, JSON.stringify({ cards, after })];
     });
 
-    await scenario('E46 обновление: при available в шапке медная кнопка «Обновить до v…» и ссылка «шо нового», после подтверждения — плашка «Обновлено… перезапусти», кнопки нет; при off кнопки нет', async () => {
+    await scenario('E46 обновление: при available в шапке медная кнопка «Обновить до v…» и ссылка «что нового», после подтверждения — плашка «Обновлено… перезапусти», кнопки нет; при off кнопки нет', async () => {
       const offline = await page.locator('#updateBtn').isVisible();
       const offer = { state: 'available', current: '1.0.0', latest: '1.1.0', notes: 'кнопка обновления', url: 'https://github.com/o/r/releases/tag/v1.1.0' };
       let posted = 0;
@@ -1508,7 +1556,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         JSON.stringify({ current, pinnedLabel, overflow, afterSwitch, pinnedLeft, saved })];
     });
 
-    await scenario('E50 «@» в поле сообщения: над полем файлы проекта; клик по папке — внутрь, → — глубже, ← — вверх; печать — поиск; Enter вставляет путь и не отправляет; ничего не нашлось — Enter закрывает список и не отправляет; Esc закрывает, и это слово больше не предлагает, стёр @ и набрал снова — открыт; кнопка-папка у скрепки — то же, шо @; на 390px без горизонтального скролла', async () => {
+    await scenario('E50 «@» в поле сообщения: над полем файлы проекта; клик по папке — внутрь, → — глубже, ← — вверх; печать — поиск; Enter вставляет путь и не отправляет; ничего не нашлось — Enter закрывает список и не отправляет; Esc закрывает, и это слово больше не предлагает, стёр @ и набрал снова — открыт; кнопка-папка у скрепки — то же, что @; на 390px без горизонтального скролла', async () => {
       for (const file of ['src/api/users.js', 'src/main.js', 'README.md']) {
         fs.mkdirSync(path.dirname(path.join(shop, file)), { recursive: true });
         fs.writeFileSync(path.join(shop, file), '');
@@ -1553,7 +1601,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       await page.keyboard.press('Enter');
       await page.locator('#mention').waitFor({ state: 'hidden' });
       const afterEmptyEnter = await text();
-      // Папка у скрепки — то же, шо @: дописывает « @» в конец и открывает список, второй клик закрывает; фокус остаётся в поле
+      // Папка у скрепки — то же, что @: дописывает « @» в конец и открывает список, второй клик закрывает; фокус остаётся в поле
       await page.keyboard.type(' '); // курсор на слове @… кнопка открыла бы его, а не новое
       await page.click('#filesBtn');
       await page.locator('#mention').waitFor();

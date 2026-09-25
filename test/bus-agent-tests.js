@@ -55,6 +55,30 @@ module.exports = async function busAgentTests({ sandbox, configDir, baseEnv, che
   const msg = (id, text, d) => ({ id, text, fromKey: 'aga', toKey: 'dima@/p', ...(d ? { d } : {}) });
   const tabsOf = L.dialogTabs([msg('a1', 'старый диалог про деплой и тесты базы'), msg('a3', 'второй', 'b2'), msg('a4', 'ещё старый'), { id: 'a5', text: 'чужая пара', fromKey: 'aga', toKey: 'helper' }], [{ pair: 'aga|dima@/p', d: 'b2', id: 'a2' }, { pair: 'aga|dima@/p', d: 'c9', id: 'c9' }], 'aga|dima@/p');
   const empty = L.dialogTabs([], [], 'aga|dima@/p');
+  {
+    const { streamContext } = require(path.join(SCRIPTS, 'wake.js'));
+    const feed = (events) => events.reduce((ctx, e) => (streamContext(ctx, e), ctx), { model: '', tokens: 0, window: 0, calls: new Map(), usage: null });
+    const say = (model, extra = {}) => ({ type: 'assistant', parent_tool_use_id: null, message: { id: model, model, usage: { input_tokens: 5, cache_read_input_tokens: 1000 } }, ...extra });
+    const init = { type: 'system', subtype: 'init', model: 'claude-opus-5-5[1m]' };
+    const agentOwn = feed([init, say('claude-haiku-4-5-20251001')]);
+    const sessionModel = feed([init, say('claude-opus-5-5')]);
+    const plain = feed([{ ...init, model: 'claude-sonnet-5' }, say('claude-sonnet-5')]);
+    const done = feed([init, say('claude-haiku-4-5-20251001'), { type: 'result', usage: {}, modelUsage: { 'claude-haiku-4-5-20251001': { contextWindow: 200000 } } }, say('claude-opus-5-5', { message: { id: 'late', model: 'claude-opus-5-5', usage: {} } })]);
+    check('A26 bus окно до итога: init называет модель сессии (opus[1m] из настроек), у агента в роли своя — окно по модели ответа: haiku под opus[1m] — 200к, сама opus[1m] — 1M, без [1m] — 200к; после итога окно из modelUsage не перетирается',
+      agentOwn.window === 200000 && sessionModel.window === 1000000 && plain.window === 200000 && done.window === 200000 && agentOwn.tokens === 1005, JSON.stringify({ agentOwn: agentOwn.window, sessionModel: sessionModel.window, plain: plain.window, done: done.window }));
+  }
+  {
+    const now = Date.UTC(2026, 8, 25, 12, 0, 0);
+    const sec = now / 1000;
+    const view = L.rateLimits({ at: now - 5 * 60000, five_hour: { used_percentage: 49.6, resets_at: sec + 2 * 3600 + 600 }, seven_day: { used_percentage: 81, resets_at: sec + 2 * 86400 + 3 * 3600 } }, now);
+    const reset = L.rateLimits({ at: now - 2 * 3600000, five_hour: { used_percentage: 99, resets_at: sec - 10 } }, now);
+    const big = L.tabContext({ contexts: { 'aga#b2': { tokens: 310000, window: 1000000, at: now } } }, 'aga', 'b2');
+    check('A25 bus лимиты и контекст: пороги полосок как в statusline (50 — жёлтый, 80 — красный), остаток и время сброса, окно сброшено после снимка — «сброшен», снимок старше часа — stale; контекст вкладки — процент от окна, от 300к — warn; нет запуска в диалоге — null',
+      view.windows.map((w) => `${w.label}:${w.pct}:${w.level}:${w.left}`).join() === '5ч:50:mid:2ч10м,7д:81:high:2д3ч' && view.windows[0].at === L.clock((sec + 2 * 3600 + 600) * 1000) && !view.stale
+      && reset.windows[0].reset && reset.stale && L.rateLimits(null) === null && L.rateLimits({ at: now }) === null
+      && big.pct === 31 && big.warn && big.level === 'low' && L.tabContext({ contexts: {} }, 'aga', 'b2') === null && L.tabContext(undefined, 'aga', '') === null,
+      JSON.stringify(view) + JSON.stringify(reset) + JSON.stringify(big));
+  }
   check('L52 вкладки диалогов: по порядку появления, название — начало первого сообщения, пустой «+» — «Новый диалог»; текущий — диалог последней записи пары; чужая пара не в счёт; без записей — одна пустая вкладка',
     tabsOf.tabs.map((t) => t.d).join() === ',b2,c9' && tabsOf.tabs[0].title === 'старый диалог про деплой и т…' && tabsOf.tabs[0].count === 2 && tabsOf.tabs[1].title === 'второй' && tabsOf.tabs[2].title === 'Новый диалог' && tabsOf.current === 'c9'
     && empty.tabs.length === 1 && empty.current === '' && L.threadOf(msg('x', 't', 'b2')) === 'aga|dima@/p#b2' && L.threadOf(msg('x', 't')) === 'aga|dima@/p', JSON.stringify(tabsOf));
@@ -71,7 +95,7 @@ module.exports = async function busAgentTests({ sandbox, configDir, baseEnv, che
   check('L53 лента во вкладке: переписка пары — только открытого диалога, переписка агента с другими видна; сводка и вес — по диалогу',
     inTab(msg('m1', 't', 'b2')) && !inTab(msg('m2', 't')) && inTab({ id: 'm3', text: 't', fromKey: 'dima@/p', toKey: 'helper', roots: [] })
     && L.covered(msg('m1', 't', 'b2'), new Map([['aga|dima@/p#b2', { upto: 'm9' }]])) && !L.covered(msg('m1', 't'), new Map([['aga|dima@/p#b2', { upto: 'm9' }]])), '');
-  check('L51 имя нового агента: правило то же, шо в bus.js; служебные имена шины заняты', L.validAgentName('qa-2') && !L.validAgentName('Дима') && !L.validAgentName('-x') && !L.validAgentName('files') && !L.validAgentName('scheduler') && !L.validAgentName(''), '');
+  check('L51 имя нового агента: правило то же, что в bus.js; служебные имена шины заняты', L.validAgentName('qa-2') && !L.validAgentName('Дима') && !L.validAgentName('-x') && !L.validAgentName('files') && !L.validAgentName('scheduler') && !L.validAgentName(''), '');
 
   // ---------- песочница ----------
   const proj = path.join(sandbox, 'work', 'agent-a');
@@ -121,7 +145,15 @@ function main() {
     const name = argv[argv.indexOf('--agent') + 1];
     require('fs').appendFileSync(${JSON.stringify(wakeSeen)}, JSON.stringify({ name, cwd: process.cwd(), argv }) + '\\n');
     require('child_process').spawnSync(process.execPath, [${JSON.stringify(BUS_JS)}, '--as', name, 'inbox', '--quiet'], { cwd: process.cwd(), env: process.env });
-    return console.log(JSON.stringify({ type: 'result', is_error: false, result: 'ответил', usage: { input_tokens: 10, output_tokens: 5 } }));
+    // ctxer отвечает проекту, как агент по роли: bus.js send из своего Bash — окружение (BUS_RUN) то же, что у claude
+    if (name === 'ctxer') require('child_process').spawnSync(process.execPath, [${JSON.stringify(BUS_JS)}, '--as', name, 'send', 'aga', 'DONE', 'готово из фона'], { cwd: process.cwd(), env: process.env });
+    // Поток как у claude 2.1.282: init с моделью, ответы с usage (у субагента — parent_tool_use_id, в окно главной нити не идёт), лимиты, итог с modelUsage
+    const out = (e) => console.log(JSON.stringify(e));
+    out({ type: 'system', subtype: 'init', session_id: 'fake-session-1', model: 'claude-sonnet-5' });
+    out({ type: 'assistant', parent_tool_use_id: null, message: { content: [], usage: { input_tokens: 10, cache_creation_input_tokens: 20000, cache_read_input_tokens: 25000, output_tokens: 3 } } });
+    out({ type: 'assistant', parent_tool_use_id: 'toolu_sub', message: { content: [], usage: { input_tokens: 900000 } } });
+    out({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', unifiedWindows: { five_hour: { utilization: 0.42, resetsAt: 4102444800 }, seven_day: { utilization: 0.915, resetsAt: 4102531200 } } } });
+    return out({ type: 'result', is_error: false, result: 'ответил', usage: { input_tokens: 10, output_tokens: 5 }, modelUsage: { 'claude-haiku-4-5': { contextWindow: 100000 }, 'claude-sonnet-5': { contextWindow: 200000 } } });
   }
   require('fs').writeFileSync(${JSON.stringify(fakeSeen)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), stdin: s }));
   const say = (result) => console.log(JSON.stringify({ type: 'result', is_error: false, result, usage: { input_tokens: 2000, output_tokens: 400 } }));
@@ -161,8 +193,8 @@ function main() {
       const a = await stateAgent(name);
       return `${a.editable}/${a.deletable}`;
     };
-    check('A2 bus ui state: у проекта нет ни правки, ни удаления; локальный и обёртка — правка и удаление; глобальный — только правка',
-      (await flags('aga')) === 'false/false' && (await flags('gwrap')) === 'true/true' && (await flags('loner')) === 'true/true' && (await flags('ghelper')) === 'true/false', [await flags('aga'), await flags('gwrap'), await flags('ghelper')].join(' '));
+    check('A2 bus ui state: проект правится (роль оркестратора), но не удаляется; локальный и обёртка — правка и удаление; глобальный — только правка',
+      (await flags('aga')) === 'true/false' && (await flags('gwrap')) === 'true/true' && (await flags('loner')) === 'true/true' && (await flags('ghelper')) === 'true/false', [await flags('aga'), await flags('gwrap'), await flags('ghelper')].join(' '));
 
     // ---------- создать ----------
     const noToken = await post('/api/agent/create', { name: 'newbie', ...fields }, {});
@@ -189,9 +221,9 @@ function main() {
     const closed = await role(`newbie@${proj}`, 'nope');
     const opened = (await role(`newbie@${proj}`)).json();
     const project = await role('aga');
-    check('A5 bus ui роль: без токена в адресе — 403; поля формы отдельно, описание без кавычек YAML, тело без блока «Шина», блок — отдельно; у проекта роли нет — 400',
+    check('A5 bus ui роль: без токена в адресе — 403; поля формы отдельно, описание без кавычек YAML, тело без блока «Шина», блок — отдельно; у проекта — роль оркестратора: пустые свои поля и общие отдельно',
       closed.status === 403 && opened.name === 'newbie' && opened.description === 'QA проекта: гоняет тесты' && opened.model === 'sonnet' && opened.effort === 'low' && opened.fast === false && opened.registered === true && !('tools' in opened) && opened.body === '# Новичок\n\nПроверяет код.'
-      && opened.busBlock.startsWith('## Шина') && opened.deletable === true && opened.warning === '' && project.status === 400, JSON.stringify(opened).slice(0, 300) + project.text);
+      && opened.busBlock.startsWith('## Шина') && opened.deletable === true && opened.warning === '' && project.status === 200 && project.json().orchestrator === true && project.json().body === '' && project.json().deletable === false && project.json().common.model === '', JSON.stringify(opened).slice(0, 300) + project.text);
 
     // ---------- править ----------
     const key = `newbie@${proj}`;
@@ -226,6 +258,41 @@ function main() {
     check('A7 bus ui глобальный агент: роль правится с предупреждением «общая на все проекты», удалить нельзя — 400, файл и регистрация на месте; проект — тоже 400',
       globalOpened.warning.includes('все проекты') && globalOpened.deletable === false && globalSaved.status === 200 && read(globalRole).includes('правка из UI') && read(globalRole).includes('model: haiku')
       && globalDeleted.status === 400 && globalDeleted.json().error.includes('нельзя') && fs.existsSync(globalRole) && (await stateAgent('ghelper')).registered === true && projectDeleted.status === 400 && (await stateAgent('aga')).orchestrator === true, globalDeleted.text + projectDeleted.text);
+
+    // ---------- оркестратор: карандаш у проекта ----------
+    const localSettings = path.join(proj, '.claude', 'settings.local.json');
+    const local = () => JSON.parse(read(localSettings) || '{}');
+    const hook = (extra = {}) => spawnSync(process.execPath, [BUS_JS, 'orchestrator', '--hook'], { cwd: proj, input: JSON.stringify({ cwd: proj, source: 'startup' }), encoding: 'utf8', env: env(proj, extra) }).stdout;
+    const hookEmpty = hook();
+    const bossFastSonnet = await post('/api/agent/save', { key: 'aga', model: 'sonnet', effort: '', fast: true, body: '' });
+    const bossSaved = await post('/api/agent/save', { key: 'aga', model: 'opus', effort: 'high', fast: true, body: 'Задачи по фронту — frontend.' });
+    const afterBoss = local();
+    const bossOpened = (await role('aga')).json();
+    const hookOut = hook();
+    const hookInWake = hook({ BUS_WAKE: '1' });
+    const hookInSchedule = hook({ BUS_WAKE: '1', BUS_ORCHESTRATOR: '1' });
+    check('A7a bus ui оркестратор: fast на sonnet — 400; сохранение пишет model, effortLevel и fastMode в settings.local.json проекта и промпт в настройки; хук SessionStart отдаёт промпт, в фоновом подъёме субагента молчит, в headless-задаче расписания — нет; без промпта молчит',
+      hookEmpty === '' && bossFastSonnet.status === 400 && bossSaved.status === 200 && afterBoss.model === 'opus' && afterBoss.effortLevel === 'high' && afterBoss.fastMode === true
+      && bossOpened.body === 'Задачи по фронту — frontend.' && bossOpened.model === 'opus' && bossOpened.effort === 'high' && bossOpened.fast === true
+      && hookOut.includes('Роль оркестратора «aga»') && hookOut.includes('Задачи по фронту — frontend.') && hookInWake === '' && hookInSchedule.includes('Задачи по фронту'),
+      JSON.stringify({ bossFastSonnet: bossFastSonnet.text, bossSaved: bossSaved.text, afterBoss, hookOut, hookInWake }));
+
+    // Руками поменял модель в settings.local.json — шина её не уберёт; своё шины (effort, fast) при очистке уходит
+    fs.writeFileSync(localSettings, JSON.stringify({ ...local(), model: 'haiku', permissions: { allow: ['Bash(ls)'] } }, null, 2));
+    const cleared = await post('/api/agent/save', { key: 'aga', model: '', effort: '', fast: false, body: '' });
+    const afterClear = local();
+    const commonSaved = (await post('/api/settings', { values: { 'orchestrator.model': 'sonnet', 'orchestrator.prompt': 'Общее для всех.', 'orchestrator.fast': false } })).json();
+    const afterCommon = local();
+    const commonRole = (await role('aga')).json();
+    const hookCommon = hook();
+    await post('/api/settings', { values: { 'orchestrator.model': null, 'orchestrator.prompt': null } });
+    const afterCommonReset = local();
+    check('A7b bus оркестратор: очистка убирает из settings.local.json только записанное шиной (своя модель пользователя и permissions целы); общая модель из шестерёнки доходит до проекта, в карандаше видна «как у всех», хук отдаёт общий промпт; сброс общей убирает её из файла',
+      cleared.status === 200 && afterClear.model === 'haiku' && !('effortLevel' in afterClear) && !('fastMode' in afterClear) && afterClear.permissions.allow[0] === 'Bash(ls)'
+      && commonSaved.ok === true && afterCommon.model === 'sonnet' && commonRole.model === '' && commonRole.common.model === 'sonnet' && hookCommon.includes('Общее для всех.')
+      && !('model' in afterCommonReset) && afterCommonReset.permissions.allow[0] === 'Bash(ls)',
+      JSON.stringify({ afterClear, afterCommon, commonRole, afterCommonReset, hookCommon }));
+    fs.rmSync(localSettings, { force: true });
 
     const wrapKey = `gwrap@${proj}`;
     const wrapOpened = (await role(wrapKey)).json();
@@ -280,6 +347,43 @@ function main() {
     check('A16a bus ui глобальные правила: rules строкой — 400; галочка кладёт globalRules рядом с fastMode, роль её показывает; фоновый подъём идёт без claudeMdExcludes, fastMode на месте; снята одна галочка — вторая цела, сняты обе — файла нет',
       rulesText.status === 400 && rulesOn.status === 200 && bothFlags.fastMode === true && bothFlags.globalRules === true && rulesShown === true && wokenRules && !('claudeMdExcludes' in rulesSettings) && rulesSettings.fastMode === true
       && fastOnly.status === 200 && fastOnlyFlags.fastMode === true && !('globalRules' in fastOnlyFlags) && rulesOff.status === 200 && !fs.existsSync(box('newbie', 'claude-settings.json')) && (await role(key)).json().rules === false, rulesText.text + rulesOn.text + JSON.stringify(bothFlags) + JSON.stringify(rulesSettings));
+
+    // ---------- окно контекста на вкладке и лимиты аккаунта из потока подъёма ----------
+    const snapshotFile = path.join(configDir, 'cache', 'rate-limits.json');
+    fs.mkdirSync(path.dirname(snapshotFile), { recursive: true });
+    fs.writeFileSync(snapshotFile, JSON.stringify({ five_hour: { used_percentage: 10, resets_at: 1 }, extra_window: { used_percentage: 5, resets_at: 2 } }));
+    def(path.join(proj, '.claude'), 'ctxer');
+    bus(proj, ['add', 'ctxer']);
+    const ctxBefore = read(wakeSeen).split('\n').filter((line) => line.includes('"ctxer"')).length;
+    // Сообщение из сессии проекта шина не будит (живой чат поднимает агента сам) — раннер зовём напрямую, как его зовёт wake.request
+    spawnSync(process.execPath, [BUS_JS, 'send', 'ctxer', 'TASK', 'задача из сессии проекта'], { cwd: proj, encoding: 'utf8', env: wakeEnv });
+    const ctxSend = spawnSync(process.execPath, [path.join(SCRIPTS, 'wake.js'), 'run', 'ctxer', box('ctxer'), proj, 'aga'], { cwd: proj, encoding: 'utf8', env: wakeEnv, timeout: 20000 });
+    const ctxWoken = await until(() => read(wakeSeen).split('\n').filter((line) => line.includes('"ctxer"')).length > ctxBefore && !fs.existsSync(box('ctxer', 'wake.lock')), 20000);
+    const ctxSaved = JSON.parse(read(box('ctxer', 'wake-context.json')) || '{}');
+    const limitsSaved = JSON.parse(read(snapshotFile) || '{}');
+    const ctxState = await (async () => { for (let i = 0; i < 40; i++) { const st = (await request('GET', '/api/state')).json(); const a = st.agents.find((x) => x.name === 'ctxer') || {}; if (a.contexts && a.contexts['aga#']) return { a, st }; await wait(100); } return { a: {}, st: {} }; })();
+    check('A16b bus окно контекста: подъём по сообщению проекта пишет в wake-context.json под ключом «проект#диалог» вход последнего ответа главной нити (субагент и сумма result.usage не в счёт) и окно модели из modelUsage; /api/state отдаёт его агенту',
+      ctxWoken && ctxSaved['aga#'] && ctxSaved['aga#'].tokens === 45010 && ctxSaved['aga#'].window === 200000 && Number.isFinite(ctxSaved['aga#'].at)
+      && ctxState.a.contexts['aga#'].tokens === 45010 && L.tabContext(ctxState.a, 'aga', '').pct === 23, `woken=${ctxWoken} ${ctxSend.stderr} ` + read(box('ctxer', 'wake.json')) + read(box('ctxer', 'wake.log')).slice(-600) + JSON.stringify(ctxSaved) + JSON.stringify(ctxState.a.contexts));
+    check('A16c bus лимиты: rate_limit_event потока — в общий снимок statusline (доля → проценты), чужое окно снимка цело; /api/state отдаёт rateLimits со временем снимка',
+      limitsSaved.five_hour.used_percentage === 42 && limitsSaved.seven_day.used_percentage === 91.5 && limitsSaved.seven_day.resets_at === 4102531200 && limitsSaved.extra_window.used_percentage === 5
+      && ctxState.st.rateLimits && ctxState.st.rateLimits.five_hour.used_percentage === 42 && ctxState.st.rateLimits.at > Date.now() - 60000 && !('extra_window' in ctxState.st.rateLimits), JSON.stringify(limitsSaved) + JSON.stringify(ctxState.st.rateLimits));
+
+    const journalOf = () => read(path.join(proj, '.claude', 'bus', 'history.jsonl')).split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    const reply = journalOf().filter((r) => r.from === 'ctxer' && r.text === 'готово из фона').pop() || {};
+    const runsSaved = JSON.parse(read(box('ctxer', 'wake-runs.json')) || '{}');
+    const runSaved = runsSaved[reply.run] || {};
+    spawnSync(process.execPath, [BUS_JS, '--as', 'ctxer', 'send', 'aga', 'DONE', 'чужой запуск'], { cwd: proj, encoding: 'utf8', env: { ...wakeEnv, BUS_RUN: 'newbie:abcd1234-ab12' } });
+    spawnSync(process.execPath, [BUS_JS, 'send', 'ctxer', 'DONE', 'из сессии с BUS_RUN'], { cwd: proj, encoding: 'utf8', env: { ...wakeEnv, BUS_RUN: 'aga:abcd1234-ab12' } });
+    const foreign = journalOf().filter((r) => r.text === 'чужой запуск' || r.text === 'из сессии с BUS_RUN');
+    const runState = await (async () => { for (let i = 0; i < 40; i++) { const st = (await request('GET', '/api/state')).json(); const a = st.agents.find((x) => x.name === 'ctxer') || {}; const m = st.messages.find((x) => x.id === reply.id); if (a.runs && a.runs[reply.run] && m) return { a, m, agents: st.agents }; await wait(100); } return { a: {}, m: {}, agents: [] }; })();
+    const shown = L.messageUsage(runState.m, runState.agents) || {};
+    check('A16d bus расход на сообщении: ответ агента из фонового запуска несёт run — id запуска из BUS_RUN; wake-runs.json под этим id — расход итога без чтения из кэша, окно контекста и время; /api/state отдаёт run сообщению и runs агенту, L.messageUsage — плашка «≈15» с раскладкой; BUS_RUN чужого агента и сообщение проекта run не получают',
+      /^[0-9a-z]+-[0-9a-z]+$/.test(reply.run || '') && runSaved.tokens === 15 && runSaved.input === 10 && runSaved.output === 5 && runSaved.context === 45010 && runSaved.window === 200000 && !runSaved.live && Number.isFinite(runSaved.ms)
+      && foreign.length === 2 && foreign.every((r) => !('run' in r)) && runState.m.run === reply.run && shown.text === '≈15' && shown.title.includes('контекст ≈45к из 200к (23%)') && !shown.live
+      && L.messageUsage({ fromKey: 'x' }, runState.agents) === null, JSON.stringify({ reply, runsSaved, foreign, m: runState.m, shown }));
+
+    await post('/api/agent/delete', { key: `ctxer@${proj}` }); // дальше тесты считают агентов проекта
 
     // ---------- ИИ ----------
     const onDisk = read(localDef('newbie'));
@@ -399,7 +503,7 @@ console.log(JSON.stringify({ type: 'result', is_error: false, result: 'ок', us
     bus(proj, ['--as', 'newbie', 'send', 'aga', 'DONE', 'ответ после ротации']);
     const afterRotation = records().find((r) => r.text === 'ответ после ротации') || {};
     const rotatedTabs = ((await request('GET', `/api/state?k=${token}`)).json().dialogs || []).some((x) => x.d === d2);
-    bus(proj, ['--as', 'newbie', 'inbox']); // ящик новичка забран — A13 считает только то, шо придёт дальше
+    bus(proj, ['--as', 'newbie', 'inbox']); // ящик новичка забран — A13 считает только то, что придёт дальше
     check('A12a bus диалоги и ротация: журнал уехал в .1 от сообщения другой пары — ответ агента идёт в тот же текущий диалог, пустой диалог остаётся вкладкой; несуществующий или не строковый dialog — 400',
       fs.existsSync(`${journal}.1`) && afterRotation.text && !afterRotation.d && rotatedTabs && ghostDialog.status === 400 && notString.status === 400 && !read(journal).includes('фантом'),
       JSON.stringify({ afterRotation, rotatedTabs, ghostDialog: ghostDialog.text, notString: notString.text }));

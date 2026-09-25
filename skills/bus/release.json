@@ -1,5 +1,5 @@
 {
-  "version": "1.2.0",
+  "version": "1.2.1",
   "repo": "jtapes/claude-bus",
   "files": [
     "SKILL.md",
@@ -29,6 +29,7 @@
     "scripts/fsx.js",
     "scripts/journal.js",
     "scripts/lib/project.js",
+    "scripts/lib/rate-limits.js",
     "scripts/lib/redact.js",
     "scripts/scheduler.js",
     "scripts/settings.js",

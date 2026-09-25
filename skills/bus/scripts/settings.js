@@ -1,6 +1,6 @@
 /**
  * Настройки шины по проектам: ~/.claude/bus/settings.json → { global: { ключ: значение }, projects: { "<каталог>": { ключ: значение } } }.
- * Проект переопределяет дефолты из SCHEMA. В файле лежит только то, шо от дефолта отличается;
+ * Проект переопределяет дефолты из SCHEMA. В файле лежит только то, что от дефолта отличается;
  * каталога в файле нет (или root пустой — глобальный агент, UI вне проекта) — работают дефолты.
  * Ключи с global: true одни на все проекты и лежат в global: каталог им не нужен, сброс всех настроек проекта их не трогает.
  * Файла нет, он битый или значение в нём не проходит проверку — тоже дефолт: шина из-за настроек не падает.
@@ -13,7 +13,7 @@
 const os = require('os');
 const path = require('path');
 const fsx = require('./fsx.js');
-// Словарь (ui-i18n.js, ≈60 КБ) грузится, только когда есть шо переводить — текст ошибки: settings.js тянут bus.js и wake.js на каждый send и хук.
+// Словарь (ui-i18n.js, ≈60 КБ) грузится, только когда есть что переводить — текст ошибки: settings.js тянут bus.js и wake.js на каждый send и хук.
 // N — пометка «ключ перевода» для теста bus i18n, строку она не меняет
 const N = (text) => text;
 const tr = (...args) => require('./ui-i18n.js').tr(...args);
@@ -26,6 +26,7 @@ const GROUPS = [
   { key: 'wake', label: N('Подъём агентов') },
   { key: 'message', label: N('Сообщения') },
   { key: 'agent', label: N('Промпт агентов') },
+  { key: 'orchestrator', label: N('Оркестраторы') },
   { key: 'schedule', label: N('Расписание') },
   { key: 'ui', label: N('Интерфейс') },
 ];
@@ -37,10 +38,10 @@ const SCHEMA = [
   { key: 'wake.perHour', group: 'wake', type: 'int', default: 6, min: 1, max: 60, unit: N('в час'), label: N('Подъёмов в час на агента'),
     hint: N('Сколько раз в час другие агенты могут разбудить одного агента. Это тормоз от зацикленной переписки: каждый подъём — около 20 тысяч токенов. Твои сообщения из этого окна лимит не держит и в счёт не идут.') },
   { key: 'wake.timeoutMin', group: 'wake', type: 'int', default: 60, min: 1, max: 120, unit: N('мин'), label: N('Время на один подъём'),
-    hint: N('Сколько минут агент может работать за один подъём. Не уложился — процесс убит, в списке агент помечен «упал», продолжить можно кнопкой. Долгим задачам (сборка, большой рефакторинг) ставь больше.') },
+    hint: N('Сколько минут агент может работать за один подъём. Не уложился — процесс убит, в списке агент помечен «упал», продолжить можно кнопкой. Долгим задачам (сборка, больчтой рефакторинг) ставь больше.') },
 
   { key: 'message.maxLength', group: 'message', type: 'int', default: 5000, min: 500, max: 10000, unit: N('символов'), label: N('Длина сообщения'),
-    hint: N('Предел длины одного сообщения. Всё, шо длиннее, агент присылает файлом-вложением. Больше предел — больше токенов съест каждое сообщение у получателя.') },
+    hint: N('Предел длины одного сообщения. Всё, что длиннее, агент присылает файлом-вложением. Больше предел — больше токенов съест каждое сообщение у получателя.') },
   { key: 'files.max', group: 'message', type: 'int', default: 10, min: 1, max: 20, unit: N('шт.'), label: N('Вложений в сообщении'),
     hint: N('Сколько файлов можно приложить к одному сообщению.') },
   { key: 'files.maxMb', group: 'message', type: 'int', default: 30, min: 1, max: 100, unit: N('МБ'), label: N('Размер вложения'),
@@ -51,9 +52,28 @@ const SCHEMA = [
     hint: N('Предел вывода history в символах: три символа — примерно один токен в контексте агента. Старые сообщения, которые не влезли, отбрасываются.') },
 
   { key: 'agent.promptGlobal', group: 'agent', type: 'text', default: '', max: 2000, global: true, unit: N('символов'), label: N('Всем агентам во всех проектах'),
-    hint: N('Твои правила для субагентов шины в любом проекте. Текст приходит агенту вместе с входящими при каждом подъёме: три символа — примерно один токен, так шо держи коротким. Оркестраторам и задачам расписания без адресата он не идёт.') },
+    hint: N('Твои правила для субагентов шины в любом проекте. Текст приходит агенту вместе с входящими при каждом подъёме: три символа — примерно один токен, так что держи коротким. Оркестраторам и задачам расписания без адресата он не идёт — у них свой промпт ниже.') },
   { key: 'agent.prompt', group: 'agent', type: 'text', default: '', max: 2000, unit: N('символов'), label: N('Агентам этого проекта'),
     hint: N('Добавка к общему тексту для субагентов этого проекта: приходит следом за ним, общий не заменяет.') },
+
+  // Оркестратор — сессия Claude в каталоге проекта. Общие (global) — дефолт всех оркестраторов, в шестерёнке; свои у проекта (form: false) —
+  // в карандаше у оркестратора, пусто — берётся общее. Промпт едет хуком SessionStart, модель, effort и fast — в .claude/settings.local.json проекта
+  { key: 'orchestrator.prompt', group: 'orchestrator', type: 'text', default: '', max: 2000, global: true, unit: N('символов'), label: N('Промпт всем оркестраторам'),
+    hint: N('Твои правила для сессии Claude в каталоге любого проекта шины. Приходят один раз в начале сессии, после /clear и после сжатия контекста; задачам расписания без адресата — тоже. Своё для проекта — карандаш у оркестратора.') },
+  { key: 'orchestrator.model', group: 'orchestrator', type: 'model', optional: true, default: '', global: true, label: N('Модель оркестраторов'),
+    hint: N('С какой модели стартует сессия в каталоге проекта шины: пишется в .claude/settings.local.json проекта. Пусто — шина модель не трогает. Открытая сессия переключится со следующего запуска.') },
+  { key: 'orchestrator.effort', group: 'orchestrator', type: 'choice', options: ['', 'low', 'medium', 'high', 'xhigh', 'max'], default: '', global: true, label: N('Effort оркестраторов'),
+    hint: N('Уровень рассуждений сессии в каталоге проекта (effortLevel в .claude/settings.local.json). Пусто — по умолчанию у модели.') },
+  { key: 'orchestrator.fast', group: 'orchestrator', type: 'bool', default: false, global: true, label: N('Fast mode оркестраторов'),
+    hint: N('Быстрый режим сессии в каталоге проекта (fastMode в .claude/settings.local.json). Есть только на Opus, стоит дороже.') },
+  { key: 'orchestrator.projectPrompt', group: 'orchestrator', type: 'text', default: '', max: 2000, form: false, unit: N('символов'), label: N('Промпт оркестратора проекта'),
+    hint: N('Добавка к общему промпту оркестраторов: приходит следом за ним.') },
+  { key: 'orchestrator.projectModel', group: 'orchestrator', type: 'model', optional: true, default: '', form: false, label: N('Модель оркестратора проекта'),
+    hint: N('Пусто — общая модель оркестраторов.') },
+  { key: 'orchestrator.projectEffort', group: 'orchestrator', type: 'choice', options: ['', 'low', 'medium', 'high', 'xhigh', 'max'], default: '', form: false, label: N('Effort оркестратора проекта'),
+    hint: N('Пусто — общий effort оркестраторов.') },
+  { key: 'orchestrator.projectFast', group: 'orchestrator', type: 'choice', options: ['', 'on', 'off'], default: '', form: false, label: N('Fast mode оркестратора проекта'),
+    hint: N('Пусто — как у всех оркестраторов.') },
 
   { key: 'schedule.model', group: 'schedule', type: 'model', default: 'sonnet', label: N('Модель задач по расписанию'),
     hint: N('На какой модели идёт задача по расписанию, если в самой задаче модель не указана. Такие задачи работают без присмотра, поэтому по умолчанию не самая дорогая модель.') },
@@ -117,8 +137,14 @@ function parse(item, raw) {
   }
   if (item.type === 'model') {
     const model = String(raw).trim();
+    if (!model && item.optional) return '';
     if (!MODEL.test(model)) throw new SettingsError(tr('{key}: имя модели — латиница, цифры, точка и дефис, до 60 символов.', { key: item.key }), item.key);
     return model;
+  }
+  if (item.type === 'choice') {
+    const value = String(raw).trim().toLowerCase();
+    if (!item.options.includes(value)) throw new SettingsError(tr('{key}: одно из {list}.', { key: item.key, list: item.options.map((o) => o || tr('пусто')).join(', ') }), item.key);
+    return value;
   }
   if (item.type === 'text') {
     const text = String(raw).replace(/\r\n?/g, '\n').trim();
@@ -193,7 +219,21 @@ function set(root, patch) {
   return get(root);
 }
 
-/** Сбросить одну настройку или все настройки проекта. Общие (global) «сбросить всё» не трогает — только по имени. */
-const reset = (root, name = null) => set(root, Object.fromEntries((name ? [name] : SCHEMA.filter((item) => !item.global).map((item) => item.key)).map((k) => [k, null])));
+/**
+ * Сбросить одну настройку или все настройки проекта. Общие (global) «сбросить всё» не трогает — только по имени;
+ * своё оркестратора (form: false) — тоже: оно правится в карандаше, а «сбросить» в шестерёнке — про её поля.
+ */
+const reset = (root, name = null) => set(root, Object.fromEntries((name ? [name] : SCHEMA.filter((item) => !item.global && item.form !== false).map((item) => item.key)).map((k) => [k, null])));
 
-module.exports = { GROUPS, SCHEMA, DEFAULTS, MODEL, SettingsError, get, set, reset };
+/**
+ * Итог для оркестратора каталога: своё проекта, пусто — общее. prompt — общий и следом проектный (дописывается, не заменяет).
+ * fast: true | false | null — null, когда не задан ни общий, ни проектный: fastMode шина тогда не трогает. values — уже прочитанные get(root).
+ */
+function orchestrator(root, values = get(root)) {
+  const own = values['orchestrator.projectFast'];
+  const fast = own ? own === 'on' : values['orchestrator.fast'] ? true : null;
+  const prompt = [values['orchestrator.prompt'], values['orchestrator.projectPrompt']].filter((text) => String(text || '').trim()).join('\n\n');
+  return { prompt, model: values['orchestrator.projectModel'] || values['orchestrator.model'], effort: values['orchestrator.projectEffort'] || values['orchestrator.effort'], fast };
+}
+
+module.exports = { GROUPS, SCHEMA, DEFAULTS, MODEL, SettingsError, get, set, reset, orchestrator };
