@@ -25,6 +25,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { projectRoot } = require('./lib/project.js');
+const { samePath, stamp, writeAtomic, readJson, writeJson, withLock, appendRotating } = require('./fsx.js');
+const journal = require('./journal.js');
+const { KIND_CODE, journalFile, busDirOf, isSubagent, isDialogPair, dialogOf, newId, sideKey, pairKey, DIALOG_ID, readJournal, searchJournal, journalAppend, journalNote, rewriteJournal, currentDialog } = journal;
 // redact.js и child_process подгружаются по месту: хуку inbox --hook на каждом промпте они не нужны
 
 const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
@@ -38,7 +41,6 @@ const TYPES = ['TASK', 'QUESTION', 'DONE'];
 const ASK_TYPES = ['TASK', 'QUESTION']; // ждут ответа: отправитель-субагент получает метку ожидания. Будит получателя-субагента любой тип
 const NAME = /^[a-z0-9][a-z0-9-]{0,30}$/;
 const RESERVED = ['files', 'scheduler', 'schedule', 'clear']; // служебные папки .claude/bus/ и отправитель отчётов расписания — ящик агента лёг бы поверх; clear — «history clear» снёс бы журнал вместо показа переписки с таким агентом
-const KIND_CODE = { project: 'p', local: 'l', global: 'g' };
 const settings = require('./settings.js');
 // Лимиты ниже — дефолты: проект переопределяет их настройками (settings.js, шестерёнка в UI, bus.js settings)
 const MAX_LENGTH = settings.DEFAULTS['message.maxLength'];
@@ -48,9 +50,6 @@ const CUSTOMER_LENGTH = 120; // сколько текста задачи зак�
 const HISTORY_TAIL = settings.DEFAULTS['history.lines'];
 const HISTORY_CHARS = settings.DEFAULTS['history.chars']; // потолок вывода history: 30 строк по несколько тысяч символов — это десятки тысяч токенов в контекст агента
 const ROTATE_BYTES = 512 * 1024; // audit.log: перевалил — уезжает в .1, прежний .1 затирается
-const JOURNAL_ROTATE_BYTES = 2 * 1024 * 1024; // history.jsonl — так же, порог выше: в нём полные тексты
-const LOCK_WAIT_MS = 3000;
-const LOCK_STALE_MS = 10000;
 const MAX_FILES = settings.DEFAULTS['files.max'];
 const MAX_FILE_BYTES = settings.DEFAULTS['files.maxMb'] * 1024 * 1024;
 const FILE_NAME_LENGTH = 80;
@@ -63,7 +62,7 @@ const HOOK_COMMAND = 'node "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/bus/scrip
 const HOOK_MARK = 'skills/bus/scripts/bus.js';
 
 const USAGE = `Использование: node bus.js [--as <имя>] <команда>
-  init <имя>                  зарегистрировать текущий проект и подключить хук inbox
+  init <имя>                  подключить текущий проект под своим именем (необязательно: без init проект подключается сам первой командой — именем папки)
   add <имя> [--global]        зарегистрировать субагента: .claude/agents/<имя>.md проекта или ~/.claude/agents/<имя>.md; блока «Шина» в роли нет — допишет
   send <кому> <ТИП> [--btw] [--evolve] [--file <путь>]… <текст>   отправить сообщение до ${MAX_LENGTH} символов; текст «-» — взять из stdin, переносы строк сохраняются
                               --btw — агент сейчас работает в фоне: вбросить ему посреди хода, а не ждать конца; не работает — обычная отправка
@@ -92,20 +91,8 @@ const COMMANDS = 'send, broadcast, inbox, history, tokens, agents, ui, stop, res
 
 class BusError extends Error {}
 
-const samePath = (a, b) => path.relative(a, b) === '';
 const localRegistry = (root) => path.join(root, '.claude', 'bus', 'agents.json');
 const inboxFile = (agent) => path.join(agent.box, 'inbox.md');
-const busDirOf = (agent) => path.dirname(agent.box); // <корень>/.claude/bus — общий для всех агентов каталога
-const journalFile = (busDir) => path.join(busDir, 'history.jsonl');
-
-/** 2026-09-19 19:46:33 — в журнал и audit.log; short — 09-19 19:46, в строки, которые читает модель: год там лишние токены. */
-function stamp(short = false) {
-  const d = new Date();
-  const p = (n) => String(n).padStart(2, '0');
-  const day = `${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  const time = `${p(d.getHours())}:${p(d.getMinutes())}`;
-  return short ? `${day} ${time}` : `${d.getFullYear()}-${day} ${time}:${p(d.getSeconds())}`;
-}
 
 function readStdin() {
   if (process.stdin.isTTY) return '';
@@ -132,34 +119,7 @@ function saveRegistry(file, agents) {
 }
 
 /** Чтение-правка-запись реестра под локом: два одновременных init иначе теряют одну из регистраций. */
-function withRegistryLock(fn) {
-  fs.mkdirSync(BUS, { recursive: true });
-  const deadline = Date.now() + LOCK_WAIT_MS;
-  for (;;) {
-    try {
-      fs.closeSync(fs.openSync(LOCK, 'wx'));
-      break;
-    } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      try {
-        if (Date.now() - fs.statSync(LOCK).mtimeMs > LOCK_STALE_MS) fs.unlinkSync(LOCK); // остался от упавшего процесса
-      } catch {
-        // лок успели снять — пробуем взять заново
-      }
-      if (Date.now() > deadline) throw new BusError('Реестр занят другой командой bus.js. Повтори через пару секунд.');
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
-    }
-  }
-  try {
-    return fn();
-  } finally {
-    try {
-      fs.unlinkSync(LOCK);
-    } catch {
-      // уже снят как протухший
-    }
-  }
-}
+const withRegistryLock = (fn) => withLock(LOCK, fn, () => new BusError('Реестр занят другой командой bus.js. Повтори через пару секунд.'));
 
 /** a лежит внутри b или совпадает с ним. */
 function isInside(a, b) {
@@ -234,15 +194,27 @@ function self(ctx, asName) {
   return agent;
 }
 
-function requireSelf(ctx, asName) {
-  const me = self(ctx, asName);
-  if (!me) throw new BusError('Этот проект не зарегистрирован в шине. Сначала: bus.js init <имя>. От имени субагента: bus.js --as <имя> …');
+/**
+ * attachHere — каталог не в шине: подключить его сам (первое общение из сессии). Только от имени проекта: субагент с --as
+ * чужой каталог не подключает, и хук inbox --hook сюда не ходит — иначе в шину попадала бы любая открытая папка.
+ */
+function requireSelf(ctx, asName, attachHere = false) {
+  let me = self(ctx, asName);
+  if (!me && !asName && attachHere) {
+    const { name, root } = attach(ctx.start);
+    console.log(`Проект подключён к шине как «${name}» (${root}).`);
+    Object.assign(ctx, context());
+    me = self(ctx, asName);
+  }
+  if (!me) throw new BusError('Этот проект не в шине. Он подключится сам первой командой из его каталога (send, inbox, history…) или bus.js init <имя>. От имени субагента: bus.js --as <имя> …');
   return me;
 }
 
-// ---------- хук в .claude/settings.local.json проекта ----------
+// ---------- хук inbox: один на все проекты, в ~/.claude/settings.json ----------
 
+// Прежние версии ставили хук каждому проекту в .claude/settings.local.json — ensureGlobalHook их снимает
 const settingsFile = (root) => path.join(root, '.claude', 'settings.local.json');
+const GLOBAL_SETTINGS = path.join(CONFIG_DIR, 'settings.json');
 const isBusHook = (group) => (group.hooks || []).some((h) => String(h.command || '').includes(HOOK_MARK));
 
 function readSettings(file) {
@@ -254,8 +226,7 @@ function readSettings(file) {
   }
 }
 
-function installHook(root) {
-  const file = settingsFile(root);
+function installHook(file) {
   const settings = readSettings(file);
   settings.hooks = settings.hooks || {};
   const groups = settings.hooks.UserPromptSubmit || [];
@@ -264,8 +235,8 @@ function installHook(root) {
 
   groups.push({ hooks: [{ type: 'command', command: HOOK_COMMAND, shell: 'bash', timeout: 5 }] });
   settings.hooks.UserPromptSubmit = groups;
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(settings, null, 2) + '\n');
+  // Атомарно: это settings.json самого Claude — оборванный посреди записи, он сломал бы конфиг целиком
+  writeAtomic(file, JSON.stringify(settings, null, 2) + '\n');
   return true;
 }
 
@@ -280,17 +251,43 @@ function uninstallHook(root) {
   if (!settings.hooks.UserPromptSubmit.length) delete settings.hooks.UserPromptSubmit;
   if (!Object.keys(settings.hooks).length) delete settings.hooks;
 
-  if (Object.keys(settings).length) fs.writeFileSync(file, JSON.stringify(settings, null, 2) + '\n');
+  if (Object.keys(settings).length) writeAtomic(file, JSON.stringify(settings, null, 2) + '\n');
   else fs.unlinkSync(file);
 }
 
-/** settings.local.json и переписка личные: путь к скиллу из ~/.claude и чужие сообщения коллегам ни к чему. */
-function warnIfTracked(root, files) {
-  const { spawnSync } = require('child_process');
-  for (const file of files) {
-    const r = spawnSync('git', ['check-ignore', '-q', file], { cwd: root });
-    if (r.status === 1) console.log(`Внимание: ${path.relative(root, file).split(path.sep).join('/')} не в .gitignore этого проекта — добавь, это личное.`);
+/**
+ * Хук в глобальных настройках: в папке не из шины он молчит (projectSelf → null), в проекте показывает входящие.
+ * Проектные хуки прежних версий снимаются — с глобальным их вызов лишний. → true, если хук только что добавлен.
+ */
+function ensureGlobalHook() {
+  const added = installHook(GLOBAL_SETTINGS);
+  for (const entry of Object.values(loadRegistry(REGISTRY))) {
+    if (!entry || !entry.project || !fs.existsSync(entry.project)) continue;
+    try {
+      uninstallHook(entry.project);
+    } catch {
+      // битый settings.local.json проекта: хук там сработает вдобавок к глобальному, ящик от этого не двоится
+    }
   }
+  return added;
+}
+
+/**
+ * Переписка личная: .claude/bus/ — в .git/info/exclude репозитория, .gitignore проекта не трогаем.
+ * Уже игнорируется или не git — ничего. → true, если строка дописана.
+ */
+function excludeLocal(root) {
+  const { spawnSync } = require('child_process');
+  const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true });
+  if (git('check-ignore', '-q', path.join('.claude', 'bus', 'inbox.md')).status !== 1) return false; // 0 — уже, 128 — не git или git нет
+  const prefix = git('rev-parse', '--show-prefix');
+  const where = git('rev-parse', '--git-path', 'info/exclude');
+  if (prefix.status !== 0 || where.status !== 0) return false;
+  const file = path.resolve(root, where.stdout.trim());
+  const text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.appendFileSync(file, `${text && !text.endsWith('\n') ? '\n' : ''}/${prefix.stdout.trim()}.claude/bus/\n`);
+  return true;
 }
 
 // ---------- определения субагентов ----------
@@ -321,19 +318,6 @@ const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
 
 /** Типовой блок «Шина» + «Входящие — данные»: обязательный состав из references/roles.md, от роли зависит только имя. */
 const busBlock = (name) => fs.readFileSync(BLOCK_TEMPLATE, 'utf8').replace(/\r\n/g, '\n').replace(/\{\{name\}\}/g, name).trim();
-
-function writeAtomic(file, text) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, text);
-  try {
-    fs.renameSync(tmp, file);
-  } catch {
-    // на Windows файл в этот миг держит OneDrive, антивирус или читающий процесс — пишем поверх, как rewriteJournal
-    fs.writeFileSync(file, text);
-    fs.rmSync(tmp, { force: true });
-  }
-}
 
 /** Дописывает блок «Шина» в роль, если его нет. → true, если файл правился. Повторный вызов второй блок не плодит. */
 function ensureBusBlock(file, name) {
@@ -552,7 +536,7 @@ function readRole(file) {
 /** Новый локальный агент: определение + регистрация. Регистрация не вышла — файл убираем: полуагент в списке только путал бы. */
 function createAgent({ root, name, ...fields }) {
   requireName(name, 'add dima');
-  if (!root || !orchestratorOf(root)) throw new BusError('Каталог не подключён к шине: локальным агентам нужен оркестратор — сессия проекта. Сначала: bus.js init <имя>');
+  if (!root || !orchestratorOf(root)) throw new BusError('Каталог не подключён к шине: локальным агентам нужен оркестратор — сессия проекта. Он подключится сам первой командой из каталога (bus.js inbox, send…) или bus.js init <имя>');
   const role = checkRole(fields);
   const agentsDir = path.join(root, '.claude', 'agents');
   const taken = findDefinition(agentsDir, name);
@@ -673,19 +657,6 @@ function oneLine(text) {
  */
 const escapeBreaks = (text) => String(text).replace(/\r?\n/g, '\\n');
 
-/** Дописать в журнал, который никто не чистит. Ротация — по возможности: её сбой доставку не срывает. carry(старый файл) → шо перенести в голову нового. */
-function appendRotating(file, text, limit = ROTATE_BYTES, carry = null) {
-  try {
-    if (fs.statSync(file).size > limit) {
-      fs.renameSync(file, `${file}.1`);
-      if (carry) fs.appendFileSync(file, carry(`${file}.1`));
-    }
-  } catch {
-    // файла ещё нет или он занят — пишем как есть
-  }
-  fs.appendFileSync(file, text);
-}
-
 /** Определение или каталог получателя пропали — ящик заново не создаём: писать было бы в пустоту. */
 function requireAlive(agent) {
   if (!fs.existsSync(agent.where)) throw new BusError(`«${agent.name}»: ${agent.where} больше нет на диске. Сними агента: bus.js remove ${agent.name}`);
@@ -754,7 +725,7 @@ const filesNote = (files, root) => (files && files.length ? ` | файлы: ${fi
  * строка inbox получает тег ui, и хук кладёт в контекст сессии счётчик, а не текст. Отправка из сессии (CLI) метку снимает.
  * waiting.json у субагента — «отправил TASK/QUESTION и ждёт ответа»: { at, for?, about? }. Ответ снимает метку и поднимает агента,
  * см. deliver(). Метка старше суток не считается: спрошенный так и не ответил, и его DONE через неделю — уже не ответ на тот вопрос,
- * тег answer и старый заказчик увели бы агента не туда. Метки прежних версий (true, без at) живут без срока.
+ * тег answer и старый заказчик увели бы агента не туда. Метка без at (true от прежних версий, правка руками) — тоже протухшая: срок ей не посчитать.
  */
 const WAITING_TTL_MS = 24 * 60 * 60 * 1000;
 const viaUiFile = (orchestrator) => path.join(orchestrator.box, 'via-ui.json');
@@ -771,10 +742,10 @@ function takeDialogs(agent, pending) {
   if (!names.length) return;
   const reading = readMarks(dialogReadingFile(agent));
   for (const name of names) reading[name] = { d: pending[name].d };
-  writeAtomic(dialogReadingFile(agent), JSON.stringify(reading) + '\n');
+  writeJson(dialogReadingFile(agent), reading);
   const now = readMarks(dialogPendingFile(agent));
   for (const name of names) if (JSON.stringify(now[name]) === JSON.stringify(pending[name])) delete now[name];
-  writeAtomic(dialogPendingFile(agent), JSON.stringify(now) + '\n');
+  writeJson(dialogPendingFile(agent), now);
 }
 
 /** Диалог, над которым работает агент с этим проектом, если он ещё есть в журнале; нет — null (тогда текущий диалог пары). */
@@ -782,20 +753,10 @@ function workingDialog(agent, project) {
   const mark = readMarks(dialogReadingFile(agent))[project.name];
   if (!mark || typeof mark.d !== 'string' || !DIALOG_ID.test(mark.d || 'x')) return null;
   if (!mark.d) return '';
-  const busDir = busDirOf(project);
-  for (const withRotated of fs.existsSync(`${journalFile(busDir)}.1`) ? [false, true] : [false]) {
-    if (readJournal(busDir, withRotated).some((r) => inPair(r, agent, project) && dialogOf(r) === mark.d)) return mark.d;
-  }
-  return null;
+  return journal.hasDialog(busDirOf(project), agent, project, mark.d) ? mark.d : null;
 }
 
-function readMarks(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8')) || {};
-  } catch {
-    return {};
-  }
-}
+const readMarks = (file) => readJson(file, {}) || {};
 
 /** value — true или объект; пусто — снять метку. */
 function setMark(file, name, value) {
@@ -803,7 +764,7 @@ function setMark(file, name, value) {
   if (JSON.stringify(marks[name] || null) === JSON.stringify(value || null)) return;
   if (value) marks[name] = value;
   else delete marks[name];
-  writeAtomic(file, JSON.stringify(marks) + '\n');
+  writeJson(file, marks);
 }
 
 /**
@@ -811,23 +772,19 @@ function setMark(file, name, value) {
  * в строке ответа: поднятый ответом, он стартует с пустой памятью и без подсказки отвечает спрошенному, а не тому, кто ставил задачу.
  */
 function customerOf(agent, asked) {
-  const busDir = busDirOf(agent);
-  // Незакрытая задача могла уехать в .1 при ротации — дочитываем его, только когда в текущем журнале заказчика нет
-  for (const withRotated of fs.existsSync(`${journalFile(busDir)}.1`) ? [false, true] : [false]) {
-    const closed = new Set();
-    const records = readJournal(busDir, withRotated);
-    for (let i = records.length - 1; i >= 0; i--) {
-      const r = records[i];
-      if (!r.from || !r.to || typeof r.text !== 'string') continue;
-      if (r.from === agent.name && r.type === 'DONE') closed.add(r.to);
-      else if (r.to === agent.name && ASK_TYPES.includes(r.type) && !closed.has(r.from)) {
-        // Последняя незакрытая задача — от самого спрошенного: агент уточняет у своего заказчика. Искать глубже нельзя —
-        // там чужой старый TASK, и итог ушёл бы его автору
-        return r.from === asked.name ? null : { for: r.from, about: r.text.replace(/\s+/g, ' ').slice(0, CUSTOMER_LENGTH) };
-      }
+  const closed = new Set();
+  // Незакрытая задача могла уехать в .1 при ротации — searchJournal дочитывает его, когда в свежем журнале заказчика нет
+  const found = searchJournal(busDirOf(agent), (r) => {
+    if (!r.from || !r.to || typeof r.text !== 'string') return undefined;
+    if (r.from === agent.name && r.type === 'DONE') closed.add(r.to);
+    else if (r.to === agent.name && ASK_TYPES.includes(r.type) && !closed.has(r.from)) {
+      // Последняя незакрытая задача — от самого спрошенного: агент уточняет у своего заказчика. Искать глубже нельзя —
+      // там чужой старый TASK, и итог ушёл бы его автору
+      return r.from === asked.name ? null : { for: r.from, about: r.text.replace(/\s+/g, ' ').slice(0, CUSTOMER_LENGTH) };
     }
-  }
-  return null;
+    return undefined;
+  });
+  return found || null;
 }
 
 const UI_REPLY = /^\[([A-Z]+) [^\]]* ui\] from:(\S+)/;
@@ -859,7 +816,7 @@ function deliver(from, to, type, text, attachments = [], { ui = false, btw = fal
   if (from.kind === 'project' && isSubagent(to)) setMark(viaUiFile(from), to.name, ui);
   const forUi = to.kind === 'project' && isSubagent(from) && Boolean(readMarks(viaUiFile(to))[from.name]);
   const mark = isSubagent(to) ? readMarks(waitingFile(to))[from.name] : null;
-  const waiting = mark && !(mark.at && Date.now() - mark.at > WAITING_TTL_MS) ? mark : null;
+  const waiting = mark && Number.isFinite(mark.at) && Date.now() - mark.at <= WAITING_TTL_MS ? mark : null;
   const answered = Boolean(waiting) && (type === 'DONE' || from.kind === 'project');
   if (answered || (mark && !waiting)) setMark(waitingFile(to), from.name, null);
   if (isSubagent(from) && ASK_TYPES.includes(type)) setMark(waitingFile(from), to.name, { at: Date.now(), ...customerOf(from, to) });
@@ -874,44 +831,15 @@ function deliver(from, to, type, text, attachments = [], { ui = false, btw = fal
   if (learns) require('./wake.js').setEvolve(to.box, { id, from: from.name, role: roleFileOf(to), journal: busDirOf(to) });
 
   journalAppend(from, to, { id, t: stamp(), from: from.name, fk: KIND_CODE[from.kind], to: to.name, tk: KIND_CODE[to.kind], type, text, ...(d ? { d } : {}), ...(files.length ? { files } : {}), ...(ui ? { ui: true } : {}), ...(injected ? { btw: true } : {}), ...(learns ? { evolve: true } : {}) }, 'fr', 'tr');
-  fs.mkdirSync(BUS, { recursive: true });
-  appendRotating(AUDIT, `${stamp()} | ${from.name} -> ${to.name} | ${type}${injected ? ' btw' : ''} | ${text.replace(/\s+/g, ' ').slice(0, AUDIT_LENGTH)}\n`);
+  appendRotating(AUDIT, `${stamp()} | ${from.name} -> ${to.name} | ${type}${injected ? ' btw' : ''} | ${text.replace(/\s+/g, ' ').slice(0, AUDIT_LENGTH)}\n`, ROTATE_BYTES);
   return { id, btw: injected };
 }
 
-/** Время в base36 впереди — id сортируются по порядку отправки точнее, чем секунды в поле t. */
-const newId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6).padEnd(4, '0')}`;
-
-/**
- * Диалоги пользователя с агентом: у пары «проект ↔ субагент» записи журнала несут d — id диалога. Запись без d — первый, прежний диалог ('').
- * Новый диалог — запись kind: 'dialog' (кнопка «+» в UI), шоб пустой жил в журнале. Текущий — d последней записи пары:
- * туда уходят ответы агента и сообщения из сессии, а history отдаёт агенту только его — в новом диалоге контекст чистый.
- */
-const DIALOG_ID = /^[a-z0-9-]{1,40}$/;
-const isDialogPair = (a, b) => (a.kind === 'project' && isSubagent(b)) || (b.kind === 'project' && isSubagent(a));
-const dialogOf = (r) => (typeof r.d === 'string' ? r.d : '');
-
+/** Диалоги пары «проект ↔ субагент» и формат журнала — см. journal.js. id диалога из UI → проверенный или отказ. */
 function checkDialog(d) {
   const value = String(d || '');
   if (value && !DIALOG_ID.test(value)) throw new BusError(`Кривой id диалога: «${value}».`);
   return value;
-}
-
-/** Запись журнала — сообщение или маркер диалога между сторонами с этими именами и видами. Сводки текущий диалог не двигают. */
-function inPair(r, a, b) {
-  const [ac, bc] = [KIND_CODE[a.kind], KIND_CODE[b.kind]];
-  const is = (x, xk, y, yk) => (x === a.name && xk === ac && y === b.name && yk === bc) || (x === b.name && xk === bc && y === a.name && yk === ac);
-  return r.kind === 'dialog' ? is(r.a, r.ak, r.b, r.bk) : !r.kind && is(r.from, r.fk, r.to, r.tk);
-}
-
-/** Текущий диалог пары — по журналу каталога проекта; пары нет в свежем файле — дочитываем .1. */
-function currentDialog(a, b) {
-  const busDir = busDirOf(a.kind === 'project' ? a : b);
-  for (const withRotated of fs.existsSync(`${journalFile(busDir)}.1`) ? [false, true] : [false]) {
-    const records = readJournal(busDir, withRotated);
-    for (let i = records.length - 1; i >= 0; i--) if (inPair(records[i], a, b)) return dialogOf(records[i]);
-  }
-  return '';
 }
 
 /** Новый пустой диалог пары: маркер в журнал обеих сторон. → d */
@@ -920,48 +848,6 @@ function newDialog(a, b) {
   const id = newId();
   journalAppend(a, b, { id, t: stamp(), kind: 'dialog', a: a.name, ak: KIND_CODE[a.kind], b: b.name, bk: KIND_CODE[b.kind], d: id }, 'ar', 'br');
   return id;
-}
-
-/** Запись про двух агентов — в журнал каталога каждого; каталог чужой стороны дописывается под ключом rootKey. */
-function journalAppend(a, b, record, aRootKey, bRootKey) {
-  const dirs = new Set([busDirOf(a), busDirOf(b)]);
-  for (const busDir of dirs) {
-    const foreign = (agent, key) => (agent.root && !samePath(busDirOf(agent), busDir) ? { [key]: agent.root } : {});
-    fs.mkdirSync(busDir, { recursive: true });
-    appendRotating(journalFile(busDir), JSON.stringify({ ...record, ...foreign(a, aRootKey), ...foreign(b, bRootKey) }) + '\n', JOURNAL_ROTATE_BYTES, carrySummaries);
-  }
-}
-
-/**
- * Журнал уехал в .1, а history читает .1, только когда в свежем файле не хватает строк: без переноса агент остался бы и без сводки,
- * и без старых сообщений. Последняя сводка каждой пары едет в голову нового файла как есть — id тот же, UI дубль не рисует.
- * Маркер диалога едет тоже: пустой диалог иначе пропал бы из вкладок вместе с .1. Порядок перенесённых маркеров текущий диалог
- * сбил бы (он — по последней записи пары), поэтому за ними у каждой пары «проект ↔ субагент» — маркер её текущего диалога.
- */
-function carrySummaries(rotated) {
-  const last = new Map();
-  const current = new Map(); // пара → { r: последняя запись, d }
-  const split = new Set(); // пары, у которых есть непервый диалог: без него текущий и так первый, указатель не нужен
-  const side = (name, kind, root) => `${name}:${kind}:${root || ''}`;
-  const isSub = (code) => code === 'l' || code === 'g';
-  for (const line of fs.readFileSync(rotated, 'utf8').split('\n')) {
-    if (!line) continue;
-    try {
-      const r = JSON.parse(line);
-      const [x, xk, xr, y, yk, yr] = r.kind ? [r.a, r.ak, r.ar, r.b, r.bk, r.br] : [r.from, r.fk, r.fr, r.to, r.tk, r.tr];
-      const pair = [side(x, xk, xr), side(y, yk, yr)].sort().join('|');
-      if (dialogOf(r)) split.add(pair);
-      if (r.kind === 'summary' || r.kind === 'dialog') last.set(`${r.kind}#${pair}#${dialogOf(r)}`, line);
-      if ((r.kind === 'dialog' || !r.kind) && typeof x === 'string' && typeof y === 'string' && ((xk === 'p' && isSub(yk)) || (yk === 'p' && isSub(xk)))) {
-        current.set(pair, { a: x, ak: xk, ar: xr, b: y, bk: yk, br: yr, d: dialogOf(r) });
-      }
-    } catch {
-      // оборванная строка
-    }
-  }
-  const pointers = [...current].filter(([pair]) => split.has(pair)).map(([, p]) => p).map(({ a, ak, ar, b, bk, br, d }) =>
-    JSON.stringify({ id: newId(), t: stamp(), kind: 'dialog', a, ak, ...(ar ? { ar } : {}), b, bk, ...(br ? { br } : {}), d }));
-  return [...last.values(), ...pointers].map((line) => line + '\n').join('');
 }
 
 /**
@@ -973,14 +859,6 @@ function writeSummary(a, b, upto, count, text, d = '') {
   const id = newId();
   const dialog = isDialogPair(a, b) ? checkDialog(d) : '';
   journalAppend(a, b, { id, t: stamp(), kind: 'summary', a: a.name, ak: KIND_CODE[a.kind], b: b.name, bk: KIND_CODE[b.kind], ...(dialog ? { d: dialog } : {}), upto, count, text: cut(oneLine(text), SUMMARY_LENGTH) }, 'ar', 'br');
-  return id;
-}
-
-/** Запись в журнал одного каталога не от агента шины — отчёт запуска по расписанию (scheduler.js). Лента UI рисует её как сообщение. */
-function journalNote(busDir, record) {
-  const id = newId();
-  fs.mkdirSync(busDir, { recursive: true });
-  appendRotating(journalFile(busDir), JSON.stringify({ id, t: stamp(), ...record }) + '\n', JOURNAL_ROTATE_BYTES, carrySummaries);
   return id;
 }
 
@@ -1002,29 +880,6 @@ function notifyWake(orchestrator, from, to, what) {
   if (pending.split('\n').some((line) => line.startsWith('[WAKE ') && line.includes(mark))) return false;
   fs.appendFileSync(inboxFile(orchestrator), `[WAKE ${stamp(true)}] ${mark}${what} ждёт в его inbox — подними его\n`);
   return true;
-}
-
-/** Записи журнала каталога, старые первыми. Ротированный .1 читается, только если попросили. */
-function readJournal(busDir, withRotated = false) {
-  const files = [...(withRotated ? [`${journalFile(busDir)}.1`] : []), journalFile(busDir)];
-  const records = [];
-  for (const file of files) {
-    let text = '';
-    try {
-      text = fs.readFileSync(file, 'utf8');
-    } catch {
-      continue; // переписки ещё не было
-    }
-    for (const line of text.split('\n')) {
-      if (!line) continue;
-      try {
-        records.push(JSON.parse(line));
-      } catch {
-        // оборванная строка от упавшей записи — пропускаем, остальное читается
-      }
-    }
-  }
-  return records;
 }
 
 /**
@@ -1102,10 +957,11 @@ function requireName(name, example) {
   if (!NAME.test(name || '')) throw new BusError(`Имя агента: латиница в нижнем регистре, цифры и дефис, до 31 символа. Пример: bus.js ${example}`);
 }
 
-function init(name) {
+/** dir — каталог проекта явно (автоподключение); без него — корень сессии или cwd. quiet — без вывода: attach скажет своё. */
+function init(name, dir, { quiet = false } = {}) {
   requireName(name, 'init shop-api');
-  const root = projectRoot() || path.resolve(process.env.CLAUDE_PROJECT_DIR || process.cwd());
-  if (samePath(root, os.homedir())) throw new BusError('Домашняя папка — не проект: хук из неё сработал бы во всех сессиях. Запусти init из каталога проекта.');
+  const root = dir ? path.resolve(dir) : projectRoot() || path.resolve(process.env.CLAUDE_PROJECT_DIR || process.cwd());
+  if (samePath(root, os.homedir())) throw new BusError('Домашняя папка — не проект: он поглотил бы все папки внутри. Запусти init из каталога проекта.');
 
   withRegistryLock(() => {
     const agents = loadRegistry(REGISTRY);
@@ -1120,14 +976,79 @@ function init(name) {
     agents[name] = { project: root };
     saveRegistry(REGISTRY, agents);
   });
-  const me = describe(context(), name);
+  const me = describe(contextOf(root), name);
   fs.mkdirSync(me.box, { recursive: true });
   fs.appendFileSync(inboxFile(me), '');
-  const added = installHook(root);
+  const added = ensureGlobalHook();
+  const excluded = excludeLocal(root);
+  // Первое подключение ставит ярлык UI — шага установки у скилла нет (app.js)
+  const shortcut = require('./app.js').autoShortcut(BUS);
+  if (quiet) return { name, root };
 
   console.log(`Агент «${name}» → ${root}`);
-  console.log(added ? `Хук inbox добавлен в ${settingsFile(root)}. Заработает со следующей сессии в этом проекте.` : 'Хук inbox уже стоял, не дублирую.');
-  warnIfTracked(root, [settingsFile(root), path.join(root, '.claude', 'bus')]);
+  if (added) console.log(`Хук inbox добавлен в ${GLOBAL_SETTINGS} — один на все проекты, заработает в новых сессиях Claude.`);
+  if (excluded) console.log('.claude/bus/ дописан в .git/info/exclude — переписка в git не попадёт.');
+  if (shortcut && shortcut.file) console.log(`Ярлык шины: ${shortcut.file} — открывает UI отдельным окном.`);
+  return { name, root };
+}
+
+// ---------- автоподключение: проект встаёт в шину сам, с первым общением ----------
+
+const PROJECT_MARKERS = ['.git', 'package.json', 'CLAUDE.md', '.claude'];
+const TRANSLIT = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya', і: 'i', ї: 'yi', є: 'ye', ґ: 'g' };
+
+/** Корень для каталога: ближайший вверх с маркером проекта (до домашней папки), иначе сам каталог. */
+function rootFor(dir) {
+  const start = path.resolve(dir);
+  const home = os.homedir();
+  for (let d = start; !samePath(d, home); d = path.dirname(d)) {
+    if (PROJECT_MARKERS.some((m) => fs.existsSync(path.join(d, m)))) return d;
+    if (path.dirname(d) === d) break;
+  }
+  return start;
+}
+
+/**
+ * Почему каталог к шине не подключить, или ''. Домашняя папка и всё над ней (папка пользователей, корень диска) — проект
+ * поглотил бы все папки внутри; ~/.claude — конфиг самого Claude, не проект.
+ */
+function attachRefusal(root) {
+  if (isInside(os.homedir(), root)) return 'домашняя папка и всё над ней — не проект: он поглотил бы все папки внутри. Выбери каталог проекта.';
+  if (isInside(root, CONFIG_DIR)) return 'это каталог конфига Claude (~/.claude), а не проект. Выбери каталог проекта.';
+  if (!fs.existsSync(root)) return 'каталога нет на диске.';
+  return '';
+}
+
+/** Имя проекта из имени папки: латиница, цифры, дефис; кириллица — транслитом; занято — -2, -3… */
+function autoName(root, agents = loadRegistry(REGISTRY)) {
+  const base = [...path.basename(root).toLowerCase()].map((c) => (c in TRANSLIT ? TRANSLIT[c] : c)).join('')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+/, '').slice(0, 27).replace(/-+$/, '') || 'project';
+  const locals = loadLocals(root);
+  // Имя роли — будущий адресат: проект с тем же именем столкнулся бы с ней при первом сообщении
+  const taken = (name) => RESERVED.includes(name) || Boolean(agents[name]) || Boolean(locals[name])
+    || fs.existsSync(path.join(CONFIG_DIR, 'agents', `${name}.md`)) || fs.existsSync(path.join(root, '.claude', 'agents', `${name}.md`));
+  for (let i = 1; ; i++) {
+    const name = i === 1 ? base : `${base}-${i}`;
+    if (!taken(name)) return name;
+  }
+}
+
+/** Что будет, если подключить каталог: { root, name } или { root, refused }. UI подписывает «от кого» до первого сообщения. */
+function attachPlan(dir) {
+  const root = rootFor(dir);
+  const refused = attachRefusal(root);
+  return refused ? { root, refused } : { root, name: autoName(root) };
+}
+
+/** Подключить каталог к шине именем папки. Уже в шине — вернуть как есть. → { name, root, attached } */
+function attach(dir) {
+  const plan = attachPlan(dir);
+  const known = projectSelf({ start: plan.root, globals: loadRegistry(REGISTRY), locals: {} });
+  if (known) return { name: known.name, root: known.root, attached: false };
+  if (plan.refused) throw new BusError(`Каталог ${plan.root} к шине не подключить: ${plan.refused}`);
+  init(plan.name, plan.root, { quiet: true });
+  auditNote(`attach | ${plan.name} | ${plan.root}`);
+  return { name: plan.name, root: plan.root, attached: true };
 }
 
 /**
@@ -1146,7 +1067,7 @@ function enroll({ root, name, isGlobal = false, wrap = false }) {
 
   const done = withRegistryLock(() => {
     const globals = loadRegistry(REGISTRY);
-    if (!isGlobal && !isProject(globals)) throw new BusError('Каталог не подключён к шине: локальным агентам нужен оркестратор — сессия проекта. Сначала: bus.js init <имя>');
+    if (!isGlobal && !isProject(globals)) throw new BusError('Каталог не подключён к шине: локальным агентам нужен оркестратор — сессия проекта. Он подключится сам первой командой из каталога (bus.js inbox, send…) или bus.js init <имя>');
     let file = findDefinition(agentsDir, name);
     if (!file && !wrap) throw new BusError(`В ${agentsDir} нет определения субагента с name: ${name}. Сначала создай ${path.join(agentsDir, name + '.md')}.`);
     const def = path.relative(root, file || path.join(agentsDir, `${name}.md`)).split(path.sep).join('/'); // относительный и через «/» — реестр переносится между машинами
@@ -1182,10 +1103,8 @@ function add(name, isGlobal) {
   console.log(`Агент «${name}» (${isGlobal ? 'глобальный' : 'локальный'}) → ${file}`);
   if (wrote) console.log('В роль дописан блок «Шина».');
   console.log(`Ящик: ${agent.box}`);
-  if (!isGlobal) warnIfTracked(agent.root, [path.join(agent.root, '.claude', 'bus')]);
+  if (!isGlobal) excludeLocal(agent.root);
 }
-
-const isSubagent = (agent) => agent.kind === 'local' || agent.kind === 'global';
 
 /** Каталог, чьи настройки действуют: свой у проекта и локального агента, у глобального — проект, в котором его запустили. */
 const settingsRoot = (ctx, me) => (me && me.root) || (projectSelf(ctx) || {}).root || ctx.root || null;
@@ -1252,7 +1171,7 @@ function autowake(asName, arg) {
   for (const name of visibleNames(ctx).sort()) {
     const agent = describe(ctx, name);
     const s = isSubagent(agent) && wake.state(agent.box);
-    if (s) console.log(`  ${name.padEnd(20)} ${s.state.padEnd(8)} ${new Date(s.at).toLocaleString('sv-SE').slice(5, 16)} · за час: ${s.wakes}${s.tokens ? ` · ≈${s.tokens} ток.` : ''}${s.reason ? ` · ${s.reason}` : ''}`);
+    if (s) console.log(`  ${name.padEnd(20)} ${s.state.padEnd(8)} ${stamp(true, s.at)} · за час: ${s.wakes}${s.tokens ? ` · ≈${s.tokens} ток.` : ''}${s.reason ? ` · ${s.reason}` : ''}`);
   }
 }
 
@@ -1339,7 +1258,7 @@ function enrollOnSend(me, name) {
 
 function send(asName, toName, rest) {
   const ctx = context();
-  const me = requireSelf(ctx, asName);
+  const me = requireSelf(ctx, asName, true);
   const known = describe(ctx, toName || '');
   if (!known && !canEnrollOnSend(me, toName || '')) throw new BusError(`Агента «${toName || ''}» нет. Есть: ${visibleNames(ctx).join(', ') || 'никого'}`);
   if (known && known.name === me.name) throw new BusError('Сообщение самому себе не отправляю.');
@@ -1361,7 +1280,7 @@ function send(asName, toName, rest) {
 
 function broadcast(asName, rest) {
   const ctx = context();
-  const me = requireSelf(ctx, asName);
+  const me = requireSelf(ctx, asName, true);
   const others = visibleNames(ctx)
     .filter((n) => n !== me.name)
     .map((n) => describe(ctx, n))
@@ -1436,7 +1355,7 @@ function foldDirs(ctx, lines) {
 
 function inbox(asName, hookMode, quiet) {
   const ctx = hookMode ? context(JSON.parse(readStdin() || '{}')) : context();
-  const me = hookMode ? projectSelf(ctx) : requireSelf(ctx, asName);
+  const me = hookMode ? projectSelf(ctx) : requireSelf(ctx, asName, true);
   if (!me) return;
 
   // Строки с # в выводе inbox — подсказки шины, агент им следует. Сообщения шины начинаются с «[», а дописать в ящик может любой процесс:
@@ -1481,52 +1400,9 @@ function inbox(asName, hookMode, quiet) {
   console.log([...foldDirs(ctx, rest), ...hints(rest, false)].join('\n'));
 }
 
-/**
- * Переписать журнал каталога (и .1) без записей, для которых drop(record) истинно; вернуть убранные. Зовёт только UI по клику пользователя.
- * send дописывает журнал без замка: строка, пришедшая между чтением и rename, из журнала выпадет (в inbox получателя останется) —
- * окно в миллисекунды, удаление ручное и редкое, замок на каждый send ради него не держим.
- */
-function rewriteJournal(busDir, drop) {
-  const removed = [];
-  for (const file of [`${journalFile(busDir)}.1`, journalFile(busDir)]) {
-    let lines;
-    try {
-      lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
-    } catch {
-      continue; // файла нет
-    }
-    const kept = lines.filter((line) => {
-      try {
-        const record = JSON.parse(line);
-        if (!record || !drop(record)) return true;
-        removed.push(record);
-        return false;
-      } catch {
-        return true; // оборванная строка — не наша забота
-      }
-    });
-    if (kept.length === lines.length) continue;
-    if (!kept.length) {
-      fs.rmSync(file, { force: true });
-      continue;
-    }
-    const temp = `${file}.tmp`;
-    fs.writeFileSync(temp, `${kept.join('\n')}\n`);
-    try {
-      fs.renameSync(temp, file);
-    } catch {
-      // на Windows журнал в этот миг читает другой процесс — пишем поверх
-      fs.writeFileSync(file, `${kept.join('\n')}\n`);
-      fs.rmSync(temp, { force: true });
-    }
-  }
-  return removed;
-}
-
 /** Строка в audit.log не про сообщение: удаление из UI. */
 function auditNote(text) {
-  fs.mkdirSync(BUS, { recursive: true });
-  appendRotating(AUDIT, `${stamp()} | ${text}\n`);
+  appendRotating(AUDIT, `${stamp()} | ${text}\n`, ROTATE_BYTES);
 }
 
 /** Журнал никто не чистит сам: clear — только по прямой команде пользователя и только от оркестратора, субагенту чужую переписку не снести. */
@@ -1539,45 +1415,8 @@ function clearHistory(asName, args) {
   console.log(`Удалено: ${removed.join(', ')}. Открытый UI очистит ленту сам. Остались: непрочитанное в inbox.md, вложения (files prune), audit.log и копии переписки с другими каталогами — в их журналах.`);
 }
 
-/**
- * Переписка агента из журнала его каталога: сообщения, где он одна из сторон, и последняя сводка каждого диалога.
- * Сводку диалога пользователь делает кнопкой в UI: всё, шо она покрывает (id ≤ upto), агенту уже не отдаём — ради этого она и нужна.
- * → { summaries: Map кто → запись сводки, all: [{ r, out, who, dir }], found: all без покрытого сводками }
- */
-function dialogsOf(me, peer, withRotated) {
-  const code = KIND_CODE[me.kind];
-  const records = readJournal(busDirOf(me), withRotated);
-  // У пары «проект ↔ субагент» — только текущий диалог: d последнего сообщения или маркера пары (см. currentDialog).
-  // Субагенту — диалог, из которого он читал (dialogReadingFile), если тот ещё в журнале: «+» посреди его работы контекст не подменяет
-  const split = (other) => ['p', 'l', 'g'].includes(other) && (code === 'p') !== (other === 'p');
-  const current = new Map();
-  const seen = new Map(); // собеседник → его диалоги в журнале
-  for (const r of records) {
-    const [x, xk, y, yk] = r.kind === 'dialog' ? [r.a, r.ak, r.b, r.bk] : !r.kind ? [r.from, r.fk, r.to, r.tk] : [];
-    const who = x === me.name && xk === code ? [y, yk] : y === me.name && yk === code ? [x, xk] : null;
-    if (!who || !split(who[1])) continue;
-    current.set(who[0], dialogOf(r));
-    if (!seen.has(who[0])) seen.set(who[0], new Set());
-    seen.get(who[0]).add(dialogOf(r));
-  }
-  if (isSubagent(me)) {
-    for (const [who, mark] of Object.entries(readMarks(dialogReadingFile(me)))) {
-      if (current.has(who) && mark && typeof mark.d === 'string' && (!mark.d || seen.get(who).has(mark.d))) current.set(who, mark.d);
-    }
-  }
-  const here = (who, r) => !current.has(who) || current.get(who) === dialogOf(r);
-  // В журнале каталога — переписка всех его агентов; моя — где я одна из сторон. Вид отличает локального dima от глобального
-  const all = records
-    .filter((r) => typeof r.t === 'string' && typeof r.text === 'string' && typeof r.id === 'string') // обрывок или чужая запись без полей — не повод падать
-    .map((r) => (r.from === me.name && r.fk === code ? { r, out: true, who: r.to, dir: r.tr } : r.to === me.name && r.tk === code ? { r, out: false, who: r.from, dir: r.fr } : null))
-    .filter((m) => m && (!peer || m.who === peer) && here(m.who, m.r));
-  const summaries = new Map();
-  for (const r of records) {
-    const who = r.kind !== 'summary' || typeof r.t !== 'string' || typeof r.text !== 'string' ? null : r.a === me.name && r.ak === code ? r.b : r.b === me.name && r.bk === code ? r.a : null;
-    if (who && (!peer || who === peer) && here(who, r)) summaries.set(who, r); // последняя по журналу перекрывает прежние
-  }
-  return { summaries, all, found: all.filter((m) => !(summaries.has(m.who) && m.r.id <= summaries.get(m.who).upto)) };
-}
+/** Переписка агента (journal.dialogsOf): субагенту — с диалогами, из которых он читал. */
+const dialogsOf = (me, peer, withRotated) => journal.dialogsOf(me, peer, withRotated, isSubagent(me) ? readMarks(dialogReadingFile(me)) : {});
 
 /** Вес в токенах — оценка, формула одна с UI (ui-logic.js). Грузим по месту: хук inbox --hook на каждом промпте её не парсит. */
 const weight = () => require('./ui-logic.js');
@@ -1586,7 +1425,7 @@ const historyLine = ({ r, out, who }, root) => `${r.t.slice(5, 16)} ${out ? '->'
 function history(asName, args) {
   if (args[0] === 'clear') return clearHistory(asName, args.slice(1));
   const ctx = context();
-  const me = requireSelf(ctx, asName);
+  const me = requireSelf(ctx, asName, true);
   const limits = settingsOf(ctx, me);
   const full = args.includes('--full');
   // Имя из одних цифр правилу NAME не противоречит: «history 42» при агенте 42 — диалог с ним, а не 42 строки
@@ -1640,7 +1479,7 @@ function history(asName, args) {
  */
 function tokens(asName, args) {
   const ctx = context();
-  const me = requireSelf(ctx, asName);
+  const me = requireSelf(ctx, asName, true);
   const limits = settingsOf(ctx, me);
   const everyone = args.includes('--all');
   const peer = args.find((a) => !a.startsWith('--'));
@@ -1675,11 +1514,10 @@ function dialogRows(me, peer, L) {
 
 /** Строки отчёта по всем парам журнала каталога. Сторона — имя + вид + чужой каталог: локальный dima и глобальный — разные. */
 function pairRows(busDir, L) {
-  const side = (name, kind, root) => `${name}:${kind}:${root || ''}`;
   const pairs = new Map();
   // Диалоги пары — отдельные строки: у каждого своя сводка
   const at = (a, b, names, d) => {
-    const key = `${[a, b].sort().join('|')}#${d}`;
+    const key = `${pairKey(a, b)}#${d}`;
     if (!pairs.has(key)) pairs.set(key, { name: [...names].sort().join(' ↔ '), d, messages: [], upto: '', summary: null });
     return pairs.get(key);
   };
@@ -1688,8 +1526,8 @@ function pairRows(busDir, L) {
   for (const r of readJournal(busDir, true)) {
     if (typeof r.t !== 'string' || typeof r.text !== 'string' || typeof r.id !== 'string') continue;
     if (r.kind === 'summary') {
-      if (typeof r.a === 'string' && typeof r.b === 'string') Object.assign(at(side(r.a, r.ak, r.ar), side(r.b, r.bk, r.br), [r.a, r.b], dialogOf(r)), { upto: String(r.upto || ''), summary: r });
-    } else if (typeof r.from === 'string' && typeof r.to === 'string') at(side(r.from, r.fk, r.fr), side(r.to, r.tk, r.tr), [r.from, r.to], dialogOf(r)).messages.push(r);
+      if (typeof r.a === 'string' && typeof r.b === 'string') Object.assign(at(sideKey(r.a, r.ak, r.ar), sideKey(r.b, r.bk, r.br), [r.a, r.b], dialogOf(r)), { upto: String(r.upto || ''), summary: r });
+    } else if (typeof r.from === 'string' && typeof r.to === 'string') at(sideKey(r.from, r.fk, r.fr), sideKey(r.to, r.tk, r.tr), [r.from, r.to], dialogOf(r)).messages.push(r);
   }
   return [...pairs.values()].map((p) => {
     const fresh = p.messages.filter((m) => !(p.upto && m.id <= p.upto));
@@ -1729,7 +1567,7 @@ function files(asName, all) {
 function listAgents(asName) {
   const ctx = context();
   const names = visibleNames(ctx).sort();
-  if (!names.length) return console.log('В шине никого нет. Начни с: bus.js init <имя>');
+  if (!names.length) return console.log('В шине никого нет. Проект подключится сам первой командой из его каталога — например, bus.js inbox.');
   const me = self(ctx, asName);
   const load = agentLoads(ctx);
   for (const n of names) {
@@ -1752,17 +1590,17 @@ function agentLoads(ctx) {
   const project = projectSelf(ctx); // у проекта без локальных агентов ctx.root пуст, а журнал каталога есть
   const dirs = [...new Set([project && busDirOf(project), ctx.root && path.join(ctx.root, '.claude', 'bus'), BUS].filter(Boolean).map((dir) => path.resolve(dir)))];
   const seen = new Set();
-  const fresh = new Map(); // имя:вид → несжатые сообщения
+  const fresh = new Map(); // sideKey(имя, вид) → несжатые сообщения
   for (const busDir of dirs) {
     const records = readJournal(busDir, true);
     const upto = new Map();
     // Сводка — у каждого диалога пары своя: общий ключ пары прятал бы старые диалоги за сводкой нового
-    const pair = (a, b, r) => `${[a, b].sort().join('|')}#${dialogOf(r)}`;
-    for (const r of records) if (r.kind === 'summary' && typeof r.upto === 'string') upto.set(pair(`${r.a}:${r.ak}`, `${r.b}:${r.bk}`, r), r.upto);
+    const pair = (a, b, r) => `${pairKey(a, b)}#${dialogOf(r)}`;
+    for (const r of records) if (r.kind === 'summary' && typeof r.upto === 'string') upto.set(pair(sideKey(r.a, r.ak), sideKey(r.b, r.bk), r), r.upto);
     for (const r of records) {
       if (r.kind === 'summary' || typeof r.id !== 'string' || typeof r.text !== 'string' || typeof r.from !== 'string' || typeof r.to !== 'string' || seen.has(r.id)) continue;
       seen.add(r.id); // сообщение между каталогом и домашней шиной лежит в обоих журналах
-      const sides = [`${r.from}:${r.fk}`, `${r.to}:${r.tk}`];
+      const sides = [sideKey(r.from, r.fk), sideKey(r.to, r.tk)];
       if (r.id <= (upto.get(pair(...sides, r)) || '')) continue;
       for (const key of new Set(sides)) {
         if (!fresh.has(key)) fresh.set(key, []);
@@ -1771,7 +1609,7 @@ function agentLoads(ctx) {
     }
   }
   return (agent) => {
-    const list = fresh.get(`${agent.name}:${KIND_CODE[agent.kind]}`);
+    const list = fresh.get(sideKey(agent.name, KIND_CODE[agent.kind]));
     return list ? weight().tokensOf(list) : 0;
   };
 }
@@ -1831,10 +1669,9 @@ function remove(name, force) {
     return { target, left };
   });
   if (junk) return console.log(`Запись «${name}» адресатом не была (имя не по правилу или нет пути) — убрана из ${junk}.`);
-  const hook = target.kind === 'project' ? ', хук убран' : '';
   const journal = journalFile(busDirOf(target));
   const kept = fs.existsSync(journal) ? ` Переписка осталась: ${journal}` : '';
-  console.log(`Агент «${target.name}» снят${hook}.${left ? ` Непрочитанных было: ${left} — они есть в журнале.` : ''}${kept}`);
+  console.log(`Агент «${target.name}» снят.${left ? ` Непрочитанных было: ${left} — они есть в журнале.` : ''}${kept}`);
   const orphans = target.kind === 'project' ? Object.keys(loadLocals(target.where)) : [];
   if (orphans.length) console.log(`В каталоге остались локальные агенты без оркестратора: ${orphans.join(', ')} — будить их некому, пока проект не подключён заново.`);
 }
@@ -1888,9 +1725,9 @@ function main(argv) {
 // Экспорт стоит до main(): команда ui подгружает ui.js, а тот — этот же модуль, и ему нужны уже готовые функции
 module.exports = {
   CONFIG_DIR, BUS, REGISTRY, TYPES, MAX_LENGTH, ACCESS_GROUPS, parseDenied, deniedLine, UI_REPLY, BusError,
-  loadRegistry, context, contextOf, describe, projectSelf, isSubagent, journalFile, findDefinition, isWrapper, enroll,
+  loadRegistry, context, contextOf, describe, projectSelf, attach, attachPlan, ensureGlobalHook, isSubagent, journalFile, findDefinition, isWrapper, enroll, init,
   splitDefinition, joinDefinition, readRole, checkBody, readJournal, roleFileOf, createAgent, updateAgent, syncWrapper, deleteAgent, isInside,
-  readStdin, writeAtomic, clean, oneLine, checkAttachments, deliver, journalNote, writeSummary, newDialog, currentDialog, isDialogPair, checkDialog, rewriteJournal, auditNote, autoWake, orchestratorOf, requireAlive, drain, unread,
+  readStdin, writeAtomic, appendRotating, clean, oneLine, checkAttachments, deliver, journalNote, writeSummary, newDialog, currentDialog, isDialogPair, checkDialog, rewriteJournal, auditNote, autoWake, orchestratorOf, requireAlive, drain, unread,
 };
 
 if (require.main === module) main(process.argv.slice(2));

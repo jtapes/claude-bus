@@ -10,9 +10,9 @@
  * label и hint — ключи перевода (N): форму строит UI, английский текст лежит в ui-i18n.js.
  */
 
-const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const fsx = require('./fsx.js');
 // Словарь (ui-i18n.js, ≈60 КБ) грузится, только когда есть шо переводить — текст ошибки: settings.js тянут bus.js и wake.js на каждый send и хук.
 // N — пометка «ключ перевода» для теста bus i18n, строку она не меняет
 const N = (text) => text;
@@ -94,26 +94,16 @@ const plain = (value) => (value && typeof value === 'object' && !Array.isArray(v
 
 /** Файл старше слоя global или слой в нём битый — глобальных настроек просто нет. */
 function readFile() {
-  try {
-    const data = plain(JSON.parse(fs.readFileSync(FILE, 'utf8')));
-    return { ...data, global: plain(data.global), projects: plain(data.projects) };
-  } catch {
-    return { global: {}, projects: {} };
-  }
+  const data = plain(fsx.readJson(FILE, {}));
+  return { ...data, global: plain(data.global), projects: plain(data.projects) };
 }
+
+/** Чтение-правка-запись файла под локом: два одновременных сохранения (UI и settings set) иначе теряли одно из них. */
+const withLock = (fn) => fsx.withLock(`${FILE}.lock`, fn, () => new SettingsError(tr('Настройки сейчас сохраняет другой процесс. Повтори через пару секунд.')));
 
 function writeFile(data) {
   if (!Object.keys(data.global).length) delete data.global;
-  fs.mkdirSync(path.dirname(FILE), { recursive: true });
-  const tmp = `${FILE}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
-  try {
-    fs.renameSync(tmp, FILE);
-  } catch {
-    // на Windows файл в этот миг читает другой процесс шины — EPERM: пишем поверх, как writeAtomic в bus.js
-    fs.writeFileSync(FILE, JSON.stringify(data, null, 2) + '\n');
-    fs.rmSync(tmp, { force: true });
-  }
+  fsx.writeAtomic(FILE, JSON.stringify(data, null, 2) + '\n');
 }
 
 /** Значение из формы или консоли → значение настройки. Строки приходят из CLI: «12», «off». */
@@ -173,31 +163,33 @@ function get(root) {
 
 /**
  * Поменять настройки проекта. patch — { ключ: значение | null }, null — вернуть дефолт. Сначала проверяется всё, потом пишется:
- * наполовину сохранённой формы не бывает. Каталог нужен только проектным ключам: общие (global) меняются и без него.
+ * наполовину сохранённой формы не бывает. Чтение, правка и запись — под локом (withLock). Каталог нужен только проектным ключам: общие (global) меняются и без него.
  * Текст режется redact(): он едет в контекст агентов, ключам из settings.json там не место. → настройки каталога после правки.
  */
 function set(root, patch) {
   const key = rootKey(root);
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new SettingsError(tr('Нужен объект «ключ: значение».'));
   if (!key && Object.keys(patch).some((name) => !(BY_KEY.get(name) || {}).global)) throw new SettingsError(tr('Настройки привязаны к каталогу проекта, а его нет.'));
-  const next = overrides(root);
-  for (const [name, raw] of Object.entries(patch)) {
-    const item = BY_KEY.get(name);
-    if (!item) throw new SettingsError(tr('Нет настройки «{name}». Есть: {list}', { name, list: SCHEMA.map((s) => s.key).join(', ') }), name);
-    if (raw === null || raw === undefined || raw === '') delete next[name];
-    else next[name] = item.type === 'text' ? parse(item, require('./lib/redact.js').redact(String(raw))) : parse(item, raw);
-  }
-  const merged = { ...DEFAULTS, ...next };
-  for (const item of SCHEMA) {
-    if (item.atLeast && merged[item.key] < merged[item.atLeast]) throw new SettingsError(tr('{key} не может быть меньше {other} ({value}).', { key: item.key, other: item.atLeast, value: merged[item.atLeast] }), item.key);
-  }
-  for (const item of SCHEMA) if (next[item.key] === item.default) delete next[item.key];
-  const data = readFile();
-  const layer = (global) => Object.fromEntries(Object.entries(next).filter(([name]) => Boolean(BY_KEY.get(name).global) === global));
-  data.global = layer(true);
-  if (key && Object.keys(layer(false)).length) data.projects[key] = layer(false);
-  else if (key) delete data.projects[key];
-  writeFile(data);
+  withLock(() => {
+    const next = overrides(root);
+    for (const [name, raw] of Object.entries(patch)) {
+      const item = BY_KEY.get(name);
+      if (!item) throw new SettingsError(tr('Нет настройки «{name}». Есть: {list}', { name, list: SCHEMA.map((s) => s.key).join(', ') }), name);
+      if (raw === null || raw === undefined || raw === '') delete next[name];
+      else next[name] = item.type === 'text' ? parse(item, require('./lib/redact.js').redact(String(raw))) : parse(item, raw);
+    }
+    const merged = { ...DEFAULTS, ...next };
+    for (const item of SCHEMA) {
+      if (item.atLeast && merged[item.key] < merged[item.atLeast]) throw new SettingsError(tr('{key} не может быть меньше {other} ({value}).', { key: item.key, other: item.atLeast, value: merged[item.atLeast] }), item.key);
+    }
+    for (const item of SCHEMA) if (next[item.key] === item.default) delete next[item.key];
+    const data = readFile();
+    const layer = (global) => Object.fromEntries(Object.entries(next).filter(([name]) => Boolean(BY_KEY.get(name).global) === global));
+    data.global = layer(true);
+    if (key && Object.keys(layer(false)).length) data.projects[key] = layer(false);
+    else if (key) delete data.projects[key];
+    writeFile(data);
+  });
   return get(root);
 }
 

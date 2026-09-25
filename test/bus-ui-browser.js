@@ -77,7 +77,7 @@ function main() {
 }
 `);
 
-const baseEnv = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: configDir, BUS_CLAUDE_CMD: `"${process.execPath}" "${fakeClaude}"`, TG_NOTIFY_DRY_RUN: '1', BUS_PM2_CMD: 'rem', BUS_STARTUP_DIR: path.join(home, 'startup'), BUS_SCHEDULER_START_WAIT_MS: '0', BUS_UPDATE_CHECK: '0' }; // расписание: ни настоящего pm2, ни автозагрузки Windows; обновление на GitHub не проверяется
+const baseEnv = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: configDir, BUS_CLAUDE_CMD: `"${process.execPath}" "${fakeClaude}"`, TG_NOTIFY_DRY_RUN: '1', BUS_PM2_CMD: 'rem', BUS_STARTUP_DIR: path.join(home, 'startup'), BUS_SCHEDULER_START_WAIT_MS: '0', BUS_UPDATE_CHECK: '0', BUS_SHORTCUT: '0', BUS_APP_BROWSER: 'none' }; // ярлык на настоящий рабочий стол не ставится; расписание: ни настоящего pm2, ни автозагрузки Windows; обновление на GitHub не проверяется
 for (const key of ['BUS_WAKE', 'BUS_AUTOWAKE', 'CLAUDE_PROJECT_DIR']) delete baseEnv[key];
 
 const mkProject = (name) => {
@@ -254,11 +254,13 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const texts = () => page.locator('.msg .text').allTextContents();
     const overflow = (p) => p.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
 
-    await scenario('E1 страница: грузится без ошибок в консоли, все агенты машины в списке (и «не в шине»), лента с перепиской, цвета проводов у агентов разные', async () => {
+    await scenario('E1 страница: грузится без ошибок в консоли, все агенты машины в списке (и «не в шине»), лента с перепиской, цвета проводов у агентов разные, оркестраторы жёлтые', async () => {
       const names = await page.locator('.agent .name').allTextContents();
-      const hues = await page.locator('.agent').evaluateAll((list) => list.map((n) => n.style.getPropertyValue('--hue')));
+      const hues = await page.locator('.agent').evaluateAll((list) => list.map((n) => ({ hue: n.style.getPropertyValue('--hue'), boss: n.dataset.kind === 'project' })));
+      const wires = hues.filter((h) => !h.boss).map((h) => h.hue);
+      const bosses = hues.filter((h) => h.boss).map((h) => h.hue);
       const off = await page.locator('.agent.off .name').allTextContents();
-      return [errors.length === 0 && ['shop', 'dima', 'masha', 'loner', 'qa', 'landing'].every((n) => names.includes(n)) && !names.includes('user') && new Set(hues).size === hues.length && off.join() === 'loner' && (await page.locator('.msg').count()) >= 10 && (await overflow(page)) <= 0, JSON.stringify({ errors, names, hues })];
+      return [errors.length === 0 && ['shop', 'dima', 'masha', 'loner', 'qa', 'landing'].every((n) => names.includes(n)) && !names.includes('user') && new Set(wires).size === wires.length && bosses.length > 0 && bosses.every((h) => h === '52') && !wires.includes('52') && off.join() === 'loner' && (await page.locator('.msg').count()) >= 10 && (await overflow(page)) <= 0, JSON.stringify({ errors, names, hues })];
     });
 
     await scenario('E1b порядок загрузки: сначала подписка на события, потом состояние — иначе сообщение, разосланное в этот зазор, до вкладки не доходит', async () => {
@@ -352,7 +354,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     await scenario('E5 двойной клик по второму агенту и Ctrl+клик собирают пару; «Снять выбор · 2» в списке агентов снимает её; фишка типа фильтрует ленту', async () => {
       await agentButton('masha').click();
       await agentButton('dima').dblclick();
-      const pairByDbl = await page.locator('#pairNames').textContent();
+      // Имён над лентой нет — пару видно выбором слева
+      const pairByDbl = (await page.isVisible('#pair')) ? (await page.locator('.agent[aria-pressed="true"] .name').allTextContents()).join(' ') : '';
       const unpickLabel = (await page.locator('#agents #unpick').textContent()).trim();
       await page.click('#unpick');
       const unpicked = (await page.locator('.agent[aria-pressed="true"]').count()) === 0 && !(await page.isVisible('#unpick'));
@@ -381,18 +384,25 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       return [coveredInFeed === 2 && folded === 1 && weight.includes('агент прочтёт 1') && squeezeOff && unfolded === 2 && !(await page.isVisible('#pair')), JSON.stringify({ coveredInFeed, folded, weight, squeezeOff, unfolded })];
     });
 
-    await scenario('E7 «Сжать диалог»: без пары — подсказка, как её выбрать; с парой — сводка от claude встаёт карточкой, исходные сворачиваются', async () => {
-      await page.click('#squeeze');
-      const hint = await page.locator('#pairNote').textContent();
+    await scenario('E7 «Сжать диалог»: без пары кнопки нет — она в панели пары рядом с весом; с парой — сначала подтверждение с числом сообщений, отказ ничего не сжимает, согласие — сводка от claude встаёт карточкой, исходные сворачиваются', async () => {
+      const hiddenWithoutPair = !(await page.isVisible('#squeeze'));
       await agentButton('masha').click();
       await agentButton('dima').dblclick();
       const before = await page.locator('.msg').count();
+      let ask = '';
+      page.once('dialog', (d) => { ask = d.message(); d.dismiss(); });
+      await page.click('#squeeze');
+      await wait(300);
+      const keptOnDismiss = (await page.locator('.summary').count()) === 0 && (await page.locator('.msg').count()) === before;
+      if (!ask.includes('Сообщений: 9') || !keptOnDismiss) return [false, JSON.stringify({ ask, keptOnDismiss })];
+      page.once('dialog', (d) => d.accept());
       await page.click('#squeeze');
       await page.waitForSelector('.summary', { timeout: 20000 });
       const note = await page.locator('#pairNote').textContent();
       const after = await page.locator('.msg').count();
       await page.click('#unpick');
-      return [hint.includes('Выбери агента') && hint.includes('пару') && before === 9 && after === 0 && note.includes('Сжато сообщений: 9') && (await page.locator('.summary p').first().textContent()) !== '', JSON.stringify({ hint: hint.slice(0, 30), before, after, note })];
+      const inPair = await page.locator('#pair #squeeze').count();
+      return [hiddenWithoutPair && inPair === 1 && before === 9 && after === 0 && note.includes('Сжато сообщений: 9') && (await page.locator('.summary p').first().textContent()) !== '', JSON.stringify({ hiddenWithoutPair, inPair, before, after, note })];
     });
 
     // Подпись, которую код уже менял («Сжимаю…», «Переписываю…»), из статичной разметки выпала — язык ей ставит сам код
@@ -1006,20 +1016,21 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       return [/^≈\S+ ток\.$/.test(sum) && total.includes('Эта директория: диалогов') && rows >= 1 && /сообщ\. · несжатых \d+/.test(rowText) && rowText.includes('↔') && !overflow && pairShown && picked === 2, JSON.stringify({ sum, total, rows, rowText, overflow, pairShown, picked })];
     });
 
-    await scenario('E41 настройки проекта: шестерёнка открывает панель над лентой; правка поля помечает его «изменено» и включает «Сохранить»; сохранение пишет ключ в settings.json проекта', async () => {
+    await scenario('E41 настройки проекта: шестерёнка открывает панель над лентой; кнопка «Ярлык приложения» — на Windows, macOS и Linux; правка поля помечает его «изменено» и включает «Сохранить»; сохранение пишет ключ в settings.json проекта', async () => {
       await page.click('#settingsBtn');
       await page.waitForSelector('#settings:not([hidden])');
       const expanded = await page.getAttribute('#settingsBtn', 'aria-expanded');
       const field = page.locator('.settings-field[data-key="wake.perHour"]');
       await field.waitFor();
       const saveDisabledIdle = await page.isDisabled('#settingsSave');
+      const shortcutShown = await page.locator('#shortcutBtn').isVisible(); // кнопку не жмём: ярлык лёг бы на настоящий рабочий стол
       await field.locator('input').fill('3');
       const changed = (await field.getAttribute('class')).includes('changed');
       const saveEnabled = !(await page.isDisabled('#settingsSave'));
       await page.click('#settingsSave');
       await page.waitForFunction(() => document.getElementById('settingsStatus').textContent.includes('Сохранено'));
       const saved = projectSettings(shop);
-      return [expanded === 'true' && saveDisabledIdle && changed && saveEnabled && saved['wake.perHour'] === 3, JSON.stringify({ expanded, saveDisabledIdle, changed, saveEnabled, saved })];
+      return [expanded === 'true' && saveDisabledIdle && changed && saveEnabled && saved['wake.perHour'] === 3 && shortcutShown === ['win32', 'darwin', 'linux'].includes(process.platform), JSON.stringify({ expanded, saveDisabledIdle, changed, saveEnabled, saved, shortcutShown })];
     });
 
     await scenario('E42 настройки проекта: значение переживает перезагрузку страницы и видно как изменённое; «↺ по умолчанию» + «Сохранить» убирает ключ из файла; кривое число — ошибка у поля без запроса на сервер; Esc закрывает панель и возвращает фокус на шестерёнку', async () => {
@@ -1418,7 +1429,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       await bg.close();
       const want = h264 ? { has: true, on: '/bg/2.mp4' } : { has: false, on: '' };
       const ok = server.list === '2,3,5,6,7,9' && server.range === '206 bytes 0-99/816705' && server.past === '416 bytes */816705' && server.foreign === '404,404,404'
-        && tiles === '0,2,3,5,6*,7,9' && saved === (h264 ? '2' : '0') && JSON.stringify(picked) === JSON.stringify(want) && JSON.stringify(reloaded) === JSON.stringify(want)
+        && tiles === '0,2,3,5,6,7*,9' && saved === (h264 ? '2' : '0') && JSON.stringify(picked) === JSON.stringify(want) && JSON.stringify(reloaded) === JSON.stringify(want)
         && checkedAfterReload === (h264 ? '2' : '0') && JSON.stringify(off) === JSON.stringify({ has: false, on: '' }) && offSaved === '0' && !pageErrors.length;
       return [ok, JSON.stringify({ server, h264, tiles, picked, saved, reloaded, checkedAfterReload, off, offSaved, pageErrors })];
     });
@@ -1457,6 +1468,124 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         && moved.dim.startsWith('0.923') && moved.out === '60 %' && moved.reset && moved.saved === '60' && (!moved.video || moved.alpha === '0.6')
         && reloaded.dim === moved.dim && reloaded.out === '60 %' && reset.dim.startsWith('0.615') && !reset.reset && reset.saved === null && !pageErrors.length;
       return [ok, JSON.stringify({ before, moved, reloaded, reset, pageErrors })];
+    });
+
+    await scenario('E49 рабочий каталог: клик по пути в шапке — панель; звезда закрепляет; клик по проекту шины переключает шапку; «Обзор» — вверх и в подпапку, «Выбрать эту папку»; × открепляет; Esc закрывает; на 390px без горизонтального скролла', async () => {
+      const head = () => page.locator('#project').textContent();
+      await page.click('#whereBtn');
+      await page.locator('#dirsPanel').waitFor();
+      await page.locator('#dirsList .dir-row').first().waitFor();
+      const current = await page.locator('#dirsCurrent').textContent();
+      await page.click('#dirsPin');
+      await page.locator('#dirsPin[aria-pressed="true"]').waitFor();
+      const pinnedLabel = await page.locator('#dirsList .sched-group').first().locator('.label').textContent();
+      const size = page.viewportSize();
+      await page.setViewportSize({ width: 390, height: 800 });
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+      await page.setViewportSize(size);
+      await page.locator('.dir-row', { hasText: landing }).first().click();
+      await page.locator('#dirsPanel').waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => document.querySelector('#project').textContent.startsWith('landing'));
+      const afterSwitch = await head();
+      await page.click('#whereBtn');
+      await page.click('#dirsBrowse');
+      await page.locator('.dirs-browse-head').waitFor();
+      await page.locator('.dirs-browse-head button', { hasText: 'Вверх' }).click();
+      await page.locator('#dirsList .dir-row', { hasText: /^shopshop$/ }).waitFor();
+      await page.locator('#dirsList .dir-row', { hasText: /^shopshop$/ }).click();
+      await page.waitForFunction((dir) => document.querySelector('.dirs-browse-head span').title === dir, shop);
+      await page.locator('.dirs-browse-head button', { hasText: 'Выбрать эту папку' }).click();
+      await page.locator('#dirsPanel').waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => document.querySelector('#project').textContent.startsWith('shop'));
+      await page.click('#whereBtn');
+      await page.locator('.dir-line .iconbtn').first().click();
+      await page.locator('#dirsPin[aria-pressed="false"]').waitFor();
+      const pinnedLeft = await page.locator('.dir-line').count();
+      await page.keyboard.press('Escape');
+      await page.locator('#dirsPanel').waitFor({ state: 'hidden' });
+      const saved = JSON.parse(read(path.join(configDir, 'bus', 'ui-dirs.json')) || '{}');
+      return [current.includes(shop) && pinnedLabel === 'Закреплённые' && !overflow && afterSwitch.startsWith('landing') && pinnedLeft === 0 && saved.last === shop && saved.recent.includes(landing) && saved.pinned.length === 0,
+        JSON.stringify({ current, pinnedLabel, overflow, afterSwitch, pinnedLeft, saved })];
+    });
+
+    await scenario('E50 «@» в поле сообщения: над полем файлы проекта; клик по папке — внутрь, → — глубже, ← — вверх; печать — поиск; Enter вставляет путь и не отправляет; ничего не нашлось — Enter закрывает список и не отправляет; Esc закрывает, и это слово больше не предлагает, стёр @ и набрал снова — открыт; кнопка-папка у скрепки — то же, шо @; на 390px без горизонтального скролла', async () => {
+      for (const file of ['src/api/users.js', 'src/main.js', 'README.md']) {
+        fs.mkdirSync(path.dirname(path.join(shop, file)), { recursive: true });
+        fs.writeFileSync(path.join(shop, file), '');
+      }
+      const text = () => page.locator('#text').inputValue();
+      const rows = () => page.locator('#mentionList .mention-row b').allTextContents();
+      const rowsAre = (list) => page.waitForFunction((want) => [...document.querySelectorAll('#mentionList .mention-row b')].map((b) => b.textContent).join() === want, list.join());
+      const sentBefore = (await page.locator('#feed > li').count());
+      await page.fill('#text', '');
+      await page.locator('#text').pressSequentially('глянь @');
+      await page.locator('#mention').waitFor();
+      const root = await rows();
+      await page.locator('#mentionList .mention-row', { hasText: /^src\/$/ }).click();
+      await rowsAre(['api/', 'main.js']);
+      const inSrc = await text();
+      await page.keyboard.press('ArrowRight');
+      await rowsAre(['users.js']);
+      const inApi = await text();
+      await page.keyboard.press('ArrowLeft');
+      await rowsAre(['api/', 'main.js']);
+      const size = page.viewportSize();
+      await page.setViewportSize({ width: 390, height: 800 });
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+      await page.setViewportSize(size);
+      await page.keyboard.type('mai');
+      await page.waitForFunction(() => (document.querySelector('#mentionList .mention-row') || {}).title === 'src/main.js');
+      await page.keyboard.press('Enter');
+      await page.locator('#mention').waitFor({ state: 'hidden' });
+      const inserted = await text();
+      await page.keyboard.type('@usr');
+      await page.locator('#mention').waitFor();
+      await page.keyboard.press('Escape');
+      await page.locator('#mention').waitFor({ state: 'hidden' });
+      await page.keyboard.type('s');
+      await page.waitForTimeout(300);
+      const reopened = await page.locator('#mention').isVisible();
+      for (let i = 0; i < 5; i++) await page.keyboard.press('Backspace'); // «@usrs» стёрто целиком — на том же месте новое @
+      await page.keyboard.type('@');
+      const again = await page.locator('#mention').waitFor().then(() => true, () => false);
+      await page.keyboard.type('zzqqj');
+      await page.locator('#mentionList .mention-note').waitFor();
+      await page.keyboard.press('Enter');
+      await page.locator('#mention').waitFor({ state: 'hidden' });
+      const afterEmptyEnter = await text();
+      // Папка у скрепки — то же, шо @: дописывает « @» в конец и открывает список, второй клик закрывает; фокус остаётся в поле
+      await page.keyboard.type(' '); // курсор на слове @… кнопка открыла бы его, а не новое
+      await page.click('#filesBtn');
+      await page.locator('#mention').waitFor();
+      const byButton = await text();
+      const byButtonFocus = await page.evaluate(() => document.activeElement.id);
+      await page.click('#filesBtn');
+      await page.locator('#mention').waitFor({ state: 'hidden' });
+      const sentAfter = await page.locator('#feed > li').count();
+      await page.fill('#text', '');
+      return [root.includes('src/') && root.indexOf('src/') < root.findIndex((r) => !r.endsWith('/')) && inSrc === 'глянь @src/' && inApi === 'глянь @src/api/' && !overflow
+        && /^глянь @(\S*[\\/])?src[\\/]main\.js $/.test(inserted) && !reopened && again && afterEmptyEnter.endsWith(' @zzqqj') && byButton === `${afterEmptyEnter} @` && byButtonFocus === 'text' && sentAfter === sentBefore,
+        JSON.stringify({ root, inSrc, inApi, overflow, inserted, reopened, again, afterEmptyEnter, byButton, byButtonFocus, sentBefore, sentAfter })];
+    });
+
+    await scenario('E51 окно приложения: страница с ?app=1 шлёт свой размер и место в app-window.json каталога шины, обычная вкладка — нет', async () => {
+      const windowFile = path.join(configDir, 'bus', 'app-window.json');
+      fs.rmSync(windowFile, { force: true });
+      await page.waitForTimeout(2500); // вкладка без ?app=1 открыта всё это время
+      const byTab = fs.existsSync(windowFile);
+      const win = await (await rawContext({ viewport: { width: 1180, height: 760 } })).newPage();
+      await win.goto(`${url}/?app=1`);
+      await win.waitForSelector('.msg');
+      const geometry = await win.evaluate(() => ({ x: screenX, y: screenY, w: outerWidth, h: outerHeight }));
+      const saved = await (async () => {
+        for (let i = 0; i < 40; i++) {
+          if (fs.existsSync(windowFile)) return JSON.parse(fs.readFileSync(windowFile, 'utf8'));
+          await win.waitForTimeout(100);
+        }
+        return null;
+      })();
+      await win.context().close();
+      return [!byTab && saved && JSON.stringify(saved) === JSON.stringify(geometry), JSON.stringify({ byTab, geometry, saved })];
     });
 
     await scenario('E16 сервер погас: над лентой встаёт красная полоса с тем, как поднять его заново', async () => {

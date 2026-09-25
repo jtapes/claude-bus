@@ -26,8 +26,11 @@ const { AsyncLocalStorage } = require('async_hooks');
 const bus = require('./bus.js');
 const wake = require('./wake.js');
 const settings = require('./settings.js');
+const { writeAtomic, readJson, alive, killTree } = require('./fsx.js');
 const i18n = require('./ui-i18n.js');
+const L = require('./ui-logic.js'); // поиск файлов для «@» — тот же, шо гоняют тесты
 const update = require('./update.js');
+const app = require('./app.js'); // окно --app и ярлык на рабочем столе
 
 // Язык ответа — язык вкладки, приславшей запрос (заголовок X-Bus-Lang): у двух вкладок он разный, поэтому не глобальная переменная.
 // Вне запроса (опрос, старт, консоль) языка нет — tr отдаёт русский. Тексты bus.js, scheduler.js и wake.js не переводятся:
@@ -42,6 +45,10 @@ const POLL_MS = 1000;
 const LIVE_LINES = 30; // сколько последних строк живого хода агента едет на страницу
 const HEARTBEAT_MS = 25000; // комментарий в SSE-поток: без него прокси и браузер считают соединение мёртвым
 const IDLE_EXIT_MS = 15 * 60 * 1000;
+// Окно (--app) закрыли — гаснем почти сразу; 10 с хватает на F5 и переподключение SSE. До первого подключения — обычные 15 мин:
+// холодный старт браузера бывает долгим
+const APP_IDLE_MS = Number(process.env.BUS_APP_IDLE_MS) || 10 * 1000;
+const ICON_SVG = path.join(__dirname, '..', 'assets', 'bus.svg');
 const BODY_LIMIT = 16 * 1024;
 const ROLE_BODY_LIMIT = 64 * 1024; // роль агента — до 20 КБ текста плюс поля формы
 const SEND_BODY_LIMIT = 1024 * 1024; // поле сообщения длину не режет: длинный текст уходит агенту вложением
@@ -88,7 +95,10 @@ let liveSignature = '';
 let runningBoxes = new Map(); // ключ работающего субагента → его ящик: живой ход читается только у них (collectAgents)
 let pollTimer = null;
 let idleTimer = null;
-let cwd = '';
+let appMode = false; // запущен ярлыком или --app: живёт, пока открыто окно
+let appSeen = false; // окно уже подключалось — с этого момента простой короткий
+let cwd = ''; // рабочий каталог UI: каталог запуска или выбранный в шапке (changeDir)
+let chosen = false; // каталог выбрал пользователь — единственный проект шины вместо него не подхватываем
 let summarizing = false;
 let rewriting = false;
 let updateState = { state: 'off' }; // проверка обновления идёт в фоне после старта; до её конца кнопки нет
@@ -170,11 +180,15 @@ function wakeOf(box) {
 function collectAgents() {
   const globals = bus.loadRegistry(bus.REGISTRY);
   const plain = bus.contextOf(null, globals);
-  // UI открыли не из проекта (скажем, из ~/.claude), а живой проект в шине один — гадать нечего: ведём себя как открытые из него,
-  // иначе глобальным агентам писать не от кого и обёртку заводить некуда. Проектов несколько — выбирать за пользователя не берёмся
+  // Каталог не в шине подключится сам с первым сообщением (attachPlan: будущее имя и корень). Подключить нельзя (домашняя папка,
+  // ~/.claude), а живой проект в шине один — гадать нечего: ведём себя как открытые из него, иначе глобальным агентам писать
+  // не от кого. Проектов несколько — выбирать за пользователя не берёмся. Каталог выбран в шапке — не подменяем
   const projects = Object.keys(globals).map((name) => bus.describe(plain, name)).filter((a) => a && a.kind === 'project' && fs.existsSync(a.root));
-  const here = bus.projectSelf({ ...plain, start: cwd }) || (projects.length === 1 ? projects[0] : null);
+  const own = bus.projectSelf({ ...plain, start: cwd });
+  const plan = own ? null : bus.attachPlan(cwd);
+  const here = own || (plan.refused && projects.length === 1 && !chosen ? projects[0] : null);
   const hereRoot = here ? here.root : null;
+  const pending = !here && plan && !plan.refused ? plan : null; // { root, name } — подключится первым сообщением
   const list = [];
   const busy = new Map();
   const push = (agent, extra = {}) => {
@@ -220,8 +234,8 @@ function collectAgents() {
   const shadowed = new Set([...list.filter((a) => a.kind === 'local' && a.here).map((a) => a.name), ...hereDefs]);
   // Незаведённый агент заводится сам при первом сообщении (sendFromHuman → bus.enroll); blocked — почему так не выйдет, или ''
   const blockedWhy = (kind, root) => {
-    if (kind === 'global') return hereRoot ? '' : N('интерфейс запущен не из проекта шины, а глобальная роль заводится обёрткой в проекте. Запусти bus.js ui из каталога проекта (bus.js init <имя>).');
-    return roots.includes(root) ? '' : N('каталог не подключён к шине — локальному агенту нужен оркестратор. Сначала из него: bus.js init <имя>.');
+    if (kind === 'global') return hereRoot || pending ? '' : N('рабочий каталог к шине не подключить, а глобальная роль заводится обёрткой в проекте. Выбери каталог проекта — клик по пути в шапке.');
+    return roots.includes(root) || (pending && root === pending.root) ? '' : N('каталог не подключён к шине — локальному агенту нужен оркестратор. Открой каталог в шапке: он подключится сам с первым сообщением.');
   };
   const unregistered = (dir, kind, root) => {
     for (const def of definitionsIn(dir)) {
@@ -232,22 +246,31 @@ function collectAgents() {
     }
   };
   unregistered(path.join(bus.CONFIG_DIR, 'agents'), 'global', null);
-  const cwdRoot = hereRoot || cwd;
+  const cwdRoot = hereRoot || (pending && pending.root) || cwd;
   for (const root of new Set([...roots, cwdRoot])) {
     if (path.relative(path.join(root, '.claude'), bus.CONFIG_DIR) !== '') unregistered(path.join(root, '.claude', 'agents'), 'local', root);
   }
   // Из UI пишет оркестратор: у локального агента — его каталога, у проекта и глобального агента — каталога UI. from — чьим именем
-  // уйдёт сообщение; blocked — почему агенту отсюда не написать
+  // уйдёт сообщение; attach — каталог UI ещё не в шине и подключится этим сообщением; blocked — почему агенту отсюда не написать
   for (const a of list) {
     if (a.blocked) continue;
-    const boss = list.find((p) => p.kind === 'project' && p.alive && p.root === (a.kind === 'local' ? a.root : hereRoot));
+    const bossRoot = a.kind === 'local' ? a.root : hereRoot;
+    const boss = list.find((p) => p.kind === 'project' && p.alive && p.root === bossRoot);
+    if (!boss && pending && (a.kind !== 'local' || a.root === pending.root)) {
+      Object.assign(a, { from: pending.name, attach: true, blocked: '' });
+      continue;
+    }
     a.from = boss && boss.key !== a.key ? boss.name : '';
-    if (!boss) a.blocked = N('интерфейс запущен не из проекта шины — писать проекту и глобальному агенту не от кого. Запусти bus.js ui из каталога проекта (bus.js init <имя>).');
+    if (!boss) a.blocked = N('рабочий каталог к шине не подключить — писать проекту и глобальному агенту не от кого. Выбери каталог проекта — клик по пути в шапке.');
     else a.blocked = a.from ? '' : N('это оркестратор каталога.');
   }
   // cwd в шапке — каталог проекта, от чьего имени пишем: при подхваченном единственном проекте это не каталог запуска
   runningBoxes = busy;
-  return { agents: list, here: { cwd: hereRoot || cwd, root: hereRoot, project: here ? here.name : null }, roots };
+  // dir — сам рабочий каталог (панель каталогов закрепляет его, а не корень проекта над ним); подхвачен единственный проект — его корень
+  const dir = hereRoot && !bus.isInside(cwd, hereRoot) ? hereRoot : cwd;
+  // attach — для панели каталогов: подключится сам как «name» или почему нельзя (refused)
+  const attach = here ? null : pending ? { name: pending.name, root: pending.root } : { refused: plan.refused };
+  return { agents: list, here: { cwd: hereRoot || cwd, dir, root: hereRoot, project: here ? here.name : null, attach }, roots };
 }
 
 // ---------- журналы ----------
@@ -537,6 +560,266 @@ function scheduleAction(action, body) {
   return { ...result, ...scheduleState() };
 }
 
+// ---------- рабочий каталог ----------
+
+// Закреплённые и недавние каталоги, последний выбранный — общие у всех портов и вкладок: localStorage у каждого порта свой
+const DIRS_FILE = path.join(bus.BUS, 'ui-dirs.json');
+// Живой сервер: токен по порту. Повторный bus.js ui переключает его на свой проект, а не поднимает второй.
+// Файл на порт, а не один: UI на соседнем порту (старая версия, --port) иначе затирал бы запись первого
+const serverFile = (port) => path.join(bus.BUS, `ui-server-${port}.json`);
+let serverPort = 0;
+const RECENT_DIRS = 8;
+const LIST_DIRS = 500;
+
+const samePath = (a, b) => path.relative(a, b) === '';
+const isDir = (dir) => {
+  try {
+    return fs.statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/** Файл правят руками и другие серверы — берём только абсолютные пути, остальное молча отбрасываем. */
+function readDirs() {
+  const data = readJson(DIRS_FILE, {}) || {}; // файла нет или битый — начинаем с пустого
+  const paths = (list) => (Array.isArray(list) ? list.filter((p) => typeof p === 'string' && path.isAbsolute(p)) : []);
+  return { pinned: paths(data.pinned), recent: paths(data.recent), last: typeof data.last === 'string' && path.isAbsolute(data.last) ? data.last : '' };
+}
+
+const writeDirs = (data) => writeAtomic(DIRS_FILE, JSON.stringify(data, null, 1));
+
+/** Полный путь из запроса: только абсолютный — относительный считался бы от каталога сервера, а не от того, шо видит пользователь. */
+function dirOf(value) {
+  const dir = typeof value === 'string' ? value.trim() : '';
+  if (!dir || !path.isAbsolute(dir)) throw new bus.BusError(tr('Нужен полный путь к каталогу — от диска или корня.'));
+  return path.resolve(dir);
+}
+
+/** Панель каталогов: текущий, закреплённые, недавние и проекты шины. Каталог пропал с диска — помечаем, а не прячем. */
+function dirsState() {
+  const snapshot = tick() || collectAgents();
+  const saved = readDirs();
+  const projects = snapshot.agents.filter((a) => a.kind === 'project' && a.alive).map((a) => ({ name: a.name, path: a.root })).sort((a, b) => a.name.localeCompare(b.name));
+  const projectAt = (dir) => (projects.find((p) => samePath(p.path, dir)) || {}).name || '';
+  const info = (dir) => ({ path: dir, project: projectAt(dir), missing: !isDir(dir) });
+  return { current: { ...snapshot.here, pinned: saved.pinned.some((p) => samePath(p, snapshot.here.dir)) }, pinned: saved.pinned.map(info), recent: saved.recent.map(info), projects, home: os.homedir() };
+}
+
+/** Переключить сервер на каталог: все вкладки получают here и перечитывают состояние целиком — пороги, доступы, ленту. */
+function switchTo(dir, { remember = true } = {}) {
+  cwd = dir;
+  chosen = true;
+  if (remember) {
+    const saved = readDirs();
+    saved.recent = [dir, ...saved.recent.filter((p) => !samePath(p, dir))].slice(0, RECENT_DIRS);
+    saved.last = dir;
+    writeDirs(saved);
+  }
+  bus.auditNote(`ui cd | ${dir}`);
+  const snapshot = tick(true);
+  broadcast('here', snapshot ? snapshot.here : { cwd, dir: cwd, root: null, project: null });
+}
+
+function changeDir(body) {
+  const dir = dirOf(body.dir);
+  if (!isDir(dir)) throw new bus.BusError(tr('Каталога нет: {dir}', { dir }));
+  switchTo(dir);
+  return { ok: true, ...dirsState() };
+}
+
+function pinDir(body) {
+  const dir = dirOf(body.dir);
+  const saved = readDirs();
+  saved.pinned = saved.pinned.filter((p) => !samePath(p, dir));
+  if (body.on) {
+    if (!isDir(dir)) throw new bus.BusError(tr('Каталога нет: {dir}', { dir }));
+    saved.pinned.push(dir);
+  }
+  writeDirs(saved);
+  return { ok: true, ...dirsState() };
+}
+
+/**
+ * Рабочий каталог не в шине — подключить его именем папки (bus.attach): так делает первое сообщение, новый агент и
+ * правка настроек проекта. Нельзя (домашняя папка, ~/.claude) — BusError с причиной. → имя проекта.
+ */
+function attachHere() {
+  let result;
+  try {
+    result = bus.attach(cwd);
+  } catch (e) {
+    throw e instanceof bus.BusError ? new bus.BusError(tr('Каталог к шине не подключить: выбери каталог проекта — клик по пути в шапке.')) : e;
+  }
+  if (result.attached) switchTo(cwd, { remember: false }); // проект появился — вкладкам нужны его пороги и доступы, не только список агентов
+  return result.name;
+}
+
+/** Подпапки для обзора. Без пути — диски (на Windows) или корень; ссылки и junction не показываем: половина из них на Windows — закрытые заглушки. */
+function listDirs(target) {
+  const projects = new Map(collectAgents().agents.filter((a) => a.kind === 'project').map((a) => [path.resolve(a.root).toLowerCase(), a.name]));
+  const entry = (full, name) => ({ name, path: full, project: projects.get(full.toLowerCase()) || '' });
+  if (!target) {
+    const roots = process.platform === 'win32' ? [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map((l) => `${l}:\\`).filter(isDir) : ['/'];
+    return { path: '', parent: null, dirs: roots.map((d) => entry(d, d)), more: 0, home: os.homedir() };
+  }
+  const full = dirOf(target);
+  let entries;
+  try {
+    entries = fs.readdirSync(full, { withFileTypes: true });
+  } catch {
+    throw new bus.BusError(tr('Каталог не читается: {dir}', { dir: full }));
+  }
+  const hidden = (name) => /^[.$]/.test(name);
+  const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort((a, b) => Number(hidden(a)) - Number(hidden(b)) || a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  const up = path.dirname(full);
+  return { path: full, parent: samePath(up, full) ? '' : up, dirs: dirs.slice(0, LIST_DIRS).map((name) => entry(path.join(full, name), name)), more: Math.max(0, dirs.length - LIST_DIRS), home: os.homedir() };
+}
+
+// ---------- файлы проекта: «@» в поле сообщения ----------
+
+const FILES_TTL_MS = 10 * 1000; // список собирается на каждую букву — кэш по корню, шоб не гонять git и обход
+const FILES_MAX = 20000;
+const FILES_LIST = 200;
+const FILES_FOUND = 50;
+// Без git обход пропускает то, шо агенту в сообщении не пишут: зависимости, сборку, кэши
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.nuxt', '.output', '.next', '.svelte-kit', '.turbo', '.cache', '.parcel-cache', 'coverage', '__pycache__', '.venv', 'venv']);
+let filesIndex = null; // { base, at, all, children, cut }
+
+/** Проект в git — его список: учтённые и новые мимо .gitignore, без стёртых с диска. Не git, git нет или пусто (каталог в чужом репо, весь в ignore) — null. */
+function gitFiles(base) {
+  const git = (...args) => require('child_process').execFileSync('git', ['ls-files', '-z', ...args], { cwd: base, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).split('\0').filter(Boolean);
+  try {
+    const deleted = new Set(git('-d'));
+    const files = [...new Set(git('-co', '--exclude-standard'))].filter((f) => !deleted.has(f));
+    return files.length ? { files, cut: files.length > FILES_MAX } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Обход без git: вширь, мимо SKIP_DIRS, ссылок и junction; до FILES_MAX путей. cut — обошли не всё. */
+function walkFiles(base) {
+  const files = [];
+  const queue = [''];
+  while (queue.length && files.length < FILES_MAX) {
+    const rel = queue.shift();
+    let entries;
+    try {
+      entries = fs.readdirSync(path.join(base, rel), { withFileTypes: true });
+    } catch {
+      continue; // закрытая папка — просто без неё
+    }
+    for (const e of entries) {
+      const sub = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory() && !SKIP_DIRS.has(e.name)) queue.push(sub);
+      else if (e.isFile()) files.push(sub);
+    }
+  }
+  return { files, cut: queue.length > 0 || files.length > FILES_MAX };
+}
+
+/** Файлы и папки проекта: all — для поиска (у папок «/» в конце), children — содержимое папки по её пути. */
+function fileIndex(base) {
+  if (filesIndex && filesIndex.base === base && Date.now() - filesIndex.at < FILES_TTL_MS) return filesIndex;
+  const listed = gitFiles(base) || walkFiles(base);
+  const files = listed.files.slice(0, FILES_MAX);
+  const children = new Map([['', new Set()]]);
+  for (const file of files) {
+    const parts = file.split('/');
+    for (let i = 0; i < parts.length; i++) {
+      const dir = parts.slice(0, i).join('/');
+      const last = i === parts.length - 1;
+      if (!children.has(dir)) children.set(dir, new Set());
+      children.get(dir).add(last ? parts[i] : `${parts[i]}/`);
+    }
+  }
+  const dirs = [...children.keys()].filter(Boolean).map((d) => `${d}/`);
+  filesIndex = { base, at: Date.now(), all: [...dirs, ...files], children, cut: listed.cut };
+  return filesIndex;
+}
+
+/**
+ * Выпадашка «@»: q — нечёткий поиск по всему проекту, иначе содержимое папки dir (сначала папки). Корень — проект рабочего каталога,
+ * вне шины — сам каталог. Пути — от корня через «/»: по диску запрос не ходит, выйти за корень нечем. Папки в индексе нет — пусто и missing.
+ */
+function projectFiles(q, dir) {
+  const { here } = collectAgents();
+  const base = here.root || here.dir;
+  const index = fileIndex(base);
+  const item = (p) => ({ path: p, name: p.replace(/\/$/, '').split('/').pop() + (p.endsWith('/') ? '/' : ''), dir: p.endsWith('/') });
+  const rel = String(dir || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (q) return { base, dir: null, items: L.fileMatches(index.all, q, FILES_FOUND).map(item), more: 0, cut: index.cut };
+  const kids = index.children.get(rel);
+  if (!kids) return { base, dir: `${rel}/`, items: [], missing: true, more: 0, cut: index.cut };
+  const names = [...kids].sort((a, b) => Number(!a.endsWith('/')) - Number(!b.endsWith('/')) || a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  return { base, dir: rel ? `${rel}/` : '', items: names.slice(0, FILES_LIST).map((n) => item(rel ? `${rel}/${n}` : n)), more: Math.max(0, names.length - FILES_LIST), cut: index.cut };
+}
+
+/** Корень проекта шины, в котором лежит каталог, или null. Реестр не читается — тоже null: гадать не о чем. */
+function projectRootOf(dir) {
+  try {
+    const project = bus.projectSelf({ ...bus.contextOf(null), start: dir });
+    return project ? project.root : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Корень проекта для каталога запуска: он в шине или подключится сам первым сообщением (bus.attachPlan). null — домашняя папка и т. п. */
+function launchRootOf(dir) {
+  const root = projectRootOf(dir);
+  if (root) return root;
+  try {
+    const plan = bus.attachPlan(dir);
+    return plan.refused ? null : plan.root;
+  } catch {
+    return null;
+  }
+}
+
+/** Каталог запуска — проект (в шине или будущий) — он; иначе последний выбранный в шапке, если жив; иначе каталог запуска. */
+function startDir(launch) {
+  if (launchRootOf(launch)) return { dir: launch, chosen: false };
+  const { last } = readDirs();
+  return last && isDir(last) ? { dir: last, chosen: true } : { dir: launch, chosen: false };
+}
+
+function rememberServer(port) {
+  serverPort = port;
+  try {
+    writeAtomic(serverFile(port), JSON.stringify({ port, pid: process.pid, token }));
+  } catch (e) {
+    console.error(`${path.basename(serverFile(port))}: ${e.message}`); // без файла повторный запуск просто поднимет второй UI
+  }
+}
+
+/** Стираем только свой файл: после нас порт мог занять другой сервер и записать себя. */
+function forgetServer() {
+  if (!serverPort) return;
+  try {
+    if (JSON.parse(fs.readFileSync(serverFile(serverPort), 'utf8')).pid === process.pid) fs.rmSync(serverFile(serverPort), { force: true });
+  } catch {
+    // файла нет или битый — не наше дело
+  }
+}
+
+/** Живой UI на порту — наш: токен в его файле. Переключаем его на каталог запуска; не вышло (файл устарел, старая версия) — false. */
+function switchRunning(port, dir) {
+  const saved = readJson(serverFile(port), null);
+  if (!saved || typeof saved.token !== 'string') return Promise.resolve(false);
+  const payload = JSON.stringify({ dir });
+  return new Promise((resolve) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/api/cd', method: 'POST', timeout: 5000, headers: { 'content-type': 'application/json', 'x-bus-token': saved.token, 'content-length': Buffer.byteLength(payload) } }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode === 200));
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => req.destroy());
+    req.end(payload);
+  });
+}
+
 // ---------- SSE ----------
 
 function broadcast(event, data) {
@@ -561,7 +844,7 @@ function updateTimers() {
     pollTimer = null;
   }
   clearTimeout(idleTimer);
-  if (!clients.size) idleTimer = setTimeout(() => process.exit(0), IDLE_EXIT_MS);
+  if (!clients.size) idleTimer = setTimeout(() => process.exit(0), appMode && appSeen ? APP_IDLE_MS : IDLE_EXIT_MS);
 }
 
 function subscribe(res) {
@@ -569,6 +852,7 @@ function subscribe(res) {
   res.write(': connected\n\n');
   const heartbeat = setInterval(() => res.write(': ping\n\n'), HEARTBEAT_MS);
   clients.add(res);
+  appSeen = true;
   updateTimers();
   // 'close' ответа, а не запроса: у запроса он срабатывает по концу чтения, а не по разрыву соединения
   res.on('close', () => {
@@ -655,9 +939,16 @@ function quoteRefs(refs) {
 }
 
 function sendFromPage({ to: key, type, text, files, btw, evolve, dialog, refs }) {
-  const snapshot = collectAgents();
-  const entry = snapshot.agents.find((a) => a.key === String(key || ''));
+  let snapshot = collectAgents();
+  let entry = snapshot.agents.find((a) => a.key === String(key || ''));
   if (!entry) throw new bus.BusError(tr('Такого агента в шине нет.'));
+  if (entry.attach) {
+    // Первое сообщение из каталога не в шине: сначала он встаёт в шину именем папки, потом всё как обычно
+    attachHere();
+    snapshot = collectAgents();
+    entry = snapshot.agents.find((a) => a.key === String(key || ''));
+    if (!entry) throw new bus.BusError(tr('Реестр шины поменялся, пока ты писал. Обнови страницу.'));
+  }
   const from = senderOf(entry, snapshot);
   const fresh = entry.registered ? null : entry;
   let to = fresh ? null : resolveAgent(entry.key, snapshot);
@@ -788,20 +1079,11 @@ function sweepUploads() {
     if (!m || Number(m[1]) === process.pid) continue;
     const dir = path.join(os.tmpdir(), name);
     try {
-      if (pidAlive(Number(m[1])) && Date.now() - fs.statSync(dir).mtimeMs < UPLOAD_TTL_MS) continue;
+      if (alive(Number(m[1])) && Date.now() - fs.statSync(dir).mtimeMs < UPLOAD_TTL_MS) continue;
       fs.rmSync(dir, { recursive: true, force: true });
     } catch {
       // занято или уже убрано соседним сервером — подметём в следующий старт
     }
-  }
-}
-
-function pidAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return e.code === 'EPERM'; // процесс есть, но не наш
   }
 }
 
@@ -908,6 +1190,7 @@ function settingsState() {
   const text = (value) => (value ? tr(value) : '');
   return {
     root,
+    shortcut: app.PLATFORMS.includes(process.platform), // кнопка «Ярлык приложения» — только там, где мы его умеем
     values: settings.get(root),
     groups: settings.GROUPS.map((group) => ({ key: group.key, label: tr(group.label) })),
     schema: settings.SCHEMA.map(({ key, group, type, min, max, atLeast, global, unit, label, hint }) => ({ key, group, type, min, max, atLeast, global: Boolean(global), unit: text(unit), label: tr(label), hint: tr(hint), default: settings.DEFAULTS[key] })),
@@ -919,10 +1202,14 @@ function settingsState() {
  * Общие настройки (global в схеме) каталога не требуют: промпт всем агентам пользователь правит и из UI, открытого вне проекта.
  */
 function saveSettings({ values, reset }) {
-  const root = hereRoot();
+  let root = hereRoot();
   const names = reset !== true && values && typeof values === 'object' ? Object.keys(values) : [];
   const onlyGlobal = names.length > 0 && names.every((name) => (settings.SCHEMA.find((item) => item.key === name) || {}).global);
-  if (!root && !onlyGlobal) throw new bus.BusError(tr('Интерфейс запущен не из проекта шины — настройки привязывать не к чему. Запусти bus.js ui из каталога проекта (bus.js init <имя>).'));
+  // Настройка проекта для каталога не в шине подключает его: настройкам нужен проект, как и сообщению
+  if (!root && !onlyGlobal) {
+    attachHere();
+    root = hereRoot();
+  }
   try {
     if (reset === true) settings.reset(root);
     else settings.set(root, values);
@@ -951,7 +1238,7 @@ function runClaude(prompt, { args, timeoutMs = SUMMARY_TIMEOUT_MS, failed = tr('
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
-      wake.killTree(child); // kill() снял бы только cmd.exe, сам claude жил бы дальше и жёг токены
+      killTree(child.pid); // kill() снял бы только cmd.exe, сам claude жил бы дальше и жёг токены
       reject(new bus.BusError(`${tr('claude не ответил за {sec} с.', { sec: timeoutMs / 1000 })} ${failed}`));
     }, timeoutMs);
     // Без кодировки чанки — Buffer: буква, попавшая на границу двух чанков, склеивалась в «��» и уезжала в сводку или в роль
@@ -1095,12 +1382,8 @@ function newDialog({ a: aKey, b: bKey }) {
 const closedFile = (root) => path.join(root, '.claude', 'bus', 'closed.json');
 
 function readClosedFile(root) {
-  try {
-    const data = JSON.parse(fs.readFileSync(closedFile(root), 'utf8'));
-    return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
-  } catch {
-    return {}; // файла нет или он битый
-  }
+  const data = readJson(closedFile(root), {}); // файла нет или он битый — меток нет
+  return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
 }
 
 function readClosed(snapshot) {
@@ -1119,7 +1402,7 @@ function markClosed(aKey, bKey, d, at) {
   if (at) data[thread] = at;
   else if (thread in data) delete data[thread];
   else return { ok: true, thread, at };
-  bus.writeAtomic(closedFile(root), JSON.stringify(data, null, 1));
+  writeAtomic(closedFile(root), JSON.stringify(data, null, 1));
   safeTick();
   return { ok: true, thread, at };
 }
@@ -1188,12 +1471,8 @@ const ACCESS_WEIGHTS = path.join(__dirname, 'access-weights.json');
 
 /** Таблица замеров access-measure.js. Нет файла или он битый — форма живёт без цифр. */
 function accessWeights() {
-  try {
-    const data = JSON.parse(fs.readFileSync(ACCESS_WEIGHTS, 'utf8'));
-    return Array.isArray(data.order) && data.contexts && typeof data.contexts === 'object' ? data : null;
-  } catch {
-    return null;
-  }
+  const data = readJson(ACCESS_WEIGHTS, null);
+  return data && Array.isArray(data.order) && data.contexts && typeof data.contexts === 'object' ? data : null;
 }
 
 /**
@@ -1201,13 +1480,7 @@ function accessWeights() {
  * Берём только имена — значения (команды, ключи) из файлов не читаются дальше Object.keys. Серверы плагинов сюда не попадают.
  */
 function mcpServers(root) {
-  const load = (file) => {
-    try {
-      return JSON.parse(fs.readFileSync(file, 'utf8'));
-    } catch {
-      return {};
-    }
-  };
+  const load = (file) => readJson(file, {});
   const keys = (data, pick) => {
     try {
       return Object.keys(pick(data) || {});
@@ -1254,13 +1527,14 @@ function jobsFor(root, name) {
 function agentAction(action, body) {
   const snapshot = collectAgents();
   if (action === 'create') {
-    if (!snapshot.here.root) throw new bus.BusError(tr('Интерфейс запущен не из проекта шины — заводить агента некуда. Запусти bus.js ui из каталога проекта (bus.js init <имя>).'));
-    const name = String(body.name || '');
     const fast = checkFast(body.fast, body.model);
-    const { agent, file } = bus.createAgent({ root: snapshot.here.root, name, description: body.description, model: body.model, effort: body.effort, body: body.body, denied: body.denied });
+    if (!snapshot.here.root) attachHere(); // каталог не в шине — новый агент подключает его, как первое сообщение
+    const root = snapshot.here.root || collectAgents().here.root;
+    const name = String(body.name || '');
+    const { agent, file } = bus.createAgent({ root, name, description: body.description, model: body.model, effort: body.effort, body: body.body, denied: body.denied });
     wake.setFast(agent.box, fast);
     wake.setRules(agent.box, checkRules(body.rules));
-    bus.auditNote(`ui agent create | ${name} | ${snapshot.here.root}`);
+    bus.auditNote(`ui agent create | ${name} | ${root}`);
     safeTick(); // дело сделано — сбой опроса не превращает успех в ошибку
     return { ok: true, key: keyOf(agent.name, agent.kind, agent.root), file };
   }
@@ -1455,11 +1729,17 @@ async function handle(req, res, port) {
     if (url.pathname === '/') return reply(res, 200, pageFile(PAGE).replace('__BUS_TOKEN__', token).replace('__BUS_PAGE__', pageVersion()), 'text/html; charset=utf-8');
     if (url.pathname === '/i18n.js') return reply(res, 200, pageFile(I18N), 'text/javascript; charset=utf-8');
     if (url.pathname === '/logic.js') return reply(res, 200, pageFile(LOGIC), 'text/javascript; charset=utf-8');
+    if (url.pathname === '/favicon.svg') return reply(res, 200, pageFile(ICON_SVG), 'image/svg+xml');
     if (url.pathname === '/cron.js') return reply(res, 200, pageFile(CRON), 'text/javascript; charset=utf-8');
     if (url.pathname === '/api/schedule') return reply(res, 200, scheduleState());
     if (url.pathname === '/api/settings') return reply(res, 200, settingsState());
-    if (url.pathname === '/api/ping') return reply(res, 200, { app: 'bus-ui', cwd });
+    if (url.pathname === '/api/ping') return reply(res, 200, { app: 'bus-ui', cwd, root: projectRootOf(cwd) });
+    if (url.pathname === '/api/dirs') return reply(res, 200, dirsState());
+    // Листинг диска — тот же токен, шо у вложений: чужой вкладке файловую систему не показываем
+    if (url.pathname === '/api/dirs/list') return url.searchParams.get('k') === token ? reply(res, 200, listDirs(url.searchParams.get('path') || '')) : reply(res, 403, { error: tr('Нет токена страницы. Обнови вкладку.') });
+    if (url.pathname === '/api/files') return url.searchParams.get('k') === token ? reply(res, 200, projectFiles(url.searchParams.get('q') || '', url.searchParams.get('dir') || '')) : reply(res, 403, { error: tr('Нет токена страницы. Обнови вкладку.') });
     if (url.pathname === '/api/bg') return reply(res, 200, { items: backgrounds() });
+    if (url.pathname === '/api/window') return reply(res, 200, { window: app.loadWindow(bus.BUS) });
     const bg = /^\/bg\/(\d{1,2})\.mp4$/.exec(url.pathname);
     if (bg) return serveBackground(req, res, bg[1]);
     if (url.pathname === '/api/events') return subscribe(res);
@@ -1505,6 +1785,10 @@ async function handle(req, res, port) {
     if (url.pathname === '/api/dialog/close') return reply(res, 200, closeDialog(body));
     if (url.pathname === '/api/dialog/reopen') return reply(res, 200, reopenDialog(body));
     if (url.pathname === '/api/dialog/delete') return reply(res, 200, deleteDialog(body));
+    if (url.pathname === '/api/cd') return reply(res, 200, changeDir(body));
+    if (url.pathname === '/api/shortcut') return reply(res, 200, createShortcut());
+    if (url.pathname === '/api/window') return reply(res, 200, { ok: app.saveWindow(bus.BUS, body) });
+    if (url.pathname === '/api/dirs/pin') return reply(res, 200, pinDir(body));
     if (url.pathname.startsWith('/api/schedule/')) return reply(res, 200, scheduleAction(url.pathname.slice('/api/schedule/'.length), body));
     if (url.pathname === '/api/read') {
       // Ответы агентов лежат в ящике оркестратора каталога UI. Пользователь открыл диалог агента — его ответы прочитаны: забираем,
@@ -1570,14 +1854,43 @@ function openBrowser(url) {
   }
 }
 
+/** Окно --app, если есть Chrome или Edge (размер и место — как у прошлого окна); иначе вкладка. */
+function show(url) {
+  if (appMode && app.openApp(url, app.loadWindow(bus.BUS))) return;
+  if (appMode) console.log('Chrome или Edge не нашёл — открываю вкладкой.');
+  openBrowser(url);
+}
+
+/** Ярлык из шестерёнки и ui --shortcut: ставит заново, даже если первый раз его удалили руками. */
+function createShortcut() {
+  if (!app.PLATFORMS.includes(process.platform)) throw new bus.BusError(tr('Ярлык приложения есть на Windows, macOS и Linux. Запусти bus.js ui --app — откроется то же окно.'));
+  try {
+    const { file, replaced } = app.makeShortcut();
+    return { ok: true, file, replaced };
+  } catch (e) {
+    throw new bus.BusError(tr('Ярлык не создался: {why}', { why: e.message }));
+  }
+}
+
 async function start(args = []) {
   const at = args.indexOf('--port');
   const wanted = at >= 0 ? Number(args[at + 1]) : DEFAULT_PORT;
   if (!Number.isInteger(wanted) || wanted < 1 || wanted > 65535) throw new bus.BusError(tr('--port: нужен номер порта, например 4780.'));
+  if (args.includes('--shortcut')) {
+    const { file, replaced } = createShortcut();
+    console.log(`${replaced ? 'Ярлык обновлён' : 'Ярлык создан'}: ${file}`);
+    return;
+  }
+  appMode = args.includes('--app');
   const open = !args.includes('--no-open');
-  cwd = bus.context().start;
+  const launch = bus.context().start;
+  const launchRoot = launchRootOf(launch);
+  ({ dir: cwd, chosen } = startDir(launch));
   // Несданные загрузки живут во временной папке процесса; сигналы сами 'exit' не вызывают (SIGBREAK — Ctrl+Break и закрытие консоли на Windows)
-  process.on('exit', () => fs.rmSync(UPLOAD_DIR, { recursive: true, force: true }));
+  process.on('exit', () => {
+    fs.rmSync(UPLOAD_DIR, { recursive: true, force: true });
+    forgetServer();
+  });
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(signal, () => process.exit(0));
   sweepUploads();
 
@@ -1585,8 +1898,9 @@ async function start(args = []) {
     const server = http.createServer((req, res) => langStore.run(i18n.pick(req.headers['x-bus-lang']), () => {
       handle(req, res, port).catch((e) => {
         if (isGone(e)) return res.destroy();
-        if (!res.headersSent) reply(res, e instanceof bus.BusError ? 400 : 500, { error: e instanceof bus.BusError ? e.message : tr('Сервер споткнулся, подробности в его консоли.'), ...(e instanceof bus.BusError && e.field ? { field: e.field } : {}) });
-        if (!(e instanceof bus.BusError)) console.error(e.stack);
+        const known = e instanceof bus.BusError;
+        if (!res.headersSent) reply(res, known ? 400 : 500, { error: known ? e.message : tr('Сервер споткнулся, подробности в его консоли.'), ...(known && e.field ? { field: e.field } : {}), ...(known && e.code ? { code: e.code } : {}) });
+        if (!known) console.error(e.stack);
       });
     }));
     try {
@@ -1594,17 +1908,25 @@ async function start(args = []) {
     } catch (e) {
       if (e.code !== 'EADDRINUSE') throw e;
       const other = await ping(port);
-      if (other && other.app === 'bus-ui' && path.relative(other.cwd, cwd) === '') {
-        console.log(`UI уже поднят: http://127.0.0.1:${port}`);
-        if (open) openBrowser(`http://127.0.0.1:${port}`);
-        return;
+      if (other && other.app === 'bus-ui') {
+        // Живой UI один на всех: запустили из другого проекта шины — переключаем его туда. Не из проекта — открываем как есть.
+        // Не переключился (старая версия без ui-server.json) — как раньше: свой каталог — открываем, чужой — следующий порт
+        const elsewhere = launchRoot && !(other.root && samePath(other.root, launchRoot));
+        const switched = elsewhere && (await switchRunning(port, launch));
+        if (switched || !elsewhere || samePath(other.cwd, launch)) {
+          console.log(switched ? `UI уже поднят, переключил на ${launch}: http://127.0.0.1:${port}` : `UI уже поднят: http://127.0.0.1:${port}`);
+          if (open) show(`http://127.0.0.1:${port}`);
+          return;
+        }
       }
-      continue; // порт занят чужим или UI другого каталога — берём следующий
+      continue; // порт занят чужим — берём следующий
     }
     const url = `http://127.0.0.1:${port}`;
-    console.log(`UI: ${url} — каталог ${cwd}. Остановить: Ctrl+C; без открытой вкладки сам погаснет через ${IDLE_EXIT_MS / 60000} мин.`);
+    rememberServer(port);
+    console.log(`UI: ${url} — каталог ${cwd}. Остановить: Ctrl+C; ${appMode ? `закроешь окно — погаснет через ${APP_IDLE_MS / 1000} с` : `без открытой вкладки сам погаснет через ${IDLE_EXIT_MS / 60000} мин`}.`);
     updateTimers();
-    if (open) openBrowser(url);
+    if (open) show(url);
+    setImmediate(firstRun);
     checkUpdate();
     // Страховка расписания: задачи включены, а демон лежит (pm2 после перезагрузки не воскрес) — поднимаем. После старта и не в ущерб ему: pm2 стоит секунды
     setImmediate(() => {
@@ -1617,6 +1939,21 @@ async function start(args = []) {
     return;
   }
   throw new bus.BusError(`Порты ${wanted}–${wanted + PORT_TRIES - 1} заняты. Укажи свободный: bus.js ui --port <N>`);
+}
+
+/**
+ * Установки у скилла нет — её делает запуск: хук inbox один на все проекты в ~/.claude/settings.json (проектные хуки прежних
+ * версий снимаются) и ярлык приложения. Оба шага идемпотентны.
+ */
+function firstRun() {
+  try {
+    if (bus.ensureGlobalHook()) console.log('Хук inbox добавлен в глобальный settings.json — заработает в новых сессиях Claude.');
+  } catch (e) {
+    console.error(`хук inbox: ${e.message}`);
+  }
+  const r = app.autoShortcut(bus.BUS);
+  if (r && r.file) console.log(`Ярлык шины: ${r.file}`);
+  if (r && r.error) console.error(`ярлык: ${r.error}`);
 }
 
 module.exports = { start };

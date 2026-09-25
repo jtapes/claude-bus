@@ -25,11 +25,10 @@ const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.cl
 const SWITCH = path.join(CONFIG_DIR, 'bus', 'autowake.json');
 const CLAUDE_CMD = process.env.BUS_CLAUDE_CMD || 'claude'; // подменяют тесты
 const settings = require('./settings.js');
+const { stamp, readJson, writeJson, appendLog: appendTo, alive, lockHeld, freshBlank, takeRunLock, killTree } = require('./fsx.js');
 const TIMEOUT_MS = Number(process.env.BUS_WAKE_TIMEOUT_MS) || settings.DEFAULTS['wake.timeoutMin'] * 60 * 1000;
 const WAKES_PER_HOUR = settings.DEFAULTS['wake.perHour'];
-const FRESH_LOCK_MS = 2000; // лок создаётся пустым (open wx) и тут же пишется: пустой и молодой — чужой раннер между этими шагами, а не мусор
 const HOUR_MS = 60 * 60 * 1000;
-const LOG_ROTATE_BYTES = 256 * 1024;
 const REPORT_LENGTH = 2000;
 // Будит любое сообщение; старые FYI/STATUS/ACK, долежавшие в ящике, — нет
 const WAKE_LINE = /^\[(?:TASK|QUESTION|DONE) /;
@@ -89,27 +88,6 @@ function headlessSettings(dir) {
   return file;
 }
 
-function readJson(file, fallback) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
-    return fallback;
-  }
-}
-
-function writeJson(file, data) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data) + '\n');
-  try {
-    fs.renameSync(tmp, file);
-  } catch {
-    // на Windows rename поверх файла, который в этот миг читает UI или другой send, — EPERM: пишем поверх, как writeAtomic в bus.js
-    fs.writeFileSync(file, JSON.stringify(data) + '\n');
-    fs.rmSync(tmp, { force: true });
-  }
-}
-
 // ---------- рубильник ----------
 
 /**
@@ -134,25 +112,11 @@ const setEnabled = (on) => writeJson(SWITCH, { on: Boolean(on) });
 
 // ---------- состояние ----------
 
-function alive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return e.code === 'EPERM';
-  }
-}
-
 /**
  * Лок держит живой раннер. Процесс умер или висит дольше таймаута с запасом — лок протух. Раннер освежает at перед каждым запуском claude
  * и кладёт в лок свой таймаут: у проекта он может быть свой, а каталога запуска здесь не знают.
  */
-function running(box) {
-  const lock = readJson(lockFile(box), null);
-  // Лок старше загрузки системы — от подъёма, который оборвала перезагрузка: его pid Windows уже раздала кому-то другому
-  if (lock && lock.at < Date.now() - os.uptime() * 1000) return false;
-  return Boolean(lock && alive(lock.pid) && Date.now() - lock.at < (Number(lock.timeoutMs) || TIMEOUT_MS) + 60 * 1000);
-}
+const running = (box) => lockHeld(lockFile(box), TIMEOUT_MS);
 
 const recent = (times) => (Array.isArray(times) ? times.filter((t) => Date.now() - t < HOUR_MS) : []);
 
@@ -308,7 +272,7 @@ function stop(box, by) {
     fs.rmSync(lockFile(box), { force: true });
     return { state: 'idle' };
   }
-  killPid(lock.pid);
+  killTree(lock.pid); // раннер отвязан (detached): на posix он лидер группы, снимается вместе со всем под ним
   fs.rmSync(lockFile(box), { force: true });
   flushBtw(box);
   const saved = readJson(stateFile(box), {});
@@ -348,39 +312,8 @@ function resume(agent, { cwd, by }) {
 
 // ---------- раннер ----------
 
-/**
- * Лок пишется в два шага: open(wx) создаёт пустой файл, write кладёт pid. Второй раннер, заглянувший между ними, видел «мусор»,
- * стирал живой лок и поднимал агента параллельно. Пустой или недописанный лок моложе пары секунд — чужой раннер, а не мусор.
- */
-function freshBlank(file) {
-  if (readJson(file, null)) return false;
-  try {
-    return Date.now() - fs.statSync(file).mtimeMs < FRESH_LOCK_MS;
-  } catch {
-    return false; // лок уже сняли — занимай
-  }
-}
-
-function takeLock(box) {
-  fs.mkdirSync(box, { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      fs.writeFileSync(lockFile(box), JSON.stringify({ pid: process.pid, at: Date.now() }), { flag: 'wx' });
-      return true;
-    } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      if (running(box) || freshBlank(lockFile(box))) return false; // два send подряд — второй раннер просто уходит
-      fs.rmSync(lockFile(box), { force: true });
-    }
-  }
-  return false;
-}
-
-/** claude на Windows — .cmd-обёртка под cmd.exe: kill() снял бы только оболочку, сам claude остался бы жить. */
-function killTree(child) {
-  if (process.platform === 'win32') require('child_process').spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
-  else child.kill('SIGKILL');
-}
+/** Два подъёма подряд — второй раннер просто уходит (fsx.takeRunLock). */
+const takeLock = (box) => takeRunLock(lockFile(box), { pid: process.pid, at: Date.now() }, TIMEOUT_MS);
 
 /** Процесс с этим pid — наш раннер (node … wake.js run …)? Командную строку не достать — считаем чужим: лучше не остановить, чем убить не то. */
 function isRunner(pid) {
@@ -391,20 +324,6 @@ function isRunner(pid) {
       ? spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`], { encoding: 'utf8', windowsHide: true })
       : spawnSync('ps', ['-o', 'args=', '-p', String(pid)], { encoding: 'utf8' });
   return /wake\.js"?\s+run\s/.test(String(r.stdout || ''));
-}
-
-/** То же по pid раннера. Раннер отвязан (detached) — на posix он лидер группы, минус перед pid снимает группу целиком. */
-function killPid(pid) {
-  if (process.platform === 'win32') return require('child_process').spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
-  try {
-    process.kill(-pid, 'SIGKILL');
-  } catch {
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      // уже умер
-    }
-  }
 }
 
 const wakeLines = (box) => {
@@ -527,7 +446,7 @@ function runClaude({ cwd, agent = null, model = null, settings: settingsFile = n
     const kill = (flag) => () => {
       if (flag === 'timeout') timedOut = true;
       if (flag === 'silent') silent = true;
-      killTree(child);
+      killTree(child.pid);
     };
     const timers = [setTimeout(kill('timeout'), timeoutMs)];
     // Тишина вместо system/init — claude не принял вход stream-json (сменился формат?): не ждём весь таймаут
@@ -612,16 +531,7 @@ function runClaude({ cwd, agent = null, model = null, settings: settingsFile = n
   });
 }
 
-function appendLog(box, text) {
-  try {
-    if (fs.statSync(logFile(box)).size > LOG_ROTATE_BYTES) fs.renameSync(logFile(box), `${logFile(box)}.1`);
-  } catch {
-    // лога ещё нет
-  }
-  fs.appendFileSync(logFile(box), text);
-}
-
-const stamp = () => new Date().toLocaleString('sv-SE'); // 2026-09-19 21:40:05
+const appendLog = (box, text) => appendTo(logFile(box), text);
 
 // ---------- самоправка роли ----------
 
@@ -780,7 +690,7 @@ async function run(name, box, cwd, by, human = false, resumeId = '') {
   if (seen && wakeLines(box).some((line) => !seen.includes(line))) request({ name, box }, { cwd, by });
 }
 
-module.exports = { LOG_ROTATE_BYTES, liveEntries, perHourOf, enabled, setEnabled, request, stop, resume, queueBtw, setEvolve, dropEvolve, proposal, dropProposal, bodyHash, state, running, runClaude, killTree, alive, freshBlank, readJson, writeJson, isFast, setFast, hasRules, setRules, headlessSettings };
+module.exports = { liveEntries, perHourOf, enabled, setEnabled, request, stop, resume, queueBtw, setEvolve, dropEvolve, proposal, dropProposal, bodyHash, state, running, runClaude, alive, freshBlank, readJson, writeJson, isFast, setFast, hasRules, setRules, headlessSettings };
 
 if (require.main === module && process.argv[2] === 'run') {
   const [name, box, cwd, by, human, resumeId] = process.argv.slice(3);

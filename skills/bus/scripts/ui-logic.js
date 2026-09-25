@@ -20,30 +20,35 @@
   }
   const KIND_LABEL = { project: N('проект'), local: N('локальный'), global: N('глобальный') };
 
-  // Медь (оттенки 15–45) занята самой шиной — провода агентов её обходят
-  const HUE_FROM = 50;
-  const HUE_SLOTS = 22;
+  // Медь (оттенки 15–45) занята самой шиной, жёлтый — оркестраторами; провода агентов обходят оба
+  const ORCH_HUE = 52;
+  const HUE_FROM = 79;
+  const HUE_SLOTS = 20;
   const HUE_STEP = 14.5;
+  const isOrchestrator = (kind) => kind === 'project' || kind === 'p';
 
   /**
-   * Цвет провода агента — из имени: один и тот же в списке и в ленте, между перезапусками не гуляет.
-   * FNV-1a и фиксированные слоты: прежний «h*31 % 360» красил masha и shop-api в один цвет, а соседние оттенки не различить.
+   * Цвет провода агента — из имени: один и тот же в списке и в ленте, между перезапусками не гуляет. Оркестратор (kind project,
+   * в журнале — p) в любом проекте жёлтый. FNV-1a и фиксированные слоты: прежний «h*31 % 360» красил masha и shop-api в один цвет.
    */
-  function hue(name) {
+  function hue(name, kind) {
+    if (isOrchestrator(kind)) return ORCH_HUE;
     let h = 0x811c9dc5;
     for (const ch of String(name)) h = Math.imul(h ^ ch.codePointAt(0), 0x01000193) >>> 0;
     return Math.round((HUE_FROM + (h % HUE_SLOTS) * HUE_STEP) % 360);
   }
 
   /**
-   * Хеш на 22 слота неизбежно сталкивает имена (dima и landing, qa и backend). Среди известных агентов коллизии разводим:
-   * по алфавиту каждый садится в свой слот, занятый — шагает на 7 слотов дальше (7 и 22 взаимно просты, соседние оттенки не выпадают).
+   * Хеш на 20 слотов неизбежно сталкивает имена (dima и landing, qa и backend). Среди известных агентов коллизии разводим:
+   * по алфавиту каждый садится в свой слот, занятый — шагает на 7 слотов дальше (7 и 20 взаимно просты, соседние оттенки не выпадают).
+   * Оркестраторы слотов не занимают — у всех жёлтый.
    * → Map имя → оттенок; для имени не из списка (агента сняли, а сообщения остались) страница берёт hue().
    */
   function assignHues(agents) {
     const taken = new Set();
     const hues = new Map();
-    const names = [...new Set(agents.map((x) => x.name))].sort();
+    for (const a of agents) if (isOrchestrator(a.kind)) hues.set(a.name, ORCH_HUE);
+    const names = [...new Set(agents.map((x) => x.name))].filter((n) => !hues.has(n)).sort();
     for (const name of names) {
       let slot = Math.round(((hue(name) - HUE_FROM + 360) % 360) / HUE_STEP) % HUE_SLOTS;
       for (let n = 0; n < HUE_SLOTS && taken.has(slot); n++) slot = (slot + 7) % HUE_SLOTS;
@@ -802,8 +807,8 @@
 
   const validScheduleName = (name) => SCHEDULE_NAME.test(String(name || ''));
 
-  /** Отказ сервера «cron чаще раза в 5 минут» (saveJob в scheduler.js) — по нему показываем «Всё равно сохранить». */
-  const isFrequentError = (message) => /^Слишком часто:/.test(String(message || ''));
+  /** Отказ сервера «cron чаще schedule.minGapMin» (saveJob в scheduler.js, code: 'frequent') — по нему показываем «Всё равно сохранить». По коду, а не по тексту: текст может поменяться или уйти в перевод. */
+  const isFrequentError = (err) => Boolean(err) && err.code === 'frequent';
 
   // ---------- настройки проекта (шестерёнка) ----------
 
@@ -845,8 +850,92 @@
     return '';
   }
 
+  /** Сравнение путей как у сервера (path.relative): диск Windows — без учёта регистра, хвостовой слэш не в счёт. */
+  const dirKey = (p) => {
+    const s = String(p || '').replace(/[\\/]+$/, '');
+    return /^[a-z]:/i.test(s) ? s.toLowerCase().replace(/\//g, '\\') : s;
+  };
+  /** Имя каталога для строки списка: последний кусок пути, у корня диска — сам путь. */
+  const dirName = (p) => String(p || '').split(/[\\/]/).filter(Boolean).pop() || String(p || '');
+
+  /**
+   * Списки панели каталогов из /api/dirs: закреплённые, проекты шины, недавние. Каталог стоит в одном списке — верхнем:
+   * закреплённый проект в «Проектах» не двоится. current — рабочий каталог сейчас. → [{ id, rows }] без пустых списков.
+   */
+  function dirGroups({ current = {}, pinned = [], recent = [], projects = [] } = {}) {
+    const here = dirKey(current.dir);
+    const seen = new Set();
+    const projectOf = new Map(projects.map((p) => [dirKey(p.path), p.name]));
+    const take = (list, extra) => list.filter((d) => d && d.path && !seen.has(dirKey(d.path)) && seen.add(dirKey(d.path)))
+      .map((d) => ({ path: d.path, name: dirName(d.path), project: d.project || projectOf.get(dirKey(d.path)) || '', missing: Boolean(d.missing), current: dirKey(d.path) === here, ...extra }));
+    return [
+      { id: 'pinned', rows: take(pinned, { pinned: true }) },
+      { id: 'projects', rows: take(projects.map((p) => ({ path: p.path, project: p.name })), { pinned: false }) },
+      { id: 'recent', rows: take(recent, { pinned: false }) },
+    ].filter((g) => g.rows.length);
+  }
+
+  /**
+   * «@» у курсора в поле сообщения: перед ним начало или пробел (адрес a@b не ловим), до курсора — без пробелов.
+   * Путь с пробелами — в кавычках: @"my dir/a b". → { start, end, query } (end — конец слова и после курсора) или null.
+   */
+  function atToken(value, caret) {
+    const text = String(value || '');
+    const before = text.slice(0, caret);
+    const m = /(^|\s)@("[^"\n]*|[^\s"]*)$/.exec(before);
+    if (!m) return null;
+    const start = m.index + m[1].length;
+    const tail = /^[^\s]*/.exec(text.slice(caret))[0];
+    return { start, end: caret + tail.length, query: m[2].replace(/^"/, '') };
+  }
+
+  /**
+   * Нечёткое совпадение пути с запросом: буквы запроса по порядку. Выше — подстрока в имени, потом в пути, начала слов, подряд;
+   * короче путь — выше. Регистр не важен, «\» = «/». Нет совпадения — -1.
+   */
+  function fileScore(file, query) {
+    const q = String(query || '').toLowerCase().replace(/\\/g, '/');
+    if (!q) return 0;
+    const p = String(file).toLowerCase().replace(/\/$/, '');
+    const name = p.slice(p.lastIndexOf('/') + 1);
+    let score = 0;
+    let at = 0;
+    let run = 0;
+    for (const ch of q) {
+      const i = p.indexOf(ch, at);
+      if (i < 0) return -1;
+      run = i === at && at > 0 ? run + 1 : 0;
+      score += 1 + run * 2 + (i === 0 || /[/._-]/.test(p[i - 1]) ? 3 : 0);
+      at = i + 1;
+    }
+    if (name.startsWith(q)) score += 60;
+    else if (name.includes(q)) score += 40;
+    else if (p.includes(q)) score += 20;
+    return score - p.length / 100;
+  }
+
+  /** Пути проекта под запрос: лучшие limit, при равенстве — короче и по алфавиту. */
+  function fileMatches(files, query, limit = 50) {
+    return files.map((f) => ({ f, s: fileScore(f, query) })).filter((x) => x.s >= 0)
+      .sort((a, b) => b.s - a.s || a.f.length - b.f.length || (a.f < b.f ? -1 : 1)).slice(0, limit).map((x) => x.f);
+  }
+
+  /**
+   * Шо вставить в сообщение за «@»: путь от корня проекта (rel — через «/», у папки «/» в конце). Адресат из другого проекта
+   * шины (agentRoot не base) относительный путь не найдёт — ему абсолютный. С пробелами — в кавычках.
+   */
+  function mentionPath(rel, { base = '', agentRoot = null } = {}) {
+    let out = String(rel);
+    if (base && agentRoot && dirKey(agentRoot) !== dirKey(base)) {
+      const sep = /^[a-z]:|\\/i.test(base) ? '\\' : '/';
+      out = String(base).replace(/[\\/]+$/, '') + sep + out.replace(/\//g, sep);
+    }
+    return /\s/.test(out) ? `@"${out}"` : `@${out}`;
+  }
+
   return {
-    hue, assignHues, pairKey, pairOf, selectedPair, threadKey, threadOf, viewPair, viewThread, covered, tokensOf, summaryTokens, weightReport, sizeOf, short, passes, splitByQuery, markdown, markdownInline, unreadIds, readTarget, nextSelection, feedItems, pairInfo, groupAgents, agentStatus, clock, elapsed, runMark, liveLines, liveLast, canBtw, canEvolve, wakeActionNote, blockedNote, writable, nameOf, dictated, spaceTap, voiceNote, lineDiff, raisedNote, sentNote, dialogTarget, dialogTitle, dialogTabs, validAgentName,
+    dirKey, dirName, dirGroups, atToken, fileScore, fileMatches, mentionPath,
+    ORCH_HUE, hue, assignHues, pairKey, pairOf, selectedPair, threadKey, threadOf, viewPair, viewThread, covered, tokensOf, summaryTokens, weightReport, sizeOf, short, passes, splitByQuery, markdown, markdownInline, unreadIds, readTarget, nextSelection, feedItems, pairInfo, groupAgents, agentStatus, clock, elapsed, runMark, liveLines, liveLast, canBtw, canEvolve, wakeActionNote, blockedNote, writable, nameOf, dictated, spaceTap, voiceNote, lineDiff, raisedNote, sentNote, dialogTarget, dialogTitle, dialogTabs, validAgentName,
     SCHEDULE_MINUTE_STEPS, SCHEDULE_HOUR_STEPS, buildScheduleCron, scheduleCronPreset, scheduleTarget, scheduleNextLabel, scheduleLastNote, scheduleDaemonNote, scheduleBadge, scheduleGroups, validScheduleName, isFrequentError,
     ACCESS_PRESETS, accessPreset, accessDenied, accessFromDenied, accessWeight, accessDeltaLabel,
     setThresholds, settingsDirty, settingsFieldError,

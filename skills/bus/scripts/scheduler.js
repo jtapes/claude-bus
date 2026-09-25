@@ -25,6 +25,7 @@ const path = require('path');
 const bus = require('./bus.js');
 const cron = require('./cron.js');
 const wake = require('./wake.js');
+const { stamp, writeAtomic, readJson, writeJson, appendLog: appendTo, alive, lockHeld, takeRunLock } = require('./fsx.js');
 
 const PM2_NAME = 'bus-scheduler';
 const PM2_CMD = process.env.BUS_PM2_CMD || 'pm2'; // подменяют тесты
@@ -56,8 +57,7 @@ const logFile = (root, name) => path.join(dirOf(root), `${name}.log`);
 const stateFile = (root, name) => path.join(dirOf(root), `${name}.state.json`);
 const lockFile = (root, name) => path.join(dirOf(root), `${name}.lock`);
 const cwdOf = (root) => root || os.homedir();
-const stamp = () => new Date().toLocaleString('sv-SE'); // 2026-09-20 09:00:05
-const minuteKey = (date) => date.toLocaleString('sv-SE').slice(0, 16);
+const minuteKey = (date) => stamp(false, date).slice(0, 16); // 2026-09-20 09:00
 
 // ---------- хранилище ----------
 
@@ -148,13 +148,10 @@ function serialize(job) {
   return `${lines.join('\n')}\n---\n${job.prompt.trim()}\n`;
 }
 
-// Свой rename тут падал с EPERM, когда state.json в этот миг читал UI или list: раннер «падал» на ровном месте. У шины запись с запасным путём
-const writeAtomic = bus.writeAtomic;
-
 /** Адресат задачи — субагент, видимый из каталога; отправителем будет оркестратор каталога. → { from, to } */
 function parties(root, toName) {
   const from = bus.orchestratorOf(root);
-  if (!from) throw new bus.BusError(`Каталог ${root} не подключён к шине (bus.js init <имя>) — слать агенту не от кого.`);
+  if (!from) throw new bus.BusError(`Каталог ${root} не подключён к шине — слать агенту не от кого. Подключится сам первой командой из него (bus.js inbox) или bus.js init <имя>.`);
   const to = bus.describe(bus.contextOf(root), toName);
   if (!to || !bus.isSubagent(to)) throw new bus.BusError(`to: «${toName}» — такого субагента из ${root} не видно. Проекту по расписанию не пишем: его не поднять.`);
   bus.requireAlive(to);
@@ -196,7 +193,8 @@ function saveJob(root, input, { force = false, overwrite = force } = {}) {
   if (!(timeout >= 1 && timeout <= MAX_TIMEOUT_MIN)) throw new bus.BusError(`timeout — минуты, от 1 до ${MAX_TIMEOUT_MIN}.`);
 
   const gap = cron.minGapMinutes(parsed);
-  if (gap < limits['schedule.minGapMin'] && !force) throw new bus.BusError(`Слишком часто: ${costNote(gap)}. Уверен — повтори с --force.`);
+  // code — для UI: по нему страница предлагает «Всё равно сохранить» (L.isFrequentError)
+  if (gap < limits['schedule.minGapMin'] && !force) throw Object.assign(new bus.BusError(`Слишком часто: ${costNote(gap)}. Уверен — повтори с --force.`), { code: 'frequent' });
   const warning = gap < WARN_GAP_MIN ? `Часто: ${costNote(gap)}.` : '';
 
   // Промпт режется тем же redact, шо и сообщения: файл задачи уходит агенту текстом или вложением
@@ -232,33 +230,19 @@ function removeJob(root, name) {
 
 // ---------- состояние запуска ----------
 
-function isRunning(root, name) {
-  const lock = wake.readJson(lockFile(root, name), null);
-  // Лок старше загрузки системы — от запуска, который оборвала перезагрузка: его pid Windows уже раздала кому-то другому
-  if (lock && lock.at < Date.now() - os.uptime() * 1000) return false;
-  return Boolean(lock && wake.alive(lock.pid) && Date.now() - lock.at < (lock.timeoutMs || DEFAULT_TIMEOUT_MIN * 60000) + 60 * 1000);
-}
+const isRunning = (root, name) => lockHeld(lockFile(root, name), DEFAULT_TIMEOUT_MIN * 60000);
 
 /** Итог последнего запуска. running без живого лока — раннер убили: честно говорим «упал». */
 function jobState(root, name) {
-  const saved = wake.readJson(stateFile(root, name), null);
+  const saved = readJson(stateFile(root, name), null);
   if (!saved) return null;
   if (saved.state === 'running' && !isRunning(root, name)) return { ...saved, state: 'failed', reason: 'фоновый процесс пропал, не дописав итог' };
   return saved;
 }
 
-const saveState = (root, name, patch) => wake.writeJson(stateFile(root, name), { ...wake.readJson(stateFile(root, name), {}), ...patch });
+const saveState = (root, name, patch) => writeJson(stateFile(root, name), { ...readJson(stateFile(root, name), {}), ...patch });
 
-function appendLog(root, name, text) {
-  const file = logFile(root, name);
-  try {
-    if (fs.statSync(file).size > wake.LOG_ROTATE_BYTES) fs.renameSync(file, `${file}.1`);
-  } catch {
-    // лога ещё нет
-  }
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.appendFileSync(file, text);
-}
+const appendLog = (root, name, text) => appendTo(logFile(root, name), text);
 
 /** Для list и UI: задача + итог последнего запуска + ближайший запуск. */
 function view(job) {
@@ -281,20 +265,8 @@ function spawnRun(root, name, { manual = false, fired = '' } = {}) {
   runner.unref();
 }
 
-function takeLock(root, name, timeoutMs) {
-  fs.mkdirSync(dirOf(root), { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      fs.writeFileSync(lockFile(root, name), JSON.stringify({ pid: process.pid, at: Date.now(), timeoutMs }), { flag: 'wx' });
-      return true;
-    } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      if (isRunning(root, name) || wake.freshBlank(lockFile(root, name))) return false; // пустой молодой лок — чужой раннер между open(wx) и записью pid
-      fs.rmSync(lockFile(root, name), { force: true });
-    }
-  }
-  return false;
-}
+/** Наложение запусков — пропуск: живой или только что созданный чужой лок (fsx.takeRunLock). */
+const takeLock = (root, name, timeoutMs) => takeRunLock(lockFile(root, name), { pid: process.pid, at: Date.now(), timeoutMs }, DEFAULT_TIMEOUT_MIN * 60000);
 
 /** TASK агенту от оркестратора каталога + фоновый подъём. Длинный промпт — вложением. → { state, note, reason } */
 function runForAgent(job) {
@@ -385,11 +357,11 @@ async function runJob(root, name, { manual = false, fired = '' } = {}) {
 
 // ---------- демон ----------
 
-const readHeartbeat = () => wake.readJson(HEARTBEAT, null);
+const readHeartbeat = () => readJson(HEARTBEAT, null);
 
 function daemonAlive() {
   const beat = readHeartbeat();
-  return Boolean(beat && wake.alive(beat.pid) && Date.now() - beat.at < HEARTBEAT_FRESH_MS);
+  return Boolean(beat && alive(beat.pid) && Date.now() - beat.at < HEARTBEAT_FRESH_MS);
 }
 
 /**
@@ -416,7 +388,7 @@ function tick(now, prev, fired, launch = spawnRun) {
     }
     if (!due) continue;
     // Демон перезапустили в ту же минуту — в памяти пусто, но раннер уже записал fired в состояние задачи
-    if ((wake.readJson(stateFile(job.root, job.name), {}) || {}).fired === key) continue;
+    if ((readJson(stateFile(job.root, job.name), {}) || {}).fired === key) continue;
     fired.set(id, key);
     launch(job.root, job.name, { fired: key });
   }
@@ -432,7 +404,7 @@ function daemon() {
   const pass = () => {
     // Второй демон (подняли руками рядом с pm2) стоит в резерве: задачи не дублирует, подхватит, если первый умрёт
     const other = readHeartbeat();
-    if (other && other.pid !== process.pid && wake.alive(other.pid) && Date.now() - other.at < HEARTBEAT_FRESH_MS) {
+    if (other && other.pid !== process.pid && alive(other.pid) && Date.now() - other.at < HEARTBEAT_FRESH_MS) {
       if (other.lastTick) prev = new Date(other.lastTick); // подхватим работу — catchup считаем от его последнего прохода, а не от своего давнего
       return;
     }
@@ -444,7 +416,7 @@ function daemon() {
       console.error(`${stamp()} проход: ${e.message}`);
     }
     prev = now;
-    wake.writeJson(HEARTBEAT, { pid: process.pid, at: Date.now(), lastTick: now.getTime() });
+    writeJson(HEARTBEAT, { pid: process.pid, at: Date.now(), lastTick: now.getTime() });
     if (idle >= IDLE_TICKS) {
       console.log(`${stamp()} включённых задач нет — демон гасит себя`);
       selfStop();
@@ -544,7 +516,7 @@ const USAGE = `bus.js schedule — задачи по расписанию (cron)
   schedule daemon [start|stop|status]   демон под pm2; обычно поднимается и гаснет сам
 --global — задача в ~/.claude/bus/scheduler/ (только headless, исполняется в домашней папке)`;
 
-const clock = (ms) => (ms ? new Date(ms).toLocaleString('sv-SE').slice(5, 16) : '—');
+const clock = (ms) => (ms ? stamp(true, ms) : '—');
 
 function lastNote(last) {
   if (!last) return 'ещё не запускалась';
@@ -592,7 +564,7 @@ function cli(asName, args) {
   const project = bus.projectSelf(ctx);
   const needRoot = () => {
     if (isGlobal) return null;
-    if (!project) throw new bus.BusError('Этот каталог не подключён к шине: bus.js init <имя>. Глобальная задача — с --global.');
+    if (!project) throw new bus.BusError('Этот каталог не подключён к шине: он подключится сам первой командой из него (bus.js inbox) или bus.js init <имя>. Глобальная задача — с --global.');
     return project.root;
   };
 

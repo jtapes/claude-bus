@@ -107,7 +107,8 @@ function main() {
 }
 `);
 
-const env = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: configDir, BUS_CLAUDE_CMD: `"${process.execPath}" "${fakeClaude}"`, BUS_PM2_CMD: `"${process.execPath}" -e ""`, BUS_STARTUP_DIR: path.join(home, 'startup'), BUS_SCHEDULER_START_WAIT_MS: '0' };
+const env = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: configDir, BUS_CLAUDE_CMD: `"${process.execPath}" "${fakeClaude}"`, BUS_PM2_CMD: `"${process.execPath}" -e ""`, BUS_STARTUP_DIR: path.join(home, 'startup'), BUS_SCHEDULER_START_WAIT_MS: '0', BUS_SHORTCUT: '0', BUS_UPDATE_CHECK: '0' };
+// BUS_SHORTCUT=0 — ярлык «Claude Bus» лёг бы на настоящий рабочий стол: его путь Windows отдаёт мимо подменённой домашней папки
 for (const key of ['BUS_WAKE', 'BUS_AUTOWAKE', 'CLAUDE_PROJECT_DIR', 'pm_id']) delete env[key];
 
 const bus = (dir, args, extra = {}) => {
@@ -115,12 +116,34 @@ const bus = (dir, args, extra = {}) => {
   if (r.status !== 0) throw new Error(`bus ${args.join(' ')}: ${r.stderr || r.stdout}`);
   return r.stdout;
 };
-const project = (name) => {
+// Настоящий git: по нему «@» в поле сообщения берёт файлы проекта с учётом .gitignore.
+// init зовём только у shop — landing подключится сам первой же командой, как у пользователя без init
+const project = (name, files, init) => {
   const dir = path.join(sandbox, 'work', name);
-  fs.mkdirSync(path.join(dir, '.git'), { recursive: true });
-  fs.writeFileSync(path.join(dir, '.gitignore'), '.claude/bus/\n.claude/settings.local.json\n');
-  bus(dir, ['init', name]);
+  fs.mkdirSync(dir, { recursive: true });
+  spawnSync('git', ['init', '-q'], { cwd: dir });
+  fs.writeFileSync(path.join(dir, '.gitignore'), '.claude/bus/\nnode_modules/\n');
+  for (const [rel, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), text);
+  }
+  if (init) bus(dir, ['init', name]);
   return dir;
+};
+const FILES = {
+  shop: {
+    'package.json': '{ "name": "shop", "private": true }\n',
+    'README.md': '# shop\n',
+    'server/orders/create.js': '// POST /orders\n',
+    'server/orders/create.test.js': '// tests\n',
+    'server/orders/routes.js': '// routes\n',
+    'server/middleware/rateLimit.js': '// rate limit\n',
+    'server/db/migrations/0007_stock.sql': '-- stock\n',
+    'web/pages/checkout.vue': '<template />\n',
+    'web/components/AppHeader.vue': '<template />\n',
+    'web/api/types.ts': 'export {};\n',
+  },
+  landing: { 'package.json': '{ "name": "landing", "private": true }\n', 'index.html': '<!doctype html>\n' },
 };
 const agent = (agentsDir, name, model) => {
   fs.mkdirSync(agentsDir, { recursive: true });
@@ -144,8 +167,8 @@ function png(file, width = 390, height = 120) {
 
 // ---------- посев ----------
 
-const shop = project('shop');
-const landing = project('landing');
+const shop = project('shop', FILES.shop, true);
+const landing = project('landing', FILES.landing, false);
 const dirs = { shop, landing };
 agent(path.join(shop, '.claude', 'agents'), 'dima', 'sonnet');
 agent(path.join(shop, '.claude', 'agents'), 'masha', 'sonnet');
@@ -178,6 +201,11 @@ fs.writeFileSync(path.join(box('qa'), 'wake.lock'), JSON.stringify({ pid: proces
 const beat = () => fs.writeFileSync(path.join(configDir, 'bus', 'scheduler.json'), JSON.stringify({ pid: process.pid, at: Date.now(), lastTick: Date.now() }));
 beat();
 setInterval(beat, 30 * 1000);
+
+// Панель каталогов в шапке: shop закреплён, landing и каталог вне шины — в недавних
+const other = path.join(sandbox, 'work', 'blog');
+fs.mkdirSync(other, { recursive: true });
+fs.writeFileSync(path.join(configDir, 'bus', 'ui-dirs.json'), JSON.stringify({ pinned: [shop], recent: [shop, landing, other], last: shop }, null, 1));
 
 console.log(`Песочница: ${sandbox}`);
 const ui = spawn(process.execPath, [BUS_JS, 'ui', '--port', port, '--no-open'], { cwd: shop, stdio: 'inherit', env: { ...env, CLAUDE_PROJECT_DIR: shop } });

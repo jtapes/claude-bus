@@ -6,7 +6,7 @@ A message bus for Claude Code agents. Projects, subagents and you leave each oth
 
 The whole thing is one skill folder that runs on Node.js. It has no npm dependencies and needs neither a database nor a hosted server.
 
-![Bus UI: agents on the left, the message feed, the compose form](docs/img/feed.png)
+![Bus UI: agents on the left, the message feed, the compose form](docs/img/feed.jpg)
 
 ## Install
 
@@ -29,7 +29,7 @@ You need Claude Code and Node.js 18+. `pm2` is needed only for scheduled tasks (
 
 ## Update
 
-When a newer release is out, the web UI shows an **Update to v…** button in the header (checked once when the UI starts; hover it for the release notes). The button downloads the release from GitHub, checks every file against its git hash and replaces only `~/.claude/skills/bus`: files of the old release that are gone are removed, your own files in that folder stay. A copy of the previous folder goes to `~/.claude/skills/bus.backup` (one copy, the next update overwrites it). Hooks in your `settings.json` are not touched: if a release needs a hook change, its notes say so.
+When a newer release is out, the web UI shows an **Update to v…** button in the header (checked once when the UI starts; hover it for the release notes). The button downloads the release from GitHub, checks every file against its git hash and replaces only `~/.claude/skills/bus`: files of the old release that are gone are removed, your own files in that folder stay. A copy of the previous folder goes to `~/.claude/skills/bus.backup` (one copy, the next update overwrites it). The update itself does not touch hooks in your `settings.json`: if a release needs a hook change, its notes say so. Since v1.1.0 the UI checks on start that the inbox hook is in `~/.claude/settings.json` and removes the per-project hooks that older versions wrote.
 
 After the update, restart the UI (`bus.js ui`) and, if you use the schedule, the daemon (`pm2 restart bus-scheduler`) — until then they run the old code. The update is refused while an agent is working in the background.
 
@@ -40,10 +40,10 @@ Updating by hand is the same install command. If `~/.claude/skills/bus` is a git
 Open Claude Code in your project and say what you want in plain words. The skill picks the commands.
 
 ```text
-set up the /bus skill in this project and open the UI
+open the bus
 ```
 
-Claude registers the project on the bus, adds a hook that checks the inbox on every prompt, and starts the UI on `http://127.0.0.1:4780`.
+Claude starts the UI on `http://127.0.0.1:4780`. There is nothing to set up per project. One hook in `~/.claude/settings.json` checks the inbox on every prompt, and a project joins the bus on its own with its first bus command or the first message you send from the UI, under its folder name. The first start also puts a **Claude Bus** shortcut on the desktop that opens the UI in its own window.
 
 Then talk to it the way you would to a teammate:
 
@@ -64,27 +64,27 @@ The commands themselves are listed in [SKILL.md](skills/bus/SKILL.md) and [refer
 
 ## Run it by hand
 
-Everything the skill does goes through one script, `bus.js`, so you can run it yourself too. Run it from the project directory. `init` connects the project to the bus under the name you give it: it registers the directory and adds the hook that reads the inbox. `ui` starts the web UI on `http://127.0.0.1:4780` and opens the browser.
+Everything the skill does goes through one script, `bus.js`, so you can run it yourself too. Run it from the project directory. `ui` starts the web UI on `http://127.0.0.1:4780` and opens the browser, `ui --app` opens it in a separate window. The project joins the bus on its own under its folder name; `init shop` is only needed if you want a different name.
 
 Windows, cmd:
 
 ```bat
-node "%USERPROFILE%\.claude\skills\bus\scripts\bus.js" init shop
 node "%USERPROFILE%\.claude\skills\bus\scripts\bus.js" ui
+node "%USERPROFILE%\.claude\skills\bus\scripts\bus.js" ui --app
 ```
 
 Windows, PowerShell:
 
 ```powershell
-node "$env:USERPROFILE\.claude\skills\bus\scripts\bus.js" init shop
 node "$env:USERPROFILE\.claude\skills\bus\scripts\bus.js" ui
+node "$env:USERPROFILE\.claude\skills\bus\scripts\bus.js" ui --app
 ```
 
 macOS and Linux:
 
 ```bash
-node ~/.claude/skills/bus/scripts/bus.js init shop
 node ~/.claude/skills/bus/scripts/bus.js ui
+node ~/.claude/skills/bus/scripts/bus.js ui --app
 ```
 
 A few more commands, with the same `node …/bus.js` prefix:
@@ -92,6 +92,8 @@ A few more commands, with the same `node …/bus.js` prefix:
 | Command | What it does |
 |---|---|
 | `ui --port 4781 --no-open` | UI on another port, without opening a browser tab |
+| `ui --shortcut` | put the Claude Bus shortcut back on the desktop |
+| `init shop` | join the bus under your own name instead of the folder name |
 | `add dima` · `add qa --global` | put an existing agent definition on the bus: local to this project or global |
 | `agents` | who is on the bus, their state and the weight of their conversation |
 | `inbox` | read your unread messages |
@@ -107,7 +109,23 @@ A few more commands, with the same `node …/bus.js` prefix:
 
 ### See every agent on the machine
 
-The left column lists the orchestrator of the current directory, its local agents, your global agents and other projects on the bus. Under each name you see what is going on: unread messages, "working…", "replied 22:05 · ≈14k tok.", or why the wake-up failed. Click an agent to see only its messages.
+The left column lists the orchestrator of the current directory, its local agents, your global agents and other projects on the bus. Under each name you see what is going on: unread messages, "working…", "replied 22:05 · ≈14k tok.", or why the wake-up failed. Click an agent to see only its messages. Orchestrators are yellow in every project, and each agent keeps its own color in the list and in the feed.
+
+### Open it as an app
+
+`bus.js ui --app` and the **Claude Bus** shortcut open the UI in a Chrome or Edge window without tabs, with its own icon in the taskbar. The shortcut appears on the first start: on the desktop on Windows, in `~/Applications` on macOS (Launchpad, Spotlight), in the app menu and on the desktop on Linux. If you deleted it, `bus.js ui --shortcut` or the button in the settings brings it back. The window opens where you left it and at the same size, and Chrome keeps the zoom on its own. Close the window and the server stops 10 seconds later.
+
+### Switch projects from the header
+
+Click the path in the header to change the working directory: the project you write from as its orchestrator and whose settings you edit. The panel lists pinned directories (the star), projects on the bus and recent ones, and has a field for a path and a folder browser. A directory that is not on the bus yet joins it with the first message, a new agent or saved settings.
+
+![Working directory panel: pinned, bus projects, recent](docs/img/dirs.jpg)
+
+### Point agents at project files
+
+Type `@` in the message field and pick a file or folder of the project from the list, which follows `.gitignore`: `@` shows the root, `@server/` a folder, and `@orders` searches. The message gets the path as text, not as an attachment, and the agent opens the file when it needs it. The folder button next to the paperclip does the same.
+
+![Typing @ in the message field lists project files](docs/img/mention.jpg)
 
 ### Write to agents yourself
 
@@ -115,7 +133,7 @@ You write as the project's orchestrator, so everything you send from the UI stay
 
 The feed renders markdown: headings, lists, inline code, code blocks, quotes and links. Agents use it for long reports. The message that started an agent's last background run carries a mark: "working 1:24" with a Stop button while it runs, then "finished · 2 s · ≈14k tok." While the agent works, a live block under that mark shows what it is doing right now: its text between steps and its tool calls (last 6 lines, click for 30), and the agent list shows the latest line. The runner reads this from the stream Claude already sends, so it costs no extra tokens and disappears when the run ends.
 
-![A task sent from the UI and the agent's reply](docs/img/wake.png)
+![A task sent from the UI and the agent's reply](docs/img/wake.jpg)
 
 ### Stop, resume or interrupt an agent
 
@@ -127,13 +145,13 @@ While an agent is working, a regular message waits until it finishes. If the ans
 
 Use the paperclip, drag and drop, or paste a screenshot with Ctrl+V. Images show up in the feed as previews, other files as chips you can download. The agent receives a file path and opens the image only when the task needs it. A path costs about 25 tokens, an image more than a thousand. By default a message takes up to 10 files of 30 MB each (the project settings change that); `.env`, `*.pem` and `id_rsa*` are refused.
 
-![A markdown report and a message with an attached screenshot](docs/img/attach.png)
+![A markdown report and a message with an attached screenshot](docs/img/attach.jpg)
 
 ### Keep long dialogs cheap
 
 Every wake-up re-reads the dialog, so long dialogs get expensive. Select two agents and the bar above the feed shows how many tokens the unread tail weighs. "Compress dialog" asks Haiku for a summary; from then on agents read the summary plus newer messages. The originals stay in the history, and you can expand them under the summary card.
 
-![Dialog between two agents with a summary card](docs/img/dialog.png)
+![Dialog between two agents with a summary card](docs/img/dialog.jpg)
 
 ### See what the conversation weighs
 
@@ -141,7 +159,7 @@ The button with a token count in the header is the total for this directory: eve
 
 The same numbers are available without the UI. `bus.js tokens` prints one line per dialog, `tokens <who>` a single dialog, and `tokens --all` every pair in the directory (orchestrator only). `history` ends with a line saying how much its output weighed, and `agents` shows the uncompressed weight next to each agent. It is an estimate (characters / 3), not an API count, so it works offline and costs nothing.
 
-![Conversation weight panel: dialogs sorted by tokens](docs/img/weight.png)
+![Conversation weight panel: dialogs sorted by tokens](docs/img/weight.jpg)
 
 ### Create and edit agents
 
@@ -149,9 +167,9 @@ The same numbers are available without the UI. `bus.js tokens` prints one line p
 
 The Access section limits what the agent can use. Pick a preset (Everything, Code, Read-only, Messaging) or tick tool groups by hand: reading files, editing files, web, subagents, housekeeping, skills, MCP servers. Every checkbox shows how many tokens it adds to or saves on each wake-up. The numbers come from real `claude` runs, not a formula. A read-only agent, for example, starts about 10k tokens lighter.
 
-![New agent form with the Access section](docs/img/new-agent.png)
+![New agent form with the Access section](docs/img/new-agent.jpg)
 
-![Editing a role with the AI rewrite](docs/img/edit-agent.png)
+![Editing a role with the AI rewrite](docs/img/edit-agent.jpg)
 
 ### Let an agent improve its own role
 
@@ -161,31 +179,33 @@ Tick "role self-edit" when you send a task (or use `send --evolve`). The agent d
 
 The gear in the header opens the settings of the current project: whether agents are woken up in the background, wake-ups per hour, time per wake-up, message length, attachment limits, how much `history` prints, schedule thresholds and the models used for compression and role rewrites. There is also a prompt that gets added to every agent: for this project, or for all projects on the machine. Every field explains what it changes. The same settings are available as `bus.js settings`.
 
-![Project settings](docs/img/settings.png)
+![Project settings](docs/img/settings.jpg)
 
 ### Run things on a schedule
 
 Cron tasks per project: either a `TASK` to an agent or a headless Claude session in the project directory. The panel has cron presets with a plain-language reading, the next run times, on/off switches and "Run now". A cron more often than every 15 minutes shows what it will cost in tokens per day.
 
-![Schedule panel](docs/img/schedule.png)
+![Schedule panel](docs/img/schedule.jpg)
 
 ### Smaller things
 
 - Filters by agent, message type and text, with search hits highlighted.
-- Delete selected messages, clear one dialog or the whole history.
+- Several dialogs with one agent: tabs above the feed, `+` starts a clean one, closed dialogs go to the history.
+- Select messages in the feed and they go to the agent as quotes with your next message. Delete selected messages or a whole dialog.
+- A video background under frosted glass (or none) with a dimming slider, in the settings.
 - Voice input: hold Space to dictate into the focused field (Chrome and Edge).
 - English and Russian interface, dark and light theme, works on a phone.
 - The feed updates live, no page reloads.
 
 | Light theme | Phone |
 |---|---|
-| ![Light theme](docs/img/light.png) | ![Phone layout, 390px](docs/img/mobile.png) |
+| ![Light theme](docs/img/light.jpg) | ![Phone layout, 390px](docs/img/mobile.jpg) |
 
 ## How it works
 
 - An agent on the bus is an ordinary Claude Code subagent definition (`.claude/agents/<name>.md` or `~/.claude/agents/<name>.md`). The bus adds an inbox and a short "Bus" section to its role.
-- Unread messages live in `<project>/.claude/bus/<name>/inbox.md`; the conversation of a directory is one `history.jsonl`. Add `.claude/bus/` and `.claude/settings.local.json` to the project's `.gitignore`.
-- A project is addressed by name and reads its inbox through a `UserPromptSubmit` hook, so it sees new messages on your next prompt. A project can't be woken up; a subagent can.
+- Unread messages live in `<project>/.claude/bus/<name>/inbox.md`; the conversation of a directory is one `history.jsonl`. The bus adds `.claude/bus/` to the repository's `.git/info/exclude`, so the conversation stays out of git and `.gitignore` is left alone.
+- A project is addressed by name and reads its inbox through the `UserPromptSubmit` hook in `~/.claude/settings.json`, so it sees new messages on your next prompt. The hook is one for all projects and stays silent outside the bus. A project can't be woken up; a subagent can.
 - The skill text the model reads is in Russian. The UI is English by default.
 
 ## Security
@@ -200,7 +220,7 @@ Cron tasks per project: either a `TASK` to an agent or a headless Claude session
 ```bash
 node test/run-tests.js        # CLI, UI server, page logic, schedule, i18n — no real claude or pm2 is called
 node test/bus-ui-browser.js   # the page in Chromium; skipped when playwright-core is missing
-node tools/demo.js            # sandbox with demo agents and the UI on :4790 — the screenshots above were taken there, in the dark theme
+node tools/demo.js            # sandbox with demo agents and the UI on :4790 — the screenshots above were taken there (dark theme, default video background)
 ```
 
 ## License

@@ -35,6 +35,8 @@ const baseEnv = {
   BUS_SCHEDULER_START_WAIT_MS: '0', // подставной pm2 heartbeat не пишет — ждать его незачем
   BUS_AUTOWAKE: '0', // иначе send от субагента запустил бы в фоне настоящий claude; тесты автоподъёма включают его сами
   BUS_UPDATE_CHECK: '0', // UI не проверяет обновление: у публичной копии есть release.json, и сервер полез бы на GitHub
+  BUS_SHORTCUT: '0', // первый ui/init не ставит ярлык: рабочий стол Windows настоящий, его тесты не подменяют
+  BUS_APP_BROWSER: 'none', // ui --app не открывает настоящий браузер
 };
 delete baseEnv.pm_id; // тесты запущены из-под pm2 — демон расписания в тестах решил бы, шо pm2 держит и его
 delete baseEnv.BUS_WAKE; // тесты мог запустить агент, поднятый шиной, — с этой переменной хук inbox молчит
@@ -111,17 +113,29 @@ const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
     fs.writeFileSync(f, `---\nname: ${fmName}\ndescription: тестовый субагент\n---\n\nРоль.\n`);
     return f;
   };
-  const busHooks = (dir) => (JSON.parse(read(localSettings(dir))).hooks.UserPromptSubmit || []).filter((g) => g.hooks[0].command.includes('bus.js'));
+  const globalSettings = path.join(configDir, 'settings.json');
+  const busGroups = (file) => {
+    const hooks = (JSON.parse(read(file) || '{}').hooks || {}).UserPromptSubmit || [];
+    return hooks.filter((g) => g.hooks[0].command.includes('bus.js'));
+  };
+  const legacyHook = { hooks: [{ type: 'command', command: 'node "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/bus/scripts/bus.js" inbox --hook', shell: 'bash', timeout: 5 }] };
 
   fs.mkdirSync(path.join(projA, '.claude'), { recursive: true });
+  const settingsBefore = read(globalSettings);
   fs.writeFileSync(localSettings(projA), JSON.stringify({ permissions: { allow: ['Bash(ls:*)'] } }));
 
   let r = bus(projA, ['init', 'alpha']);
-  const hook = busHooks(projA)[0].hooks[0];
-  check('B1 bus init: реестр, inbox и хук в settings.local.json', r.code === 0 && read(path.join(busDir, 'agents.json')).includes('"alpha"') && fs.existsSync(box(projA, 'alpha', 'inbox.md')) && hook.command.includes('${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/bus/scripts/bus.js" inbox --hook') && hook.shell === 'bash', r.out + r.err);
+  const hook = (busGroups(globalSettings)[0] || { hooks: [{}] }).hooks[0];
+  const keptKeys = Object.keys(JSON.parse(settingsBefore || '{}')).every((k) => k in JSON.parse(read(globalSettings)));
+  check('B1 bus init: реестр и inbox; хук inbox — один на все проекты, в глобальном settings.json (прочие ключи целы), settings.local.json проекта не тронут',
+    r.code === 0 && read(path.join(busDir, 'agents.json')).includes('"alpha"') && fs.existsSync(box(projA, 'alpha', 'inbox.md')) && hook.command && hook.command.includes('${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/bus/scripts/bus.js" inbox --hook') && hook.shell === 'bash'
+    && keptKeys && busGroups(localSettings(projA)).length === 0 && JSON.parse(read(localSettings(projA))).permissions.allow[0] === 'Bash(ls:*)' && r.out.includes('один на все проекты'), r.out + r.err + read(globalSettings));
 
+  // Проект прежней версии: хук в своём settings.local.json — первый же init другого проекта его снимает, чужие ключи файла целы
+  fs.writeFileSync(localSettings(projA), JSON.stringify({ permissions: { allow: ['Bash(ls:*)'] }, hooks: { UserPromptSubmit: [legacyHook] } }));
   r = bus(projA, ['init', 'alpha']);
-  check('B2 bus init: повтор не дублирует хук, чужие ключи файла целы', r.code === 0 && busHooks(projA).length === 1 && JSON.parse(read(localSettings(projA))).permissions.allow[0] === 'Bash(ls:*)', read(localSettings(projA)));
+  check('B2 bus init: повтор не дублирует глобальный хук; проектный хук прежней версии снят, остальное в settings.local.json цело',
+    r.code === 0 && busGroups(globalSettings).length === 1 && busGroups(localSettings(projA)).length === 0 && JSON.parse(read(localSettings(projA))).permissions.allow[0] === 'Bash(ls:*)' && !r.out.includes('Хук inbox добавлен'), read(localSettings(projA)) + r.out);
 
   bus(projB, ['init', 'beta']);
   bus(projC, ['init', 'gamma']);
@@ -180,8 +194,36 @@ const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
   r = bus(projA, ['send', 'nobody', 'привет']);
   check('B14 bus send: неизвестный получатель — код 1, inbox не создан', r.code === 1 && r.err.includes('Есть: alpha, beta, gamma') && !fs.existsSync(globalBox('nobody')), r.err);
 
-  r = bus(stranger, ['send', 'beta', 'привет']);
-  check('B15 bus send: незарегистрированный проект — код 1 и подсказка про init', r.code === 1 && r.err.includes('init') && !fs.existsSync(inboxBeta), r.err);
+  // ---------- автоподключение: проект встаёт в шину сам, первой командой из его каталога ----------
+  const newcomer = path.join(sandbox, 'work', 'Новый Проект');
+  fs.mkdirSync(newcomer, { recursive: true });
+  const gitInit = spawnSync('git', ['init', '-q'], { cwd: newcomer });
+  const beforeBeta = read(inboxBeta);
+  const viaHook = bus(newcomer, ['inbox', '--hook'], JSON.stringify({ cwd: newcomer }));
+  const viaAs = bus(newcomer, ['--as', 'someone', 'send', 'beta', 'TASK', 'от субагента']);
+  const notYet = !read(path.join(busDir, 'agents.json')).includes(newcomer.replace(/\\/g, '\\\\'));
+  r = bus(newcomer, ['send', 'beta', 'TASK', 'привет от новичка']);
+  const exclude = read(path.join(newcomer, '.git', 'info', 'exclude'));
+  const hidden = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: newcomer, encoding: 'utf8' }).stdout;
+  check('B15 bus: каталог не в шине — send подключает его именем папки (кириллица транслитом, пробел — дефис) и отправляет; .claude/bus/ — в .git/info/exclude, git его не видит; хук inbox и --as не подключают',
+    viaHook.code === 0 && viaHook.out === '' && viaAs.code === 1 && notYet && r.code === 0 && r.out.includes('Проект подключён к шине как «novyy-proekt»')
+    && read(inboxBeta).slice(beforeBeta.length).includes('from:novyy-proekt') && (gitInit.status !== 0 || (exclude.includes('/.claude/bus/') && hidden === '')), r.out + r.err + viaAs.err + exclude + hidden);
+
+  const twin = path.join(sandbox, 'other', 'Новый Проект'); // то же имя папки в другом месте — имя занято, берётся -2
+  fs.mkdirSync(path.join(twin, '.git'), { recursive: true });
+  const deep = path.join(twin, 'src', 'deep');
+  fs.mkdirSync(deep, { recursive: true });
+  r = bus(deep, ['inbox']);
+  const configSub = path.join(configDir, 'skills');
+  fs.mkdirSync(configSub, { recursive: true });
+  const atHome = bus(fakeHome, ['inbox']);
+  const atConfig = bus(configSub, ['inbox']);
+  check('B15a bus: имя папки занято — «-2»; из вложенной папки корень — по .git; inbox без писем подключает так же; домашняя папка и конфиг Claude — отказ с причиной',
+    r.code === 0 && r.out.includes(`как «novyy-proekt-2» (${twin})`) && r.out.includes('Входящих нет') && atHome.code === 1 && atHome.err.includes('домашняя папка')
+    && atConfig.code === 1 && atConfig.err.includes('конфига Claude'), r.out + r.err + atHome.err + atConfig.err);
+  bus(newcomer, ['remove']);
+  bus(twin, ['remove']);
+  fs.writeFileSync(inboxBeta, beforeBeta); // письмо новичка beta не читала — дальше тесты считают её ящик как раньше
 
   r = bus(projB, ['send', 'alpha', 'done', 'мигрировал']);
   const dialog = (out) => /-> beta TASK \| проверь миграцию/.test(out) && /<- beta DONE \| мигрировал/.test(out);
@@ -206,7 +248,7 @@ const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
   check('B23 bus: из вложенного пакета агент — ближайший зарегистрированный проект вверх', r.status === 0 && /^\* alpha/m.test(r.stdout), r.stdout + r.stderr);
 
   r = bus(projA, ['remove', 'gamma']);
-  check('B24 bus remove: чужой живой проект без --force — отказ, хук и реестр целы', r.code === 1 && r.err.includes('--force') && read(path.join(busDir, 'agents.json')).includes('"gamma"') && busHooks(projC).length === 1, r.out + r.err);
+  check('B24 bus remove: чужой живой проект без --force — отказ, глобальный хук и реестр целы', r.code === 1 && r.err.includes('--force') && read(path.join(busDir, 'agents.json')).includes('"gamma"') && busGroups(globalSettings).length === 1, r.out + r.err);
 
   const ghost = mkProject('ghost');
   bus(ghost, ['init', 'ghost']);
@@ -226,6 +268,87 @@ const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
   r = bus(projA, ['send', 'beta', 'done', 'после ротации']);
   check('B26 bus: audit.log больше 512 КБ уезжает в .1, log читает оба файла', r.code === 0 && read(`${audit}.1`).includes('старая запись') && fs.statSync(audit).size < 1024 && bus(projA, ['log', '3']).out.includes('после ротации'), String(fs.existsSync(audit) && fs.statSync(audit).size));
   check('B27 bus: лок реестра после команд не остаётся', !fs.existsSync(path.join(busDir, 'agents.lock')));
+
+  // Гонки записи: драйвер в дочернем процессе поднимает писателей параллельно; модули читают CLAUDE_CONFIG_DIR при загрузке — в процессе тестов он настоящий
+  {
+    const SCRIPTS = path.resolve(HOOKS, '..', 'skills', 'bus', 'scripts');
+    const race = path.join(sandbox, 'race');
+    fs.mkdirSync(race, { recursive: true });
+    const driver = path.join(race, 'driver.js');
+    fs.writeFileSync(driver, `const fs = require('fs'), path = require('path'), { spawn } = require('child_process');
+const BUS = ${JSON.stringify(path.join(SCRIPTS, 'bus.js'))}, SETTINGS = ${JSON.stringify(path.join(SCRIPTS, 'settings.js'))}, dir = ${JSON.stringify(race)};
+const child = (code) => new Promise((resolve) => spawn(process.execPath, ['-e', code], { stdio: 'ignore' }).on('exit', resolve));
+const read = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '');
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+(async () => {
+  const out = {};
+  // 1. Лок ротации держит сосед: писатель ждёт, сосед тем временем ротирует сам — взяв лок, писатель видит маленький файл и .1 не трогает
+  const a = path.join(dir, 'a.log');
+  fs.writeFileSync(a, 'старое\\n' + 'x'.repeat(2000) + '\\n');
+  fs.writeFileSync(a + '.lock', '');
+  const writer = child(\`require(\${JSON.stringify(BUS)}).appendRotating(\${JSON.stringify(a)}, 'писатель\\\\n', 1000, () => 'перенос\\\\n')\`);
+  await wait(1000);
+  fs.renameSync(a, a + '.1');
+  fs.writeFileSync(a, 'сосед\\n');
+  fs.rmSync(a + '.lock');
+  await writer;
+  out.waited = { one: read(a + '.1').startsWith('старое'), cur: read(a), lock: fs.existsSync(a + '.lock') };
+  // 2. Шесть писателей разом на пороге: ротация одна, .1 со старым цел, ни одна строка не потерялась
+  const b = path.join(dir, 'b.log');
+  fs.writeFileSync(b, 'старое\\n' + 'x'.repeat(2000) + '\\n');
+  await Promise.all([0, 1, 2, 3, 4, 5].map((i) => child(\`require(\${JSON.stringify(BUS)}).appendRotating(\${JSON.stringify(b)}, 'n\${i}\\\\n', 1000)\`)));
+  const all = read(b + '.1') + read(b);
+  out.burst = { one: read(b + '.1').startsWith('старое'), lines: [0, 1, 2, 3, 4, 5].every((i) => all.includes('n' + i + '\\n')), lock: fs.existsSync(b + '.lock') };
+  // 3. Шесть сохранений настроек разом, каждое своего ключа: под локом ни одно не теряется
+  const root = path.join(dir, 'proj');
+  const patch = { 'wake.perHour': 7, 'wake.timeoutMin': 30, 'history.lines': 40, 'history.chars': 9000, 'files.max': 5, 'ui.showLoadFrom': 500 };
+  await Promise.all(Object.entries(patch).map(([k, v]) => child(\`require(\${JSON.stringify(SETTINGS)}).set(\${JSON.stringify(root)}, { \${JSON.stringify(k)}: \${v} })\`)));
+  const got = require(SETTINGS).get(root);
+  out.settings = { all: Object.entries(patch).every(([k, v]) => got[k] === v), lock: fs.existsSync(path.join(process.env.CLAUDE_CONFIG_DIR, 'bus', 'settings.json.lock')) };
+  require(SETTINGS).reset(root);
+  // 4. rewriteJournal: чужой «history.jsonl.tmp» рядом не затирается и не подхватывается — временный файл свой, с pid
+  const j = path.join(dir, 'history.jsonl');
+  fs.writeFileSync(j, ['a', 'b', 'c'].map((id) => JSON.stringify({ id })).join('\\n') + '\\n');
+  fs.writeFileSync(j + '.tmp', 'чужое');
+  const removed = require(BUS).rewriteJournal(dir, (r) => r.id === 'b');
+  out.rewrite = { removed: removed.map((r) => r.id).join(), kept: read(j).trim().split('\\n').map((l) => JSON.parse(l).id).join(), foreign: read(j + '.tmp'), left: fs.readdirSync(dir).filter((f) => /^history\\.jsonl\\.\\d+\\.tmp$/.test(f)).length };
+  console.log(JSON.stringify(out));
+})();
+`);
+    const raced = spawnSync(process.execPath, [driver], { encoding: 'utf8', env: baseEnv, timeout: 60000 });
+    let got = {};
+    try {
+      got = JSON.parse(raced.stdout);
+    } catch {
+      // ниже — провал с выводом драйвера
+    }
+    const w = got.waited || {};
+    const s = got.burst || {};
+    check('B26a bus: ротация журнала — под локом и с повторной проверкой размера: сосед ротировал, пока ждали лок, — .1 цел, строка легла в новый файл; шесть send разом на пороге — .1 со старым цел, ни одна строка не потерялась, лок снят',
+      w.one === true && w.cur === 'сосед\nписатель\n' && w.lock === false && s.one === true && s.lines === true && s.lock === false, raced.stdout + raced.stderr);
+    check('B26b bus settings: шесть одновременных сохранений разных ключей — все на месте (чтение-правка-запись под локом), лок снят', got.settings && got.settings.all === true && got.settings.lock === false, raced.stdout + raced.stderr);
+    check('B26c bus rewriteJournal: временный файл свой (с pid) — чужой history.jsonl.tmp не тронут, после записи хвостов нет', got.rewrite && got.rewrite.removed === 'b' && got.rewrite.kept === 'a,c' && got.rewrite.foreign === 'чужое' && got.rewrite.left === 0, raced.stdout + raced.stderr);
+
+    // journal.js от CONFIG_DIR не зависит — гоняем в процессе тестов
+    const J = require(path.join(SCRIPTS, 'journal.js'));
+    const jdir = path.join(race, 'journal');
+    fs.mkdirSync(jdir, { recursive: true });
+    const jfile = J.journalFile(jdir);
+    const proj = { name: 'p1', kind: 'project', box: path.join(jdir, 'p1') };
+    const sub = { name: 'dima', kind: 'local', box: path.join(jdir, 'dima') };
+    const msg = (id, d) => JSON.stringify({ id, t: '2026-01-01 00:00:00', from: 'p1', fk: 'p', to: 'dima', tk: 'l', type: 'TASK', text: id, ...(d ? { d } : {}) }) + '\n';
+    fs.writeFileSync(`${jfile}.1`, msg('a1', 'old') + msg('a2', 'older'));
+    fs.writeFileSync(jfile, JSON.stringify({ id: 'x', t: 't', from: 'q', fk: 'p', to: 'w', tk: 'l', type: 'DONE', text: 'чужая пара' }) + '\n');
+    const fromRotated = J.currentDialog(proj, sub);
+    const visited = [];
+    J.searchJournal(jdir, (r) => void visited.push(r.id));
+    fs.appendFileSync(jfile, msg('b1', 'fresh'));
+    const afterAppend = J.currentDialog(proj, sub);
+    const seen = J.readJournal(jdir, true).map((r) => r.id).join();
+    check('B28a journal: searchJournal идёт с конца свежего файла, потом .1 с конца; текущий диалог дочитывается из .1; дописанное видно сразу — кэш чтения сверяет размер и время файла',
+      fromRotated === 'older' && visited.join() === 'x,a2,a1' && afterAppend === 'fresh' && seen === 'a1,a2,x,b1' && J.hasDialog(jdir, proj, sub, 'old') && !J.hasDialog(jdir, proj, sub, 'nope'),
+      JSON.stringify({ fromRotated, visited, afterAppend, seen }));
+  }
 
   // ---------- субагенты: локальные и глобальные ----------
   const localReg = path.join(projA, '.claude', 'bus', 'agents.json');
@@ -365,6 +488,8 @@ const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
   const hues = L.assignHues(names.map((name) => ({ name, kind: 'local' })));
   const again = L.assignHues([...names].reverse().map((name) => ({ name, kind: 'global' })));
   check('L1 ui-logic hue: цвет провода из имени стабилен, медь (15–45°) занята шиной; среди известных агентов коллизии разведены и от порядка списка не зависят', L.hue('dima') === L.hue('dima') && names.every((n) => L.hue(n) >= 50 || L.hue(n) < 15) && L.hue('user', 'h') === L.hue('user') && new Set(hues.values()).size === hues.size && same([...hues].sort(), [...again].sort()), JSON.stringify([...hues]));
+  const withBoss = L.assignHues([{ name: 'shop', kind: 'project' }, { name: 'landing', kind: 'project' }, ...names.map((name) => ({ name, kind: 'local' }))]);
+  check('L1b ui-logic hue: оркестратор в любом проекте жёлтый (и в журнале, kind p), агенты жёлтый не берут и между собой разные', withBoss.get('shop') === L.ORCH_HUE && L.hue('shop', 'project') === L.ORCH_HUE && L.hue('кто-угодно', 'p') === L.ORCH_HUE && names.filter((n) => n !== 'landing').every((n) => Math.abs(withBoss.get(n) - L.ORCH_HUE) > 20 && Math.abs(L.hue(n) - L.ORCH_HUE) > 20) && new Set(names.filter((n) => n !== 'landing').map((n) => withBoss.get(n))).size === names.length - 1, JSON.stringify([...withBoss]));
 
   const md = L.markdown('## Итог\nготово, **форма** в `Form.vue`\nвторая строка\n\n1. первый\n   - вложенный\n2. второй\n\n```js\nconst a = 1;\n<script>x</script>\n```\n> цитата\n---');
   const kinds = md.map((b) => b.kind).join(',');
@@ -534,6 +659,29 @@ const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
     && reserved.length >= 4 && reserved.includes('clear') && reserved.every((name) => !L.validAgentName(name)) && L.validAgentName('dima')
     && L.scheduleCronPreset('99 99 * * *').preset === 'custom' && L.scheduleCronPreset('99 */2 * * *').preset === 'custom' && L.scheduleCronPreset('59 23 * * *').time === '23:59' && L.scheduleCronPreset('15 */2 * * *').preset === 'hours',
     JSON.stringify({ tokens: L.tokensOf([{}, { text: 5, files: 'x' }, { text: 'абв', files: [{}] }]), noTime, reserved }));
+
+  const dirGroups = L.dirGroups({
+    current: { dir: 'c:\\work\\shop\\' },
+    pinned: [{ path: 'C:\\Work\\Shop', project: '' }, { path: 'D:\\old', missing: true }],
+    projects: [{ name: 'shop', path: 'C:\\work\\shop' }, { name: 'api', path: '/srv/api' }],
+    recent: [{ path: '/srv/api' }, { path: '/home/u/notes' }],
+  });
+  const rowsOf = (id) => (dirGroups.find((g) => g.id === id) || { rows: [] }).rows;
+  check('L60 ui-logic dirGroups: каталог — в одном, верхнем списке (закреплённый проект в «Проектах» не двоится); путь Windows сравнивается без регистра и хвостового слэша; имя проекта подтянуто из реестра; пустые списки выкинуты',
+    rowsOf('pinned').length === 2 && rowsOf('pinned')[0].current && rowsOf('pinned')[0].project === 'shop' && rowsOf('pinned')[0].pinned && rowsOf('pinned')[1].missing
+    && rowsOf('projects').map((r) => r.project).join() === 'api' && rowsOf('recent').map((r) => r.name).join() === 'notes' && !rowsOf('recent')[0].pinned
+    && L.dirGroups({ current: { dir: '/x' } }).length === 0 && L.dirName('C:\\') === 'C:' && L.dirName('/srv/api/') === 'api',
+    JSON.stringify(dirGroups));
+
+  const at = (value, caret = value.length) => L.atToken(value, caret);
+  const found = L.fileMatches(['src/', 'src/user.js', 'src/api/users.js', 'docs/usage.md', 'lib/u/s/e/r.js', 'README.md'], 'user');
+  check('L61 ui-logic «@»: слово у курсора — после начала или пробела, адрес a@b и слово с пробелом не ловит, путь в кавычках — с пробелами; поиск — буквы по порядку, имя выше пути; путь — относительный, адресату из другого проекта — абсолютный, с пробелами — в кавычках',
+    JSON.stringify(at('@')) === JSON.stringify({ start: 0, end: 1, query: '' }) && at('глянь @src/a', 10).query === 'src' && at('глянь @src/a', 10).end === 12 && at('x\n@re').start === 2
+    && at('mail a@b.com') === null && at('@src/a.js ') === null && at('@"my dir/a b').query === 'my dir/a b' && at('@"a b" ') === null
+    && found[0] === 'src/user.js' && found.includes('src/api/users.js') && found.includes('lib/u/s/e/r.js') && !found.includes('README.md') && L.fileScore('a.js', 'zz') === -1
+    && L.mentionPath('src/a.js', { base: 'C:\\w\\shop' }) === '@src/a.js' && L.mentionPath('src/a.js', { base: 'C:\\w\\shop', agentRoot: 'c:\\W\\Shop\\' }) === '@src/a.js'
+    && L.mentionPath('src/api/', { base: 'C:\\w\\shop', agentRoot: 'C:\\w\\api' }) === '@C:\\w\\shop\\src\\api\\' && L.mentionPath('a b.md', { base: '/srv/x', agentRoot: '/srv/y' }) === '@"/srv/x/a b.md"',
+    JSON.stringify({ found, q: at('глянь @src/a', 10) }));
 
   // Форма настроек проекта (шестерёнка): чистая логика для теста без браузера — сама форма и сеть проверены в bus-ui-browser.js
   const settingsSchema = [
@@ -1087,7 +1235,7 @@ function main() {
     const nowhere = path.join(sandbox, 'work', 'nowhere');
     fs.mkdirSync(nowhere, { recursive: true });
     const farPort = port + 1 + Math.floor(Math.random() * 500);
-    const farServer = spawn(process.execPath, [BUS_JS, 'ui', '--port', String(farPort), '--no-open'], { cwd: nowhere, env: env(nowhere) });
+    const farServer = spawn(process.execPath, [BUS_JS, 'ui', '--port', String(farPort), '--no-open'], { cwd: fakeHome, env: env(fakeHome) }); // домашняя папка к шине не подключается
     let farBanner = '';
     farServer.stdout.on('data', (c) => (farBanner += c));
     try {
@@ -1110,12 +1258,110 @@ function main() {
       const farProject = await ask('POST', '/api/send', { headers: farAuth, body: { to: 'uib', type: 'DONE', text: 'проекту из ниоткуда' } });
       const farGlobal = await ask('POST', '/api/send', { headers: farAuth, body: { to: 'helper', type: 'DONE', text: 'глобальному из ниоткуда' } });
       const farRead = await ask('POST', '/api/read', { headers: farAuth, body: {} });
-      check('U28 bus ui не из проекта шины: локальному агенту пишет оркестратор его каталога; проекту и глобальному агенту писать не от кого — 400 с причиной, ничего не доставлено; «прочитано» — 400: ящика оркестратора тут нет',
-        up2nd && far.here.project === null && farAgent('dima').from === 'uia' && farAgent('dima').blocked === '' && farAgent('uib').blocked.includes('не из проекта') && farAgent('helper').blocked.includes('не из проекта')
-        && farLocal.ok && farLocal.from === 'uia' && read(box(projU, 'dima')).includes('from:uia | из UI вне проекта') && farProject.status === 400 && farProject.json().error.includes('не из проекта') && !read(box(projV, 'uib')).includes('из ниоткуда')
+      check('U28 bus ui в каталоге, который к шине не подключить (домашняя папка): локальному агенту пишет оркестратор его каталога; проекту и глобальному агенту писать не от кого — 400 с причиной, ничего не доставлено; «прочитано» — 400: ящика оркестратора тут нет',
+        up2nd && far.here.project === null && farAgent('dima').from === 'uia' && farAgent('dima').blocked === '' && farAgent('uib').blocked.includes('не подключить') && farAgent('helper').blocked.includes('не подключить') && far.here.attach.refused
+        && farLocal.ok && farLocal.from === 'uia' && read(box(projU, 'dima')).includes('from:uia | из UI вне проекта') && farProject.status === 400 && farProject.json().error.includes('не подключить') && !read(box(projV, 'uib')).includes('из ниоткуда')
         && farGlobal.status === 400 && !read(path.join(busDir, 'helper', 'inbox.md')).includes('из ниоткуда') && farRead.status === 400, JSON.stringify(far.agents.map((a) => [a.name, a.from, a.blocked])) + farProject.text + farRead.text);
     } finally {
       farServer.kill();
+    }
+
+    // ---------- окно --app и ярлык на рабочем столе (app.js) ----------
+    const app = require(path.join(path.dirname(BUS_JS), 'app.js'));
+    const winEnv = { LOCALAPPDATA: 'C:\\L', PROGRAMFILES: 'C:\\P', 'PROGRAMFILES(X86)': 'C:\\X' };
+    const chrome = 'C:\\P\\Google\\Chrome\\Application\\chrome.exe';
+    const edge = 'C:\\X\\Microsoft\\Edge\\Application\\msedge.exe';
+    const plan = app.shortcutPlan({ node: 'C:\\n\\node.exe', env: { SystemRoot: 'C:\\W' }, home: "D:\\team\\o'neil" });
+    const script = app.shortcutScript(plan, "C:\\d'x");
+    check('U44 bus app: окно — Chrome, без него Edge, нет обоих или BUS_APP_BROWSER=none — null (откроется вкладка); ярлык — conhost --headless node bus.js ui --app, кавычки в путях экранированы для PowerShell',
+      app.findBrowser({ platform: 'win32', env: winEnv, exists: (f) => f === chrome || f === edge }) === chrome && app.findBrowser({ platform: 'win32', env: winEnv, exists: (f) => f === edge }) === edge
+      && app.findBrowser({ platform: 'win32', env: winEnv, exists: () => false }) === null && app.findBrowser({ env: { BUS_APP_BROWSER: 'none' } }) === null
+      && app.findBrowser({ platform: 'linux', env: { PATH: '/usr/bin' }, exists: (f) => f === '/usr/bin/chromium' }) === '/usr/bin/chromium' && app.appArgs('http://127.0.0.1:1').includes('--app=http://127.0.0.1:1/?app=1')
+      && plan.target === 'C:\\W\\System32\\conhost.exe' && plan.args === `--headless "C:\\n\\node.exe" "${BUS_JS}" ui --app` && plan.icon.endsWith('bus.ico,0') && fs.existsSync(plan.icon.slice(0, -2))
+      && script.includes("$dir = 'C:\\d''x'") && script.includes("$s.WorkingDirectory = 'D:\\team\\o''neil'") && app.shortcutScript(plan).includes("GetFolderPath('Desktop')")
+      && app.autoShortcut(path.join(sandbox, 'no-shortcut'), { BUS_SHORTCUT: '0' }) === null && !fs.existsSync(path.join(sandbox, 'no-shortcut', app.MARK)), script);
+    const winDir = path.join(sandbox, 'app-window');
+    const winArgs = app.appArgs('http://127.0.0.1:1/', { x: -1920, y: 40, w: 1280, h: 800 });
+    check('U44b bus app: окно открывается с прошлыми размером и местом (адрес с ?app=1 — по нему страница шлёт геометрию); без сохранённого — 1400×900; кривое, свёрнутое и нецелое не пишется',
+      winArgs.join(' ') === '--app=http://127.0.0.1:1/?app=1 --window-size=1280,800 --window-position=-1920,40' && app.appArgs('http://127.0.0.1:1').join(' ') === '--app=http://127.0.0.1:1/?app=1 --window-size=1400,900'
+      && app.loadWindow(winDir) === null && app.saveWindow(winDir, { x: 10, y: 20, w: 1300, h: 850, extra: 1 }) && JSON.stringify(app.loadWindow(winDir)) === '{"x":10,"y":20,"w":1300,"h":850}'
+      && [null, 'x', { x: -32000, y: -32000, w: 160, h: 28 }, { x: 0, y: 0, w: 1300.5, h: 850 }, { x: 0, y: 0, w: 1300, h: '850' }, { x: 0, y: 0, w: 99999, h: 850 }].every((g) => !app.saveWindow(winDir, g))
+      && JSON.stringify(app.loadWindow(winDir)) === '{"x":10,"y":20,"w":1300,"h":850}', JSON.stringify(winArgs));
+
+    const appServer = spawn(process.execPath, [BUS_JS, 'ui', '--port', String(farPort + 300), '--app', '--no-open'], { cwd: nowhere, env: { ...env(nowhere), BUS_APP_IDLE_MS: '400' } });
+    let appBanner = '';
+    let appExited = false;
+    appServer.stdout.on('data', (c) => (appBanner += c));
+    appServer.on('exit', () => (appExited = true));
+    try {
+      const upApp = await until(() => appBanner.includes('UI: http://127.0.0.1:'), 8000);
+      const at = Number((/127\.0\.0\.1:(\d+)/.exec(appBanner) || [])[1]);
+      const get = (url) => new Promise((resolve) => http.get({ host: '127.0.0.1', port: at, path: url }, (res) => { let t = ''; res.on('data', (c) => (t += c)); res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], text: t })); }).on('error', () => resolve({ status: 0 })));
+      const icon = await get('/favicon.svg');
+      const page = await get('/');
+      const shortcutFlag = JSON.parse((await get('/api/settings')).text).shortcut;
+      const appToken = (/TOKEN = '([0-9a-f]{32})'/.exec(page.text) || [])[1];
+      const postWindow = (body, token = appToken) => new Promise((resolve) => {
+        const req = http.request({ host: '127.0.0.1', port: at, path: '/api/window', method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Bus-Token': token } }, (res) => { let t = ''; res.on('data', (c) => (t += c)); res.on('end', () => resolve({ status: res.statusCode, text: t })); });
+        req.on('error', () => resolve({ status: 0 }));
+        req.end(JSON.stringify(body));
+      });
+      const windowFile = path.join(busDir, app.WINDOW);
+      fs.rmSync(windowFile, { force: true });
+      const winSaved = await postWindow({ x: -1920, y: 40, w: 1280, h: 800 });
+      const winNoToken = await postWindow({ x: 0, y: 0, w: 900, h: 700 }, 'bad');
+      const winMinimized = await postWindow({ x: -32000, y: -32000, w: 160, h: 28 });
+      const winKept = app.loadWindow(busDir);
+      const winRead = JSON.parse((await get('/api/window')).text || '{}').window;
+      await wait(900); // окна ещё не было — короткий простой не действует
+      const aliveBeforeWindow = !appExited;
+      const events = http.get({ host: '127.0.0.1', port: at, path: '/api/events' });
+      events.on('error', () => {});
+      await wait(300);
+      events.destroy(); // окно закрыли
+      const gone = await until(() => appExited, 5000);
+      check('U45 bus ui --app: в баннере — «закроешь окно — погаснет»; favicon — SVG, страница на него ссылается; флаг ярлыка — Windows, macOS, Linux; до первого окна сервер живёт, окно закрыли — гаснет через BUS_APP_IDLE_MS',
+        upApp && appBanner.includes('закроешь окно — погаснет через') && icon.status === 200 && icon.type === 'image/svg+xml' && icon.text.includes('<svg') && page.text.includes('href="/favicon.svg"')
+        && shortcutFlag === app.PLATFORMS.includes(process.platform) && aliveBeforeWindow && gone, appBanner + ` alive=${aliveBeforeWindow} gone=${gone}`);
+      check('U45b bus ui --app: окно шлёт размер и место — POST /api/window кладёт их в app-window.json каталога шины, GET отдаёт обратно (по нему страница ставит окно); без токена — отказ, свёрнутое (-32000, крошка) — мимо, прежнее цело',
+        JSON.parse(winSaved.text || '{}').ok === true && winNoToken.status === 403 && JSON.parse(winMinimized.text || '{}').ok === false && JSON.stringify(winKept) === JSON.stringify({ x: -1920, y: 40, w: 1280, h: 800 }) && JSON.stringify(winRead) === JSON.stringify(winKept),
+        JSON.stringify({ winSaved, winNoToken, winMinimized, winKept }));
+    } finally {
+      appServer.kill();
+    }
+
+    const bundles = path.join(sandbox, 'bundles');
+    const lin = app.makeShortcut({ platform: 'linux', env: { BUS_SHORTCUT_DIR: bundles } });
+    const linAgain = app.makeShortcut({ platform: 'linux', env: { BUS_SHORTCUT_DIR: bundles } });
+    const mac = app.makeShortcut({ platform: 'darwin', env: { BUS_SHORTCUT_DIR: bundles } });
+    const entry = read(path.join(bundles, 'applications', app.DESKTOP_FILE));
+    const plist = read(path.join(mac.file, 'Contents', 'Info.plist'));
+    const launcher = read(path.join(mac.file, 'Contents', 'MacOS', 'claude-bus'));
+    const icnsHead = fs.readFileSync(path.join(mac.file, 'Contents', 'Resources', 'bus.icns')).subarray(0, 4).toString();
+    check('U47 bus app: Linux — .desktop в меню приложений и на рабочем столе (Exec — node bus.js ui --app, иконка PNG), повтор — «обновлён»; macOS — Claude Bus.app: Info.plist без иконки в Dock, запускалка exec node bus.js ui --app, bus.icns; кавычки и % в путях экранированы',
+      !lin.replaced && linAgain.replaced && lin.also.length === 1 && fs.existsSync(path.join(bundles, 'Desktop', app.DESKTOP_FILE)) && entry.includes('[Desktop Entry]') && entry.includes('Terminal=false')
+      && entry.includes(`Exec=${app.execArg(process.execPath)} ${app.execArg(BUS_JS)} ui --app`) && /Icon=.*bus\.png/.test(entry) && fs.existsSync(path.join(path.dirname(BUS_JS), '..', 'assets', 'bus.png'))
+      && app.execArg('/a "b"/$x/50%') === String.raw`"/a \\"b\\"/\\$x/50%%"` // спецификация: \" внутри кавычек, затем каждый \ удваивается
+      && mac.file.endsWith('Claude Bus.app') && plist.includes('<key>CFBundleExecutable</key><string>claude-bus</string>') && plist.includes('<key>LSUIElement</key><true/>') && plist.includes('bus.icns')
+      && launcher.startsWith('#!/bin/sh') && launcher.includes(`exec '${process.execPath}' '${BUS_JS}' ui --app`) && app.macLauncher({ node: "/it's/node" }).includes(String.raw`'/it'\''s/node'`) && icnsHead === 'icns',
+      entry + plist + launcher + app.execArg('/a "b"/$x/50%'));
+
+    if (process.platform === 'win32') {
+      const desk = path.join(sandbox, 'desk');
+      fs.mkdirSync(desk, { recursive: true });
+      const deskEnv = { ...process.env, BUS_SHORTCUT_DIR: desk };
+      delete deskEnv.BUS_SHORTCUT;
+      const markDir = path.join(sandbox, 'shortcut-bus');
+      const first = app.autoShortcut(markDir, deskEnv);
+      const lnk = path.join(desk, app.SHORTCUT);
+      const madeFirst = fs.existsSync(lnk);
+      fs.rmSync(lnk);
+      const second = app.autoShortcut(markDir, deskEnv); // удалили руками — сам не возвращается
+      const byHand = app.makeShortcut({ env: deskEnv });
+      const again = app.makeShortcut({ env: deskEnv });
+      check('U46 bus app (Windows): первый запуск ставит ярлык и отметку; удалённый руками второй запуск не возвращает; ui --shortcut ставит заново, повторный — «обновлён»',
+        first && first.file === lnk && madeFirst && JSON.parse(read(path.join(markDir, app.MARK))).file === lnk && second === null && !byHand.replaced && byHand.file === lnk && again.replaced && fs.existsSync(lnk),
+        JSON.stringify({ first, second, byHand, again }));
     }
 
     // ---------- UI не из проекта, а проект в шине один: он и есть «эта директория» ----------
@@ -1124,7 +1370,7 @@ function main() {
     defFile(soloConfig, 'helper');
     const soloEnv = { ...env(soloProj), CLAUDE_CONFIG_DIR: soloConfig };
     const soloInit = spawnSync(process.execPath, [BUS_JS, 'init', 'solo'], { cwd: soloProj, encoding: 'utf8', env: soloEnv });
-    const soloServer = spawn(process.execPath, [BUS_JS, 'ui', '--port', String(farPort + 600), '--no-open'], { cwd: nowhere, env: { ...soloEnv, CLAUDE_PROJECT_DIR: nowhere } });
+    const soloServer = spawn(process.execPath, [BUS_JS, 'ui', '--port', String(farPort + 600), '--no-open'], { cwd: fakeHome, env: { ...soloEnv, CLAUDE_PROJECT_DIR: fakeHome } }); // каталог запуска не подключить — подхватывается единственный проект
     let soloBanner = '';
     soloServer.stdout.on('data', (c) => (soloBanner += c));
     try {
@@ -1149,6 +1395,111 @@ function main() {
         && soloSent.status === 200 && soloSent.json().from === 'solo' && read(box(soloProj, 'helper', 'inbox.md')).includes('from:solo | глобальному из UI вне проекта'), JSON.stringify(solo.here) + JSON.stringify(solo.agents.map((a) => [a.name, a.from, a.blocked])) + soloSent.text);
     } finally {
       soloServer.kill();
+    }
+
+    // ---------- рабочий каталог: выбор в шапке, закреплённые, подключение, повторный запуск ----------
+    // После U28: сервер «не из проекта» берёт последний выбранный каталог — до этого блока ui-dirs.json не было
+    const dirsFile = path.join(busDir, 'ui-dirs.json');
+    const savedDirs = () => JSON.parse(read(dirsFile) || '{}');
+    const hereNow = async () => (await request('GET', '/api/state')).json().here;
+    try {
+      const dirs0 = (await request('GET', '/api/dirs')).json();
+      check('U36 bus ui dirs: текущий каталог — каталог запуска, проекты шины из реестра, сохранённых нет',
+        dirs0.current.dir === projU && dirs0.current.project === 'uia' && !dirs0.current.pinned && dirs0.projects.some((p) => p.name === 'uib' && p.path === projV) && dirs0.pinned.length === 0 && dirs0.recent.length === 0, JSON.stringify(dirs0));
+
+      const listNoKey = await request('GET', `/api/dirs/list?path=${encodeURIComponent(path.dirname(projU))}`);
+      const listed = (await request('GET', `/api/dirs/list?path=${encodeURIComponent(path.dirname(projU))}&k=${token}`)).json();
+      const drives = (await request('GET', `/api/dirs/list?k=${token}`)).json();
+      const listRel = await request('GET', `/api/dirs/list?path=work&k=${token}`);
+      check('U37 bus ui dirs list: без токена — 403; подпапки с пометкой проекта шины и путём наверх; без пути — диски; относительный путь — 400',
+        listNoKey.status === 403 && listed.path === path.dirname(projU) && listed.parent === path.dirname(path.dirname(projU)) && (listed.dirs.find((d) => d.name === 'ui-b') || {}).project === 'uib' && listed.dirs.some((d) => d.path === projU)
+        && drives.parent === null && drives.dirs.length > 0 && listRel.status === 400, listNoKey.status + JSON.stringify(listed).slice(0, 300) + listRel.text);
+
+      const cdNoToken = await request('POST', '/api/cd', { body: { dir: projV } });
+      const cdMissing = await request('POST', '/api/cd', { headers: auth, body: { dir: path.join(sandbox, 'нет-такого') } });
+      const cdRelative = await request('POST', '/api/cd', { headers: auth, body: { dir: 'ui-b' } });
+      const stillU = await hereNow();
+      let cdStream = '';
+      const cdSse = http.get({ host: '127.0.0.1', port, path: '/api/events' }, (res) => res.on('data', (c) => (cdStream += c)));
+      await until(() => cdStream.includes('connected'));
+      const cdV = await request('POST', '/api/cd', { headers: auth, body: { dir: projV } });
+      const pushedHere = await until(() => /event: here\ndata: .*"project":"uib"/.test(cdStream));
+      cdSse.destroy();
+      const afterCd = (await request('GET', '/api/state')).json();
+      check('U38 bus ui cd: без токена — 403, несуществующий и относительный путь — 400, каталог прежний; переключение — вкладкам SSE here, состояние уже нового проекта, каталог в недавних и последним выбранным',
+        cdNoToken.status === 403 && cdMissing.status === 400 && cdMissing.json().error.includes('Каталога нет') && cdRelative.status === 400 && stillU.project === 'uia'
+        && cdV.status === 200 && cdV.json().current.project === 'uib' && pushedHere && afterCd.here.project === 'uib' && afterCd.here.root === projV && afterCd.agents.find((a) => a.name === 'uib').here && !afterCd.agents.find((a) => a.name === 'uia').here
+        && savedDirs().recent[0] === projV && savedDirs().last === projV, cdMissing.text + cdV.text.slice(0, 200) + cdStream.slice(-300));
+
+      const pinOn = (await request('POST', '/api/dirs/pin', { headers: auth, body: { dir: projV, on: true } })).json();
+      const pinTwice = (await request('POST', '/api/dirs/pin', { headers: auth, body: { dir: projV, on: true } })).json();
+      const pinMissing = await request('POST', '/api/dirs/pin', { headers: auth, body: { dir: path.join(sandbox, 'нет-такого'), on: true } });
+      const pinOff = (await request('POST', '/api/dirs/pin', { headers: auth, body: { dir: projV, on: false } })).json();
+      check('U39 bus ui pin: закрепляет каталог один раз (текущий помечен), несуществующий — 400, открепление убирает; всё в ui-dirs.json',
+        pinOn.pinned.length === 1 && pinOn.pinned[0].path === projV && pinOn.pinned[0].project === 'uib' && pinOn.current.pinned && pinTwice.pinned.length === 1 && pinMissing.status === 400 && pinOff.pinned.length === 0 && !pinOff.current.pinned && savedDirs().pinned.length === 0,
+        JSON.stringify(pinOn) + pinMissing.text);
+
+      const fresh = mkProject('ui-fresh');
+      const cdFresh = (await request('POST', '/api/cd', { headers: auth, body: { dir: fresh } })).json();
+      const beforeSend = (await request('GET', '/api/state')).json();
+      const helperRow = beforeSend.agents.find((a) => a.name === 'helper' && a.kind === 'global') || {};
+      const oldInit = await request('POST', '/api/init', { headers: auth, body: { name: 'ui-fresh' } });
+      const firstSend = await request('POST', '/api/send', { headers: auth, body: { to: helperRow.key, type: 'DONE', text: 'первое сообщение из нового каталога' } });
+      const afterSend = await hereNow();
+      check('U40 bus ui: каталог не в шине — подключится сам (attach с именем папки), агенты подписаны «от» будущего проекта; первое сообщение подключает его и уходит; /api/init больше нет',
+        cdFresh.current.project === null && (cdFresh.current.attach || {}).name === 'ui-fresh' && beforeSend.here.attach.name === 'ui-fresh' && helperRow.from === 'ui-fresh' && helperRow.attach === true && !helperRow.blocked
+        && firstSend.status === 200 && (JSON.parse(read(path.join(busDir, 'agents.json'))).agents['ui-fresh'] || {}).project === fresh && afterSend.project === 'ui-fresh' && !afterSend.attach
+        && read(path.join(configDir, 'settings.json')).includes('inbox --hook') && oldInit.status === 404, firstSend.text + JSON.stringify(helperRow) + JSON.stringify(afterSend) + oldInit.text);
+      bus(fresh, ['remove']);
+
+      // Повторный bus.js ui из другого проекта: живой сервер переключается, второй не поднимается
+      await request('POST', '/api/cd', { headers: auth, body: { dir: projU } });
+      const relaunch = spawnSync(process.execPath, [BUS_JS, 'ui', '--port', String(port), '--no-open'], { cwd: projV, encoding: 'utf8', env: env(projV), timeout: 15000 });
+      const afterRelaunch = await hereNow();
+      const relaunchSame = spawnSync(process.execPath, [BUS_JS, 'ui', '--port', String(port), '--no-open'], { cwd: projV, encoding: 'utf8', env: env(projV), timeout: 15000 });
+      check('U41 bus ui: повторный запуск из другого проекта шины переключает живой UI на него и выходит; из того же проекта — просто «уже поднят»',
+        relaunch.status === 0 && relaunch.stdout.includes('переключил') && afterRelaunch.project === 'uib' && relaunchSame.status === 0 && relaunchSame.stdout.includes('UI уже поднят') && !relaunchSame.stdout.includes('переключил'),
+        relaunch.stdout + relaunch.stderr + JSON.stringify(afterRelaunch) + relaunchSame.stdout);
+    } finally {
+      await request('POST', '/api/cd', { headers: auth, body: { dir: projU } });
+      fs.rmSync(dirsFile, { force: true }); // дальше серверы «не из проекта» не должны подхватить выбранный здесь каталог
+    }
+
+    // ---------- «@» в поле сообщения: файлы проекта ----------
+    for (const [file, text] of [['src/api/users.js', ''], ['src/main.js', ''], ['src/f10.js', ''], ['src/f9.js', ''], ['node_modules/left-pad/index.js', '']]) {
+      fs.mkdirSync(path.dirname(path.join(projU, file)), { recursive: true });
+      fs.writeFileSync(path.join(projU, file), text);
+    }
+    const files = (q, dir, k = token) => request('GET', `/api/files?q=${encodeURIComponent(q)}&dir=${encodeURIComponent(dir)}&k=${k}`);
+    const paths = (r) => r.json().items.map((i) => i.path);
+    const filesNoKey = await files('', '', 'x');
+    const filesRoot = await files('', '');
+    const filesSrc = await files('', 'src/');
+    const filesFound = await files('users', '');
+    const filesUp = await files('', '../');
+    const filesNope = (await files('', 'nope/')).json();
+    check('U42 bus ui files: без токена — 403; корень проекта — папки первыми, node_modules нет; папка src/ — её содержимое, числа по-человечески (f9 до f10); поиск — лучшее первым, dir: null; «../» наружу не выводит; папки нет в индексе — пусто и missing, а не поиск',
+      filesNoKey.status === 403 && filesRoot.json().base === projU && filesRoot.json().dir === '' && paths(filesRoot)[0].endsWith('/') && paths(filesRoot).includes('src/') && !paths(filesRoot).some((p) => p.startsWith('node_modules'))
+      && filesSrc.json().dir === 'src/' && paths(filesSrc).join() === 'src/api/,src/f9.js,src/f10.js,src/main.js' && filesFound.json().dir === null && paths(filesFound)[0] === 'src/api/users.js'
+      && filesUp.status === 200 && paths(filesUp).every((p) => !p.startsWith('..') && !path.isAbsolute(p)) && filesNope.missing === true && filesNope.items.length === 0 && filesNope.dir === 'nope/',
+      filesNoKey.status + JSON.stringify([filesRoot.json(), filesSrc.json(), filesFound.json(), filesUp.json()]).slice(0, 600));
+
+    if (spawnSync('git', ['--version']).status === 0) {
+      const gitProj = path.join(sandbox, 'work', 'git-files');
+      fs.mkdirSync(gitProj, { recursive: true });
+      spawnSync('git', ['init', '-q'], { cwd: gitProj });
+      fs.writeFileSync(path.join(gitProj, '.gitignore'), 'secret.txt\n');
+      fs.writeFileSync(path.join(gitProj, 'a.js'), '');
+      fs.writeFileSync(path.join(gitProj, 'secret.txt'), '');
+      try {
+        await request('POST', '/api/cd', { headers: auth, body: { dir: gitProj } });
+        const gitRoot = await files('', '');
+        check('U43 bus ui files: каталог в git — список из git ls-files: новые файлы есть, .gitignore соблюдён; корень — выбранный каталог вне шины',
+          gitRoot.json().base === gitProj && paths(gitRoot).includes('a.js') && paths(gitRoot).includes('.gitignore') && !paths(gitRoot).includes('secret.txt'), gitRoot.text.slice(0, 300));
+      } finally {
+        await request('POST', '/api/cd', { headers: auth, body: { dir: projU } });
+        fs.rmSync(dirsFile, { force: true });
+      }
     }
 
     // ---------- автоподъём: шина сама запускает claude -p --agent в фоне ----------
@@ -1339,6 +1690,12 @@ function main() {
     check('B76a bus: агент уточняет у своего же заказчика — в метке только время, чужой старый TASK заказчиком не становится, подсказка answer без ссылки на «заказчик:»; метка старше суток не считается и снимается',
       typeof ownerMark.at === 'number' && !ownerMark.for && / answer\] from:uia \| до пятницы$/m.test(ownerInbox.out) && ownerInbox.out.includes('# тег answer без «заказчик:»') && !ownerInbox.out.includes('заказчик: dima')
       && /^\[DONE \d\d-\d\d \d\d:\d\d\] from:dima \| ответ через неделю$/m.test(staleLine) && !read(staleFile).includes('"dima"'), JSON.stringify(ownerMark) + ownerInbox.out + staleLine + read(staleFile));
+    // Метка без at (true от прежних версий, правка руками) срока не имеет — тоже протухшая, а не вечная
+    fs.writeFileSync(staleFile, JSON.stringify({ dima: true }));
+    bus(projU, ['--as', 'dima', 'send', 'masha', 'done', 'ответ на метку без времени']);
+    const noAtLine = read(box(projU, 'masha'));
+    check('B76b bus: метка ожидания без at — протухшая: DONE приходит без тега answer, метка снята',
+      /^\[DONE \d\d-\d\d \d\d:\d\d\] from:dima \| ответ на метку без времени$/m.test(noAtLine) && !read(staleFile).includes('"dima"'), noAtLine + read(staleFile));
     bus(projU, ['--as', 'masha', 'send', 'uia', 'done', 'срок учёл']); // обе задачи закрыты — следующим тестам заказчик из этого блока не достанется
     bus(projU, ['--as', 'masha', 'send', 'dima', 'done', 'старую задачу закрыл']);
     bus(projU, ['--as', 'masha', 'inbox', '--quiet']);

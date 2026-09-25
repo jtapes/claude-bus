@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2=".6" y2="1">
+      <stop offset="0" stop-color="#26313e"/>
+      <stop offset="1" stop-color="#0d131a"/>
+    </linearGradient>
+    <radialGradient id="warm" cx=".3" cy=".5" r=".45">
+      <stop offset="0" stop-color="#e6955c" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#e6955c" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="cool" cx=".9" cy=".95" r=".6">
+      <stop offset="0" stop-color="#7b5fd6" stop-opacity=".30"/>
+      <stop offset="1" stop-color="#7b5fd6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rail" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f5b27e" stop-opacity="0"/>
+      <stop offset=".16" stop-color="#f7bb8a"/>
+      <stop offset=".62" stop-color="#e08a4c"/>
+      <stop offset="1" stop-color="#c8702f" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".14"/>
+      <stop offset=".4" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="8"/>
+    </filter>
+    <clipPath id="clip"><rect x="8" y="8" width="240" height="240" rx="56"/></clipPath>
+    <!-- узел: ромб со скруглёнными углами, центр в 0,0 -->
+    <rect id="node" x="-17" y="-17" width="34" height="34" rx="7" transform="rotate(45)"/>
+  </defs>
+
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#tile)"/>
+  <g clip-path="url(#clip)">
+    <rect width="256" height="256" fill="url(#warm)"/>
+    <rect width="256" height="256" fill="url(#cool)"/>
+  </g>
+
+  <!-- отводы: от рейки вправо, колено вниз к узлу — как у сообщений в ленте -->
+  <g fill="none" stroke="#fff" stroke-opacity=".32" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M84 52 H110 Q124 52 124 66 V70 H148"/>
+    <path d="M84 110 H126 Q140 110 140 124 V128 H164"/>
+    <path d="M84 168 H102 Q116 168 116 182 V186 H140"/>
+  </g>
+
+  <!-- рейка: свечение и нить -->
+  <rect x="64" y="28" width="28" height="200" rx="14" fill="url(#rail)" opacity=".6" filter="url(#glow)"/>
+  <rect x="72" y="28" width="12" height="200" rx="6" fill="url(#rail)"/>
+
+  <!-- узлы цвета агентов: залит — ответ пользователю, контур — обычное сообщение -->
+  <g filter="url(#glow)" opacity=".75">
+    <use href="#node" x="166" y="70" fill="#eda36a"/>
+    <use href="#node" x="182" y="128" fill="#ac95f0"/>
+    <use href="#node" x="158" y="186" fill="#6bc98f"/>
+  </g>
+  <use href="#node" x="166" y="70" fill="#eda36a"/>
+  <use href="#node" x="182" y="128" fill="#15101f" fill-opacity=".35" stroke="#b9a5f5" stroke-width="7"/>
+  <use href="#node" x="158" y="186" fill="#6bc98f"/>
+
+  <!-- стекло: блик сверху и светлый край -->
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#gloss)"/>
+  <rect x="9" y="9" width="238" height="238" rx="55" fill="none" stroke="#fff" stroke-opacity=".13" stroke-width="2"/>
+</svg>
