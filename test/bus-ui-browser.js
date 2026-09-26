@@ -1331,7 +1331,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       return [cards > 0 && after === cards, JSON.stringify({ cards, after })];
     });
 
-    await scenario('E46 обновление: при available в шапке медная кнопка «Обновить до v…» и ссылка «что нового», после подтверждения — плашка «Обновлено… перезапусти», кнопки нет; при off кнопки нет', async () => {
+    await scenario('E46 обновление: при available в шапке медная кнопка «Обновить до v…» и ссылка «что нового», после подтверждения — плашка «Обновлено…» с кнопкой «Перезапустить», кнопки обновления нет; сбой перезапуска — красная плашка и кнопка снова жива; при off кнопки нет', async () => {
       const offline = await page.locator('#updateBtn').isVisible();
       const offer = { state: 'available', current: '1.0.0', latest: '1.1.0', notes: 'кнопка обновления', url: 'https://github.com/o/r/releases/tag/v1.1.0' };
       let posted = 0;
@@ -1357,13 +1357,38 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       await page.locator('#updateNote').waitFor();
       const note = await page.locator('#updateNote').textContent();
       const hidden = !(await page.locator('#updateBtn').isVisible());
+      const restartLabel = (await page.locator('#restartBtn').textContent()).trim();
+      let restarts = 0;
+      await page.route('**/api/restart', (route) => {
+        restarts++;
+        return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'идёт сводка' }) });
+      });
+      await page.click('#restartBtn');
+      await page.locator('#updateNote.bad').waitFor();
+      const failNote = await page.locator('#updateNote').textContent();
+      const restartAgain = await page.locator('#restartBtn').isEnabled();
+      await page.unroute('**/api/restart');
       await page.unroute('**/api/state');
       await page.unroute('**/api/update');
       await page.evaluate(() => load());
       await wait(300);
       const offAgain = !(await page.locator('#updateBtn').isVisible()) && !(await page.locator('#updateNote').isVisible());
       return [!offline && label === 'Обновить до v1.1.0' && title.includes('v1.0.0 → v1.1.0') && title.includes('кнопка обновления') && news === offer.url && afterDismiss === 0 && posted === 1
-        && note.includes('Обновлено до v1.1.0') && note.includes('bus.js ui') && hidden && offAgain, JSON.stringify({ offline, label, title, news, afterDismiss, posted, note, hidden, offAgain })];
+        && note.includes('Обновлено до v1.1.0') && restartLabel === 'Перезапустить' && hidden && restarts === 1 && failNote.includes('Не перезапустилось: идёт сводка') && failNote.includes('bus.js ui') && restartAgain && offAgain,
+        JSON.stringify({ offline, label, title, news, afterDismiss, posted, note, restartLabel, hidden, restarts, failNote, restartAgain, offAgain })];
+    });
+
+    await scenario('E53 поле сообщения растёт с текстом: пустое — одна строка, 6 строк — выше, 60 строк — упирается в потолок и прокручивается, очистили — снова низкое', async () => {
+      const box = () => page.evaluate(() => { const t = document.getElementById('text'); return { h: t.getBoundingClientRect().height, scroll: t.scrollHeight > t.clientHeight }; });
+      await page.fill('#text', '');
+      const empty = await box();
+      await page.fill('#text', Array.from({ length: 6 }, (_, i) => 'строка ' + i).join(String.fromCharCode(10)));
+      const six = await box();
+      await page.fill('#text', Array.from({ length: 60 }, (_, i) => 'строка ' + i).join(String.fromCharCode(10)));
+      const many = await box();
+      await page.fill('#text', '');
+      const cleared = await box();
+      return [empty.h < 50 && six.h > empty.h + 60 && many.h > six.h && many.h <= 362 && many.scroll && !six.scroll && Math.abs(cleared.h - empty.h) < 2, JSON.stringify({ empty, six, many, cleared })];
     });
 
     await scenario('E45 «Кому» не пересобирается на каждое событие agents: опция с фокусом в раскрытом списке остаётся на месте, сменился состав — список новый', async () => {

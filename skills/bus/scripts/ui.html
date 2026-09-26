@@ -516,7 +516,8 @@
   #type option span { margin-left: .3em; color: var(--ink-soft); font-weight: 400; }
   #type option::checkmark { padding-left: 12px; }
   #fromHint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--ink-soft); }
-  #composer textarea { height: var(--h-lg); max-height: 220px; }
+  /* Поле растёт с текстом до ~40% экрана, дальше — прокрутка. Где field-sizing нет (Firefox) — высоту ставит fitText. Тянуть руками незачем: растянутое так и осталось бы высоким после отправки */
+  #composer textarea { field-sizing: content; min-height: var(--h-lg); max-height: min(40vh, 360px); resize: none; }
   #composer textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* длинная подсказка в одну строку, а не обрезанная вторая */
   /* Главное действие — полупрозрачное, как кнопки qwatra: стекло с медным отсветом и медной рамкой. На наведении отсвет гуще и светится. Не дышит: анимированная тень перерисовывала размытую форму на каждом кадре */
   .send { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: var(--h-lg); background: color-mix(in srgb, var(--copper) 16%, var(--glass-1)); color: var(--ink); border: 1px solid color-mix(in srgb, var(--copper) 55%, transparent); border-radius: var(--r); padding: 0 16px; font: 700 12px/1.2 var(--label); letter-spacing: .08em; text-transform: uppercase; box-shadow: 0 1px 0 var(--edge) inset, 0 8px 22px -12px var(--copper-glow); transition: background-color .25s, border-color .25s, transform .3s var(--ease), box-shadow .3s; }
@@ -856,6 +857,7 @@
   <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
   <symbol id="i-edit" viewBox="0 0 24 24"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></symbol>
+  <symbol id="i-restart" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></symbol>
   <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
 </svg>
@@ -876,7 +878,7 @@
   <button class="ghost iconbtn" id="theme" type="button" aria-label="Сменить тему: светлая или тёмная" title="Сменить тему"><svg class="icon"><use href="#i-theme"/></svg></button>
 </header>
 <div class="link" id="link" role="alert"><i></i><span></span></div>
-<p class="update-note" id="updateNote" role="status" hidden></p>
+<p class="update-note" id="updateNote" role="status" hidden><span id="updateNoteText"></span><button class="ghost update-btn" id="restartBtn" type="button" hidden><svg class="icon"><use href="#i-restart"/></svg><span id="restartLabel"></span></button></p>
 
 <div class="layout">
   <aside id="agents" aria-label="Агенты"></aside>
@@ -2171,7 +2173,7 @@ function connect() {
   };
   source.onerror = () => {
     link.className = 'link down';
-    link.lastElementChild.textContent = tr('Сервер не отвечает, лента не обновляется. Подними заново: bus.js ui');
+    link.lastElementChild.textContent = updateView.restarting ? tr('Шина перезапускается…') : tr('Сервер не отвечает, лента не обновляется. Подними заново: bus.js ui');
   };
   source.addEventListener('agents', (e) => {
     applyAgents(JSON.parse(e.data));
@@ -2227,11 +2229,13 @@ function connect() {
 
 // ---------- обновление шины ----------
 
-// state с сервера: off | none | error — кнопки нет; available — кнопка; installed — плашка «перезапусти». note — итог клика в этой вкладке
-const updateView = { data: { state: 'off' }, busy: false, note: '', bad: false };
+// state с сервера: off | none | error — кнопки нет; available — кнопка; installed — плашка с кнопкой «Перезапустить». note — итог клика в этой вкладке
+const updateView = { data: { state: 'off' }, busy: false, restarting: false, note: '', bad: false };
 
 function applyUpdate(data) {
-  updateView.data = data || { state: 'off' };
+  data = data || { state: 'off' };
+  if (data.state !== updateView.data.state) Object.assign(updateView, { note: '', bad: false, restarting: false }); // итог клика — про прежнее состояние
+  updateView.data = data;
   renderUpdate();
 }
 
@@ -2244,13 +2248,28 @@ function renderUpdate() {
   $('updateBtn').title = available ? `v${data.current} → v${data.latest}${data.notes ? `\n\n${data.notes}` : ''}` : '';
   $('updateNews').hidden = !available || !data.url;
   if (data.url) $('updateNews').href = data.url;
-  const note = data.state === 'installed' ? restartNote(data.latest) : updateView.note;
+  const installed = data.state === 'installed';
+  const note = updateView.note || (installed ? tr('Обновлено до v{version}. Перезапусти шину — заработает новая версия', { version: data.latest }) : '');
   $('updateNote').hidden = !note;
-  $('updateNote').textContent = note;
-  $('updateNote').className = `update-note${updateView.bad && data.state !== 'installed' ? ' bad' : ''}`;
+  $('updateNoteText').textContent = note;
+  $('updateNote').className = `update-note${updateView.bad ? ' bad' : ''}`;
+  $('restartBtn').hidden = !installed;
+  $('restartBtn').disabled = updateView.restarting;
+  $('restartLabel').textContent = updateView.restarting ? tr('Перезапускаю…') : tr('Перезапустить');
 }
 
-const restartNote = (version) => tr('Обновлено до v{version}. Перезапусти интерфейс: bus.js ui. Демон расписания — pm2 restart bus-scheduler', { version });
+// Сервер закрывает порт и поднимает себя заново; вкладка переподключится и по новой метке страницы перезагрузится сама (см. load)
+$('restartBtn').addEventListener('click', async () => {
+  if (updateView.restarting) return;
+  Object.assign(updateView, { restarting: true, note: tr('Перезапускаю шину — вкладка обновится сама'), bad: false });
+  renderUpdate();
+  try {
+    await post('/api/restart', {});
+  } catch (err) {
+    Object.assign(updateView, { restarting: false, note: tr('Не перезапустилось: {why}. Руками: bus.js ui, демон расписания — pm2 restart bus-scheduler', { why: err.message }), bad: true });
+    renderUpdate();
+  }
+});
 
 $('updateBtn').addEventListener('click', async () => {
   const { latest } = updateView.data;
@@ -2664,6 +2683,7 @@ $('composer').addEventListener('submit', async (e) => {
       renderFeed();
     }
     $('text').value = '';
+    fitText();
     $('btw').checked = false;
     picked = [];
     renderPicked();
@@ -2897,6 +2917,15 @@ function setMentionActive(i) {
   $('text').setAttribute('aria-activedescendant', rows[mention.active].id);
 }
 
+/** Высота поля по тексту там, где CSS field-sizing нет; в Chrome и Edge растит сам CSS, тут ничего не делаем. */
+const fieldSizing = CSS.supports('field-sizing', 'content');
+function fitText() {
+  if (fieldSizing) return;
+  const field = $('text');
+  field.style.height = 'auto';
+  field.style.height = `${field.scrollHeight + field.offsetHeight - field.clientHeight}px`;
+}
+
 /** Заменить слово «@…» у курсора. execCommand — чтоб Ctrl+Z откатывал вставку; input сам снова проверит слово. */
 function replaceMention(text) {
   const field = $('text');
@@ -2983,6 +3012,7 @@ $('filesBtn').addEventListener('click', () => {
   }
 });
 $('text').addEventListener('input', checkMention);
+$('text').addEventListener('input', fitText);
 $('text').addEventListener('click', checkMention);
 $('text').addEventListener('keyup', (e) => ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key) && checkMention());
 $('text').addEventListener('blur', closeMention);

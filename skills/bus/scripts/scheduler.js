@@ -499,6 +499,14 @@ function ensureDaemon() {
   }
 }
 
+/** Перезапуск UI после обновления шины: работающего демона pm2 поднимает на коде с диска, лежащего не трогаем. → строка о сделанном или '' */
+function restartDaemon() {
+  if (!daemonAlive()) return '';
+  const r = pm2(['restart', PM2_NAME]);
+  if (!r.ok) throw new bus.BusError(`pm2 не перезапустил демона расписания: ${r.out.slice(-300) || 'pm2 не найден'}`);
+  return `демон перезапущен (pm2: ${PM2_NAME})`;
+}
+
 function daemonStatus() {
   const beat = readHeartbeat();
   const alive = daemonAlive();
@@ -682,7 +690,7 @@ function cli(asName, args) {
   }
 }
 
-module.exports = { cli, listJobs, allJobs, saveJob, setEnabled, removeJob, requireJob, view, isRunning, spawnRun, tick, syncDaemon, ensureDaemon, daemonStatus };
+module.exports = { cli, listJobs, allJobs, saveJob, setEnabled, removeJob, requireJob, view, isRunning, spawnRun, tick, syncDaemon, ensureDaemon, restartDaemon, daemonStatus };
 
 if (require.main === module) {
   const [mode, root, name, how, fired] = process.argv.slice(2);

@@ -828,6 +828,7 @@ function main() {
     return mode === 'slow' ? setTimeout(done, 2500) : done();
   }
   fs.writeFileSync(${JSON.stringify(fakeSeen)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), stdin: s }));
+  if (s.includes('ЗАВИСНИ')) { console.log(JSON.stringify({ type: 'system', subtype: 'init' })); return setTimeout(() => {}, 60000); } // стартовал и ждёт API
   if (s.includes('УПАДИ')) { console.error('модель недоступна'); process.exit(1); }
   // Ответ уходит двумя чанками, граница — посреди двухбайтной «Д»: сервер, клеивший буферы как строки, получал «��» вместо буквы
   const out = Buffer.from(JSON.stringify({ type: 'result', is_error: false, result: 'Договорились: контракт в contracts/api.md;\\nоткрыт вопрос про поле total', usage: { input_tokens: 3000, output_tokens: 120 } }) + '\\n');
@@ -843,7 +844,7 @@ function main() {
   fs.writeFileSync(path.join(deadUploads, 'leftover'), 'x');
 
   const port = 20000 + Math.floor(Math.random() * 20000);
-  const server = spawn(process.execPath, [BUS_JS, 'ui', '--port', String(port), '--no-open'], { cwd: projU, env: { ...env(projU), BUS_CLAUDE_CMD: `"${process.execPath}" "${fakeClaude}"` } });
+  const server = spawn(process.execPath, [BUS_JS, 'ui', '--port', String(port), '--no-open'], { cwd: projU, env: { ...env(projU), BUS_CLAUDE_CMD: `"${process.execPath}" "${fakeClaude}"`, BUS_SUMMARY_TIMEOUT_MS: '4000' } });
   let banner = '';
   server.stdout.on('data', (c) => (banner += c));
   server.stderr.on('data', (c) => (banner += c));
@@ -1002,6 +1003,10 @@ function main() {
     // Ошибка рождается в колбэке дочернего процесса — язык запроса обязан дожить и до него
     const crashedEn = await request('POST', '/api/summarize', { headers: { ...auth, 'X-Bus-Lang': 'en' }, body: pairBody });
     check('U13a bus ui язык: упавший claude при X-Bus-Lang: en — обвязка ошибки на английском, причина от claude как есть', crashedEn.status === 400 && crashedEn.json().error.startsWith('claude returned an error (code 1)') && crashedEn.json().error.endsWith('The summary was not saved.') && summaryRecords().length === 1, crashedEn.text);
+    bus(projU, ['send', 'dima', 'done', 'ЗАВИСНИ на этом сообщении']);
+    const hung = await request('POST', '/api/summarize', { headers: auth, body: pairBody });
+    check('U13b bus ui summarize: claude стартовал и молчит — по таймауту ошибка говорит, где встал (ждал ответа API), журнал не тронут',
+      hung.status === 400 && hung.json().error.includes('claude не ответил за 4 с') && hung.json().error.includes('ждал ответа API') && hung.json().error.endsWith('Сводка не записана.') && summaryRecords().length === 1, hung.text);
 
     // Запись {human: true} могла остаться в реестре от прежних версий — адресатом она больше не считается
     const registryFile = path.join(busDir, 'agents.json');
@@ -1325,6 +1330,57 @@ function main() {
         JSON.stringify({ winSaved, winNoToken, winMinimized, winKept }));
     } finally {
       appServer.kill();
+    }
+
+    // «Перезапустить» после обновления: сервер закрывает порт и поднимает bus.js ui заново — тот же порт, тот же --app, новый токен
+    const restartPort = farPort + 350;
+    const oldServer = spawn(process.execPath, [BUS_JS, 'ui', '--port', String(restartPort), '--app', '--no-open'], { cwd: nowhere, env: { ...env(nowhere), BUS_APP_IDLE_MS: '400' } });
+    let oldBanner = '';
+    let oldExited = false;
+    oldServer.stdout.on('data', (c) => (oldBanner += c));
+    oldServer.on('exit', () => (oldExited = true));
+    const isAlive = (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const restartFile = path.join(busDir, `ui-server-${restartPort}.json`);
+    let newPid = 0;
+    try {
+      await until(() => oldBanner.includes('UI: http://127.0.0.1:'), 8000);
+      const call = (method, url, token) => new Promise((resolve) => {
+        const req = http.request({ host: '127.0.0.1', port: restartPort, path: url, method, headers: { 'Content-Type': 'application/json', ...(token ? { 'X-Bus-Token': token } : {}) } }, (res) => { let t = ''; res.on('data', (c) => (t += c)); res.on('end', () => resolve({ status: res.statusCode, text: t })); });
+        req.on('error', () => resolve({ status: 0, text: '' }));
+        req.end(method === 'POST' ? '{}' : undefined);
+      });
+      const tokenOf = async () => (/TOKEN = '([0-9a-f]{32})'/.exec((await call('GET', '/')).text) || [])[1];
+      const oldToken = await tokenOf();
+      const noToken = await call('POST', '/api/restart');
+      const restarted = await call('POST', '/api/restart', oldToken);
+      const oldGone = await until(() => oldExited, 8000);
+      let newToken = '';
+      for (const end = Date.now() + 10000; Date.now() < end && (!newToken || newToken === oldToken); await wait(100)) newToken = (await tokenOf()) || '';
+      try {
+        newPid = JSON.parse(fs.readFileSync(restartFile, 'utf8')).pid;
+      } catch {
+        // файла нет — newUp ниже false
+      }
+      const newUp = newPid > 0 && newPid !== oldServer.pid && isAlive(newPid);
+      // Новый поднят с --app: подключилось и отключилось окно — гаснет через BUS_APP_IDLE_MS
+      const events = http.get({ host: '127.0.0.1', port: restartPort, path: '/api/events' });
+      events.on('error', () => {});
+      await wait(300);
+      events.destroy();
+      const newGone = await until(() => !isAlive(newPid), 5000);
+      check('U45c bus ui /api/restart: без токена — 403; с токеном — ok, старый сервер вышел, на том же порту поднялся новый (другой pid и токен страницы) и тоже в --app: окно закрыли — погас',
+        noToken.status === 403 && restarted.status === 200 && JSON.parse(restarted.text).ok === true && oldGone && newToken && newToken !== oldToken && newUp && newGone && oldBanner.includes('Перезапуск: новый UI'),
+        JSON.stringify({ noToken: noToken.status, restarted, oldGone, newToken, oldToken, newPid, newUp, newGone }) + oldBanner);
+    } finally {
+      oldServer.kill();
+      if (newPid && isAlive(newPid)) process.kill(newPid);
     }
 
     const bundles = path.join(sandbox, 'bundles');
