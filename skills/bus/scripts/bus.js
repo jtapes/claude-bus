@@ -1495,7 +1495,13 @@ function agentPrompt(values = settings.DEFAULTS, builtinToo = true) {
   return own.length ? [...builtin, '# Правила пользователя — следуй им наравне с ролью:', ...own] : builtin;
 }
 
-/** Подсказки по месту: правило печатается, только когда во входящих есть его случай, — в роли агента и в SKILL.md за него платили бы каждый раз. */
+// Просьба поставить агента в расписание. Промах стоит одной строки подсказки; строку задачи расписания («По расписанию «…»: …») hints вырезает
+const SCHEDULE_ASK = /расписани|\bcron|\bкрон|ежедневн|еженедельн|ежечасн|каждое утро|каждый (?:день|час|вечер|будний)|кажд(?:ые|ую|ый) \d*\s*(?:мин|час|недел)|по будням|по утрам|\bschedul|\bdaily\b|\bevery (?:day|hour|morning|week)/i;
+
+/**
+ * Подсказки по месту: правило печатается, только когда во входящих есть его случай, — в роли агента и в SKILL.md за него платили бы каждый раз.
+ * asAgent — имя агента (inbox --as) или false.
+ */
 function hints(lines, asAgent, values = settings.DEFAULTS) {
   // Только к настоящему сообщению: ящик из одних подложенных строк («[? не от шины] …») отвечать некому.
   // Одни DONE «к сведению» — отвечать не на что, и ≈190 токенов про оформление ответа там мимо дела; правила пользователя едут всегда
@@ -1507,6 +1513,10 @@ function hints(lines, asAgent, values = settings.DEFAULTS) {
   if (answers.some((line) => line.includes(' | заказчик: '))) out.push('# тег answer — ответ на твой вопрос, в конце строки «заказчик: <имя> «его задача»»: доделай задачу и отправь итог DONE заказчику. Спрошенному на его DONE не отвечай.');
   if (answers.some((line) => !line.includes(' | заказчик: '))) out.push('# тег answer без «заказчик:» — ответ на твой вопрос: доделай задачу и отправь итог DONE тому, кто её ставил. Спрошенному на его DONE не отвечай.');
   if (asAgent && lines.some((line) => /^\[DONE [^\]]*(?<! answer)\] from:/.test(line))) out.push('# DONE без тега answer — к сведению: учти и закончи ход, отправителю не отвечай.');
+  // Блок «Шина» копируется в роль один раз — правило про расписание в нём не дошло бы до старых агентов и стоило бы токенов на каждом подъёме
+  if (typeof asAgent === 'string' && lines.some((line) => /^\[(?:TASK|QUESTION) /.test(line) && SCHEDULE_ASK.test(line.replace(/ \| По расписанию «[^»]*»: .*$/, '')))) {
+    out.push(`# расписание: просят запускать тебя по cron — bus.js --as ${asAgent} schedule add <задача> "<cron>" <что делать> (только себе; по cron придёт TASK). Свои задачи — schedule, off|on|rm|log <задача>, справка — schedule help. Cron — самый редкий из подходящих: запуск — подъём с нуля.`);
+  }
   return out;
 }
 
@@ -1552,7 +1562,7 @@ function inbox(asName, hookMode, quiet) {
   if (isSubagent(me)) takeDialogs(me, pending);
   // Оркестратор после субагента: ответ уже пришёл в его отчёте, второй раз тянуть текст в контекст незачем
   if (quiet) return console.log(`забрано: ${lines.length}`);
-  if (!hookMode) return console.log([...foldDirs(ctx, lines), ...hints(lines, Boolean(asName), settingsOf(ctx, me))].join('\n'));
+  if (!hookMode) return console.log([...foldDirs(ctx, lines), ...hints(lines, asName ? (isSubagent(me) ? me.name : true) : false, settingsOf(ctx, me))].join('\n'));
 
   // Ответы на написанное из UI пользователь уже видит в ленте — в контекст сессии идёт счётчик, а не тексты
   const replies = new Map();

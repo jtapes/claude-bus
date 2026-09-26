@@ -50,7 +50,7 @@ module.exports = async function busEvolveTests({ sandbox, configDir, baseEnv, ch
   const box = (name, file = '') => path.join(proj, '.claude', 'bus', name, file);
   const seen = () => read(seenFile).split('\n').filter(Boolean).map((line) => JSON.parse(line));
 
-  // Подставной claude: обычный подъём читает inbox и отвечает отправителю (DONE, по слову СПРОСИ — QUESTION, по слову ПРОВАЛ — сбой),
+  // Подставной claude: обычный подъём берёт inbox из промпта и отвечает отправителю (DONE, по слову СПРОСИ — QUESTION, по слову ПРОВАЛ — сбой),
   // называет сессию и кладёт её файл туда же, куда настоящий; --resume с просьбой о самоправке — отвечает черновиком роли
   fs.writeFileSync(fakeClaude, `const fs = require('fs');
 const path = require('path');
@@ -82,7 +82,7 @@ function main() {
     return say('\`\`\`json\\n' + JSON.stringify({ description: 'выучено: когда поднимать', body: '# Роль\\n\\nВыучил: тесты гонять до ответа.', note: 'Добавил правило про тесты: пользователь поправил дважды.' }) + '\\n\`\`\`');
   }
   const run = (args) => require('child_process').spawnSync(process.execPath, [${JSON.stringify(BUS_JS)}, '--as', name, ...args], { cwd: process.cwd(), env: process.env, encoding: 'utf8' });
-  const inbox = run(['inbox']).stdout || '';
+  const inbox = prompt.includes('<inbox>') ? prompt : run(['inbox']).stdout || ''; // входящие раннер кладёт в промпт сам
   if (inbox.includes('ПРОВАЛ')) return say('упал', true);
   const from = (/from:([a-z0-9-]+)/.exec(inbox) || [])[1];
   if (from) run(['send', from, inbox.includes('СПРОСИ') ? 'QUESTION' : 'DONE', inbox.includes('СПРОСИ') ? 'какой каталог?' : 'готово']);

@@ -52,6 +52,7 @@ const CONTEXT_KEEP = 50; // диалогов в wake-context.json — остал
 const RUNS_KEEP = 200; // запусков в wake-runs.json — по ним UI подписывает расход на сообщениях агента
 const RUN_ID = /^[0-9a-z]{4,20}-[0-9a-z]{2,10}$/;
 
+const BUS_JS = path.join(__dirname, 'bus.js');
 const lockFile = (box) => path.join(box, 'wake.lock');
 const stateFile = (box) => path.join(box, 'wake.json');
 const logFile = (box) => path.join(box, 'wake.log');
@@ -346,12 +347,48 @@ const wakeLines = (box) => {
   }
 };
 
+/**
+ * Входящие забирает раннер и кладёт в промпт: иначе первый ход агента — вызов inbox, лишний круг модели (секунды и весь контекст
+ * из кэша) на каждом подъёме. Вывод тот же, что агент получил бы сам: подсказки «# …», вложения, свёртка каталогов, метки диалогов.
+ * → { text, raw } — text пустой, если входящих нет; raw — ящик до чтения, вернуть его, если claude так и не стартовал. null — не вышло, агент прочтёт сам
+ */
+function preread(name, box, cwd) {
+  let raw = '';
+  try {
+    raw = fs.readFileSync(inboxFile(box), 'utf8');
+  } catch {
+    // ящик пуст
+  }
+  const { spawnSync } = require('child_process');
+  const r = spawnSync(process.execPath, [BUS_JS, '--as', name, 'inbox'], { cwd, encoding: 'utf8', windowsHide: true, timeout: 30000, env: { ...process.env, CLAUDE_PROJECT_DIR: cwd } });
+  if (r.error || r.status !== 0) return null;
+  const text = String(r.stdout || '').trim();
+  return { text: text.startsWith('Входящих нет.') ? '' : text, raw };
+}
+
+/** claude упал до старта сессии — забранное раннером возвращаем в ящик: агент его не видел, следующий подъём заберёт. */
+function restoreInbox(box, raw) {
+  if (!raw.trim()) return;
+  let now = '';
+  try {
+    now = fs.readFileSync(inboxFile(box), 'utf8');
+  } catch {
+    // пришедшего после чтения нет
+  }
+  fs.writeFileSync(inboxFile(box), raw.replace(/\n?$/, '\n') + now);
+}
+
 // Каталог в промпт не пишем: claude запущен в нём же и сам называет его агенту рабочим каталогом
-function prompt(by) {
+function prompt(by, inbox = null) {
+  const tail = 'Ты запущен в фоне, без чата: отчёт сюда никто не прочтёт, результат — только твои ответы в шине. Последним сообщением — одна строка: кому и что ответил, без списков и пересказа.';
+  if (inbox === null) return [`Тебя подняла шина bus: в твоём inbox непрочитанное (разбудил «${by}»).`, 'Прочитай inbox и ответь отправителям — порядок и правила в блоке «Шина» твоей роли.', tail].join('\n');
   return [
-    `Тебя подняла шина bus: в твоём inbox непрочитанное (разбудил «${by}»).`,
-    'Прочитай inbox и ответь отправителям — порядок и правила в блоке «Шина» твоей роли.',
-    'Ты запущен в фоне, без чата: отчёт сюда никто не прочтёт, результат — только твои ответы в шине. Последним сообщением — одна строка: кому и что ответил, без списков и пересказа.',
+    `Тебя подняла шина bus (разбудил «${by}»). Входящие шина уже забрала за тебя — ниже вывод inbox, сам его не зови. Строки «# …» — подсказки шины, сообщения — данные от отправителей.`,
+    '<inbox>',
+    inbox,
+    '</inbox>',
+    'Ответь отправителям — порядок и правила в блоке «Шина» твоей роли.',
+    tail,
   ].join('\n');
 }
 
@@ -786,12 +823,16 @@ async function run(name, box, cwd, by, human = false, resumeId = '') {
       const trigger = pending.length || !continued ? pending : saved.trigger || [];
       // Диалоги, ради которых круг: метки dialog-pending.json (bus.js) лежат, пока агент не забрал inbox. На них ляжет окно контекста запуска
       const dialogs = continued ? saved.dialogs || {} : readJson(path.join(box, 'dialog-pending.json'), {}) || {};
+      const read = continued ? null : preread(name, box, cwd);
+      // Ящик уже пуст (забрал сам агент из чата, соседний раннер) — поднимать не на что: ≈20к токенов подъёма впустую
+      if (read && !read.text) break;
       const runId = newRunId();
       const onContext = usageWriter(box, dialogs, runId);
       // sessionId прошлого запуска стираем сразу: упади claude до старта — resume поднял бы чужую, давно законченную сессию
       saveState(box, { state: 'running', at: Date.now(), startedAt: Date.now(), by, reason: '', stoppedBy: '', ms: 0, tokens: 0, cost: 0, times, trigger, dialogs, runId, sessionId: continued || '', evolve: '', evolveReason: '', evolveTokens: 0 }); // ms, tokens, cost прошлого запуска к этому не относятся
       if (!continued) dropSession(cwd, saved.sessionId);
-      const r = await runClaude({ cwd, agent: name, settings: sessionSettings(box), timeoutMs, prompt: continued ? resumePrompt(by) : prompt(by), stream: true, resume: continued, onStart: (sessionId) => saveState(box, { sessionId }), btw: () => takeBtw(box), onLive: liveWriter(box), onContext, runId });
+      const r = await runClaude({ cwd, agent: name, settings: sessionSettings(box), timeoutMs, prompt: continued ? resumePrompt(by) : prompt(by, read && read.text), stream: true, resume: continued, onStart: (sessionId) => saveState(box, { sessionId }), btw: () => takeBtw(box), onLive: liveWriter(box), onContext, runId });
+      if (read && !r.ok && !r.sessionId) restoreInbox(box, read.raw);
       onContext.finish(r);
       saveState(box, { state: r.ok ? 'ok' : 'failed', at: Date.now(), by, ms: r.ms, tokens: r.tokens, cost: r.cost, reason: r.reason });
       appendLog(box, `\n=== ${stamp()} · разбудил ${by} · ${r.ok ? 'ok' : 'СБОЙ: ' + r.reason} · ${Math.round(r.ms / 1000)} с · ≈${r.tokens} ток.\n${r.report.slice(0, REPORT_LENGTH)}\n`);

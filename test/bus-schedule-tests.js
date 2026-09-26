@@ -134,8 +134,7 @@ function main() {
 
   // ---------- CLI ----------
   let r = bus(stranger, ['schedule', 'add', 'x', '0 9 * * *', 'привет']);
-  const asAgent = bus(proj, ['--as', 'dima', 'schedule', 'add', 'x', '0 9 * * *', 'привет']);
-  check('P1 schedule: каталог без init и субагент (--as) расписание не ведут', r.code === 1 && r.all.includes('не подключён к шине') && asAgent.code === 1 && asAgent.all.includes('только оркестратор') && !fs.existsSync(jobPath('x')) && !fs.existsSync(jobPath('x', 'md', stranger)), r.all + asAgent.all);
+  check('P1 schedule: каталог без init расписание не ведёт', r.code === 1 && r.all.includes('не подключён к шине') && !fs.existsSync(jobPath('x', 'md', stranger)), r.all);
 
   const refusals = [
     [sched(['add', 'Bad_Name', '0 9 * * *', 'привет']), 'Имя задачи'],
@@ -430,4 +429,46 @@ console.log(JSON.stringify({ live, rebooted, young, old: wake.freshBlank(lock) }
   } finally {
     server.kill();
   }
+
+  // ---------- субагент ставит в расписание себя (--as) ----------
+  const me = (args, opts) => bus(proj, ['--as', 'dima', 'schedule', ...args], opts);
+  const own = me(['add', 'daily-report', '0 9 * * *', '--off', '--catchup', 'Пришли', 'сводку']);
+  const ownText = read(jobPath('daily-report'));
+  const forOther = me(['add', 'x2', '0 9 * * *', '--to', 'masha', 'привет']);
+  const agentTooOften = me(['add', 'fast', '*/2 * * * *', '--force', 'привет']);
+  const headlessFlag = me(['add', 'hl', '0 9 * * *', '--model', 'sonnet', 'привет']);
+  const globalFlag = me(['add', 'g', '0 9 * * *', '--global', 'привет']);
+  const overwrite = me(['add', 'daily-report', '0 10 * * *', '--off', '--force', 'Новая', 'сводка']);
+  sched(['add', 'orch-job', '0 9 * * *', '--off', 'headless-задача']);
+  const foreignRm = me(['rm', 'orch-job']);
+  const foreignOverwrite = me(['add', 'orch-job', '0 9 * * *', '--off', '--force', 'моя теперь']);
+  const ownList = me([]);
+  const daemonCmd = me(['daemon', 'stop']);
+  check('P28 schedule --as: субагент ставит себя (to — он сам, флаги --off/--catchup работают); другому агенту, headless-флаги, --global, демон — отказ; --force перезаписывает только свою и порог частоты не обходит; список — только свои',
+    own.code === 0 && ownText.includes('to: dima') && ownText.includes('enabled: false') && ownText.includes('catchup: true') && ownText.includes('Пришли сводку')
+    && forOther.code === 1 && forOther.all.includes('только себя') && !fs.existsSync(jobPath('x2'))
+    && agentTooOften.code === 1 && agentTooOften.all.includes('Слишком часто') && !fs.existsSync(jobPath('fast'))
+    && headlessFlag.code === 1 && headlessFlag.all.includes('--model') && globalFlag.code === 1 && globalFlag.all.includes('--global')
+    && overwrite.code === 0 && read(jobPath('daily-report')).includes('Новая сводка') && read(jobPath('daily-report')).includes('0 10 * * *')
+    && foreignRm.code === 1 && foreignRm.all.includes('не твоя') && fs.existsSync(jobPath('orch-job')) && foreignOverwrite.code === 1 && read(jobPath('orch-job')).includes('headless-задача')
+    && ownList.out.includes('daily-report') && !ownList.out.includes('orch-job') && daemonCmd.code === 1 && daemonCmd.out.includes('твои задачи'),
+    [own, forOther, agentTooOften, headlessFlag, globalFlag, overwrite, foreignRm, foreignOverwrite, ownList, daemonCmd].map((x) => x.all).join('\n---\n'));
+
+  const ownOff = me(['on', 'daily-report']);
+  const ownRm = me(['rm', 'daily-report']);
+  const auditAs = read(path.join(busDir, 'audit.log'));
+  check('P29 schedule --as: on / rm своей задачи работают, каждая правка агента — строка в audit.log с его именем',
+    ownOff.code === 0 && ownRm.code === 0 && !fs.existsSync(jobPath('daily-report')) && auditAs.includes('schedule add daily-report "0 9 * * *" · от dima (--as)') && auditAs.includes('schedule rm daily-report · от dima'),
+    ownOff.all + ownRm.all + auditAs.slice(-600));
+  sched(['rm', 'orch-job']);
+
+  // Подсказка про расписание — только когда во входящих про него просят; задача самого расписания её не зовёт
+  bus(proj, ['send', 'dima', 'TASK', 'Присылай', 'сводку', 'каждое', 'утро']);
+  const hinted = bus(proj, ['--as', 'dima', 'inbox']).out;
+  bus(proj, ['send', 'dima', 'TASK', 'Почини', 'тест']);
+  const plain = bus(proj, ['--as', 'dima', 'inbox']).out;
+  bus(proj, ['send', 'dima', 'TASK', 'По расписанию «daily»: ежедневная сводка']);
+  const fromSchedule = bus(proj, ['--as', 'dima', 'inbox']).out;
+  check('P30 inbox --as: просьба про расписание — подсказка «# расписание:» с командой от своего имени; обычная задача и задача самого расписания — без неё',
+    hinted.includes('# расписание:') && hinted.includes('bus.js --as dima schedule add') && !plain.includes('# расписание') && !fromSchedule.includes('# расписание'), hinted + '\n---\n' + plain + '\n---\n' + fromSchedule);
 };

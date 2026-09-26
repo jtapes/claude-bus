@@ -50,6 +50,7 @@ const conf = (root) => settings.get(root);
 const modelOf = (job) => job.model || (job.root && settings.orchestrator(job.root, conf(job.root)).model) || conf(job.root)['schedule.model'];
 const FEED_REPORT = 600; // отчёт headless-запуска в ленте; целиком — в логе задачи
 const LOG_REPORT = 4000;
+const AGENT_JOBS_MAX = 10; // своих задач у субагента: заведённые в цикле жгли бы токены каждым cron
 const WAKE_TOKENS = 20000; // первый ход фонового подъёма без урезанного доступа (access-weights.json, замер 21.09.2026 — 19.7к), для оценки цены частого расписания
 
 const dirOf = (root) => (root ? path.join(root, '.claude', 'bus', 'scheduler') : path.join(bus.BUS, 'scheduler'));
@@ -506,7 +507,7 @@ function daemonStatus() {
 
 // ---------- CLI: bus.js schedule … ----------
 
-const USAGE = `bus.js schedule — задачи по расписанию (cron), только оркестратор
+const USAGE = `bus.js schedule — задачи по расписанию (cron); субагент с --as ведёт только свои (bus.js --as <имя> schedule help)
   schedule [list] [--all]            задачи каталога (--all — всех проектов) и статус демона
   schedule add <имя> "<cron>" [--to <агент>] [--model m] [--timeout мин] [--catchup] [--rules] [--off] [--force] [--global] <промпт | ->
                                      cron — 5 полей, время локальное; без --to — headless-сессия проекта; «-» — промпт из stdin
@@ -555,23 +556,59 @@ function addFlags(rest) {
   return rest.splice(2, end - 2);
 }
 
+const AGENT_USAGE = (name) => `bus.js --as ${name} schedule — твои задачи по расписанию: каждая шлёт тебе TASK от оркестратора
+  schedule                           твои задачи
+  schedule add <задача> "<cron>" [--catchup] [--off] [--force] <что делать | ->   --force — перезаписать свою
+  schedule on|off|rm|run|log <задача>
+cron — 5 полей, время локальное: "0 9 * * 1-5" — по будням в 09:00. Бери самый редкий из подходящих: запуск — подъём с нуля`;
+
+/**
+ * Субагент (--as) ставит в расписание только себя: задача каталога с to: <он>, TASK придёт от оркестратора, как у задачи пользователя.
+ * Чужие задачи, headless, --global, демон и обход порога частоты — только оркестратору. → агент или null (не субагент — обычный режим)
+ */
+function agentMode(ctx, asName) {
+  if (!asName) return null;
+  const me = bus.describe(ctx, asName);
+  if (!me) throw new bus.BusError(`--as: агента «${asName}» отсюда не видно.`);
+  return bus.isSubagent(me) ? me : null;
+}
+
+function requireOwn(job, me) {
+  if (job.to !== me.name) throw new bus.BusError(`«${job.name}» — не твоя задача (${job.to ? `она для ${job.to}` : 'headless-сессия проекта'}): её ведёт оркестратор.`);
+  return job;
+}
+
 function cli(asName, args) {
-  if (asName) throw new bus.BusError('Расписание ведёт только оркестратор: с --as нельзя. Нужна задача по расписанию — попроси пользователя.');
   if (!args.length || args[0].startsWith('--')) args = ['list', ...args]; // `schedule --all` — тот же list
   const [command, ...rest] = args;
   const flags = command === 'add' ? addFlags(rest) : rest;
   const isGlobal = takeFlag(flags, '--global');
   const ctx = bus.context();
+  const me = agentMode(ctx, asName);
+  if (me && isGlobal) throw new bus.BusError('--global — только оркестратор: глобальная задача идёт headless-сессией, а твоя — тебе в проекте.');
   const project = bus.projectSelf(ctx);
   const needRoot = () => {
     if (isGlobal) return null;
     if (!project) throw new bus.BusError('Этот каталог не подключён к шине: он подключится сам первой командой из него (bus.js inbox) или bus.js init <имя>. Глобальная задача — с --global.');
     return project.root;
   };
+  // Правки агента — в audit.log: он заводит задачи по сообщению из шины, пользователь должен видеть, кто и когда
+  const audit = (what) => me && bus.auditNote(`schedule ${what} · от ${me.name} (--as) · ${project ? project.root : ''}`);
+
+  if (me && !['list', 'add', 'on', 'off', 'rm', 'run', 'log'].includes(command)) {
+    console.log(AGENT_USAGE(me.name));
+    process.exitCode = command === 'help' ? 0 : 1;
+    return;
+  }
 
   if (command === 'list') {
-    const all = takeFlag(rest, '--all');
-    const jobs = all ? allJobs() : listJobs(needRoot());
+    const all = !me && takeFlag(rest, '--all');
+    const jobs = me ? listJobs(needRoot()).filter((job) => job.to === me.name) : all ? allJobs() : listJobs(needRoot());
+    if (me) {
+      if (jobs.length) printJobs(jobs, false);
+      else console.log(`Твоих задач по расписанию нет. Поставить: bus.js --as ${me.name} schedule add <задача> "<cron>" <что делать>`);
+      return;
+    }
     if (jobs.length) printJobs(jobs, all);
     else console.log(all ? 'Задач по расписанию нет.' : 'В этом каталоге задач по расписанию нет. Все проекты — schedule --all.');
     const raised = ensureDaemon();
@@ -584,26 +621,47 @@ function cli(asName, args) {
     if (flags.length) throw new bus.BusError(`schedule add: не знаю флага «${flags[0]}».`);
     const [name, expr, ...words] = rest;
     const prompt = words.length === 1 && words[0] === '-' ? bus.readStdin() : words.join(' ');
-    const { job, warning } = saveJob(needRoot(), { ...input, name, cron: expr, prompt }, { force });
+    let options = { force };
+    if (me) {
+      if (input.to && input.to !== me.name) throw new bus.BusError(`--to: ставишь только себя — задачу для ${input.to} заводит оркестратор.`);
+      const headless = ['model', 'timeout', 'rules'].find((key) => input[key]);
+      if (headless) throw new bus.BusError(`--${headless} — флаг headless-задачи, у твоей его нет: модель и таймаут — как у твоего подъёма.`);
+      const root = needRoot();
+      requireJobName(name);
+      // --force агента только перезаписывает его же задачу: порог частоты (schedule.minGapMin) обходит лишь оркестратор
+      const exists = fs.existsSync(jobFile(root, name));
+      if (exists) requireOwn(readJob(root, name), me);
+      else if (listJobs(root).filter((job) => job.to === me.name).length >= AGENT_JOBS_MAX) throw new bus.BusError(`У тебя уже ${AGENT_JOBS_MAX} задач по расписанию — убери лишнюю (schedule rm <задача>) или попроси оркестратора.`);
+      input.to = me.name;
+      options = { force: false, overwrite: force && exists };
+    }
+    const { job, warning } = saveJob(needRoot(), { ...input, name, cron: expr, prompt }, options);
+    audit(`add ${job.name} "${job.cron}"`);
     console.log(`Задача «${job.name}»: ${cron.describe(job.cron)} → ${job.to || `headless-сессия (${modelOf(job)})`}. Ближайший запуск: ${clock(view(job).next)}. Файл: ${job.file}`);
     if (warning) console.log(warning);
     console.log(`Расписание: ${syncDaemon()}.`);
   } else if (command === 'on' || command === 'off') {
+    if (me) requireOwn(requireJob(needRoot(), rest[0]), me);
     const job = setEnabled(needRoot(), rest[0], command === 'on');
+    audit(`${command} ${job.name}`);
     console.log(`Задача «${job.name}» ${job.enabled ? `включена, ближайший запуск: ${clock(view(job).next)}` : 'выключена'}.`);
     console.log(`Расписание: ${syncDaemon()}.`);
   } else if (command === 'rm') {
+    if (me) requireOwn(requireJob(needRoot(), rest[0]), me);
     removeJob(needRoot(), rest[0]);
+    audit(`rm ${rest[0]}`);
     console.log(`Задача «${rest[0]}» удалена.`);
     console.log(`Расписание: ${syncDaemon()}.`);
   } else if (command === 'run') {
     const job = requireJob(needRoot(), rest[0]);
+    if (me) requireOwn(job, me);
     if (job.error) throw new bus.BusError(`«${job.name}» не запустить: ${job.error}`);
     if (isRunning(job.root, job.name)) throw new bus.BusError(`«${job.name}» уже идёт.`);
     spawnRun(job.root, job.name, { manual: true });
     console.log(`«${job.name}» запущена в фоне. Итог: schedule log ${job.name}${job.to ? ', ответ агента — в ленте UI' : ''}.`);
   } else if (command === 'log') {
     const job = requireJob(needRoot(), rest[0]);
+    if (me) requireOwn(job, me);
     let text = '';
     try {
       text = fs.readFileSync(logFile(job.root, job.name), 'utf8');

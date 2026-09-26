@@ -48,4 +48,4 @@ function redact(text, env = process.env) {
   return out.replace(URL_CREDENTIALS, `$1${MASK}@`);
 }
 
-module.exports = { redact, secretValues };
+module.exports = { redact };

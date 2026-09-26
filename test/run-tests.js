@@ -812,6 +812,7 @@ function main() {
   if (argv.includes('--agent')) {
     const name = argv[argv.indexOf('--agent') + 1];
     const mode = fs.existsSync(${JSON.stringify(wakeMode)}) ? fs.readFileSync(${JSON.stringify(wakeMode)}, 'utf8').trim() : 'ok';
+    if (mode === 'nostart') { console.error('claude не встал'); process.exit(1); } // до записи в wakeSeen: счёт подъёмов в тестах ниже не сдвигается
     fs.appendFileSync(${JSON.stringify(wakeSeen)}, JSON.stringify({ name, cwd: process.cwd(), wakeEnv: process.env.BUS_WAKE || '', argv, stdin: s }) + '\\n');
     if (streaming) console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'fake-session-' + name }));
     // Ход модели для живой ленты UI: текст (длинный — режется до 400), Read внутри каталога агента и вложенный субагент — его строка отброшена
@@ -1145,12 +1146,6 @@ function main() {
     const forged = await rawRequest('GET', fileUrl('zzzz-fake', 0));
     check('U16 bus ui file: картинка — inline со своим типом и nosniff; SVG — только скачиванием; без токена — 403; номер мимо — 404; запись журнала с путём вне files/ — 404', image.status === 200 && image.headers['content-type'] === 'image/png' && image.data.equals(png) && image.headers['x-content-type-options'] === 'nosniff' && String(image.headers['content-disposition']).startsWith('inline') && svg.status === 200 && svg.headers['content-type'] === 'application/octet-stream' && String(svg.headers['content-disposition']).startsWith('attachment') && noKey.status === 403 && outOfRange.status === 404 && forged.status === 404, `${image.status} ${svg.headers['content-type']} ${noKey.status} ${outOfRange.status} ${forged.status}`);
 
-    bus(projU, ['inbox', '--quiet']);
-    const wakeGone = await request('POST', '/api/wake', { headers: auth, body: { to: `dima@${projU}` } });
-    const pageNoButton = (await request('GET', '/')).text;
-    bus(projU, ['--as', 'dima', 'inbox', '--quiet']);
-    check('U17 bus ui: кнопки «Разбудить» больше нет — /api/wake отвечает 404, в странице ни кнопки, ни вызова', wakeGone.status === 404 && !pageNoButton.includes('Разбудить') && !pageNoButton.includes('/api/wake') && !lines(box(projU, 'uia')).some((l) => l.startsWith('[WAKE ')), String(wakeGone.status));
-
     const pageNow = (await request('GET', '/')).text;
     const logic = await rawRequest('GET', '/logic.js', {});
     const pageRaw = await rawRequest('GET', '/', {});
@@ -1477,13 +1472,12 @@ function main() {
       const cdFresh = (await request('POST', '/api/cd', { headers: auth, body: { dir: fresh } })).json();
       const beforeSend = (await request('GET', '/api/state')).json();
       const helperRow = beforeSend.agents.find((a) => a.name === 'helper' && a.kind === 'global') || {};
-      const oldInit = await request('POST', '/api/init', { headers: auth, body: { name: 'ui-fresh' } });
       const firstSend = await request('POST', '/api/send', { headers: auth, body: { to: helperRow.key, type: 'DONE', text: 'первое сообщение из нового каталога' } });
       const afterSend = await hereNow();
-      check('U40 bus ui: каталог не в шине — подключится сам (attach с именем папки), агенты подписаны «от» будущего проекта; первое сообщение подключает его и уходит; /api/init больше нет',
+      check('U40 bus ui: каталог не в шине — подключится сам (attach с именем папки), агенты подписаны «от» будущего проекта; первое сообщение подключает его и уходит',
         cdFresh.current.project === null && (cdFresh.current.attach || {}).name === 'ui-fresh' && beforeSend.here.attach.name === 'ui-fresh' && helperRow.from === 'ui-fresh' && helperRow.attach === true && !helperRow.blocked
         && firstSend.status === 200 && (JSON.parse(read(path.join(busDir, 'agents.json'))).agents['ui-fresh'] || {}).project === fresh && afterSend.project === 'ui-fresh' && !afterSend.attach
-        && read(path.join(configDir, 'settings.json')).includes('inbox --hook') && oldInit.status === 404, firstSend.text + JSON.stringify(helperRow) + JSON.stringify(afterSend) + oldInit.text);
+        && read(path.join(configDir, 'settings.json')).includes('inbox --hook'), firstSend.text + JSON.stringify(helperRow) + JSON.stringify(afterSend));
       bus(fresh, ['remove']);
 
       // Повторный bus.js ui из другого проекта: живой сервер переключается, второй не поднимается
@@ -1584,8 +1578,20 @@ function main() {
     await until(() => seenWakes().length === 4, 15000);
     done = await settled('masha', 'ok');
     await wait(1500);
-    check('B56 bus autowake: агент inbox не забрал — повторного запуска нет, токены по кругу не жгутся', done && seenWakes().length === 4 && lines(box(projU, 'masha')).length === 1, String(seenWakes().length));
+    const fourth = seenWakes()[3] || { stdin: '' };
+    check('B56 bus autowake: входящие раннер забирает сам и кладёт в промпт (агенту не нужен ход на inbox); повторного запуска нет, токены по кругу не жгутся', done && seenWakes().length === 4 && lines(box(projU, 'masha')).length === 0 && fourth.stdin.includes('<inbox>') && fourth.stdin.includes('агент это не прочтёт') && fourth.stdin.includes('from:dima'), String(seenWakes().length) + fourth.stdin.slice(0, 300));
+
+    // Ящик пуст к старту раннера (забрали из чата) — claude не запускается вовсе
+    const runnerOf = (extra = {}) => spawnSync(process.execPath, [path.join(path.dirname(BUS_JS), 'wake.js'), 'run', 'masha', box(projU, 'masha'), projU, 'dima'], { cwd: projU, encoding: 'utf8', env: { ...wakeEnv, ...extra } });
+    runnerOf();
+    check('B93 bus autowake: входящих к старту раннера нет — claude не поднимается, подъём ≈20к токенов не тратится', seenWakes().length === 4 && !fs.existsSync(box(projU, 'masha', 'wake.lock')), String(seenWakes().length));
+
+    setMode('nostart');
+    wbus(['--as', 'dima', 'send', 'masha', 'task', 'claude не встанет']);
+    done = await settled('masha', 'failed');
+    check('B94 bus autowake: claude упал до старта сессии — забранные раннером входящие вернулись в ящик, следующий подъём их увидит', done && lines(box(projU, 'masha')).some((l) => l.includes('claude не встанет')), read(box(projU, 'masha', 'inbox.md')) + JSON.stringify(wakeState('masha')));
     wbus(['--as', 'masha', 'inbox', '--quiet']);
+    fs.rmSync(box(projU, 'masha', 'wake.json'), { force: true });
 
     setMode('ok');
     bus(projU, ['inbox', '--quiet']);
